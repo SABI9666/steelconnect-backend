@@ -1,4 +1,4 @@
-<<<<<<< HEAD
+
 // server.js
 
 // 1. Import necessary modules

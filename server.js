@@ -9,15 +9,14 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Import all route modules from your src/routes directory
-import { auth } from './src/routes/auth.js';
-import { admin } from './src/routes/admin.js';
-import { firebase } from './src/routes/firebase.js';
-import { messages } from './src/routes/messages.js';
-import { quotes } from './src/routes/quotes.js';
-import { users } from './src/routes/users.js';
-import { uploads } from './src/routes/uploads.js';
-
+// Corrected: Import route modules using default import syntax
+import auth from './src/routes/auth.js';
+import admin from './src/routes/admin.js';
+import firebase from './src/routes/firebase.js';
+import messages from './src/routes/messages.js';
+import quotes from './src/routes/quotes.js';
+import users from './src/routes/users.js';
+import uploads from './src/routes/uploads.js';
 
 // Middleware
 app.use(cors());

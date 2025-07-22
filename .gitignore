@@ -1,0 +1,11 @@
+# .gitignore
+
+# Ignore all .json files by default
+*.json
+
+# BUT, DO NOT ignore these essential files
+!package.json
+!package-lock.json
+
+# Ignore environment variables
+.env

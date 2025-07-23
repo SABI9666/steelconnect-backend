@@ -9,7 +9,7 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Corrected: Import route modules using default import syntax
+// Import all route modules from your src/routes directory
 import auth from './src/routes/auth.js';
 import admin from './src/routes/admin.js';
 import firebase from './src/routes/firebase.js';
@@ -18,8 +18,17 @@ import quotes from './src/routes/quotes.js';
 import users from './src/routes/users.js';
 import uploads from './src/routes/uploads.js';
 
+// --- START: CORS CONFIGURATION ---
+// This tells your backend to accept requests ONLY from your Vercel frontend
+const corsOptions = {
+  origin: 'https://steelconnect-frontend.vercel.app',
+  optionsSuccessStatus: 200 
+};
+app.use(cors(corsOptions));
+// --- END: CORS CONFIGURATION ---
+
+
 // Middleware
-app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

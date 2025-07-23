@@ -28,22 +28,22 @@ const verifyToken = (req, res, next) => {
 
 // Your existing /register route...
 router.post('/register', async (req, res) => {
-  // ... code for registration
+  // ... existing code for registration
 });
 
 // Your existing /login route...
 router.post('/login', async (req, res) => {
-  // ... code for login
+  // ... existing code for login
 });
 
 // Your existing /forgot-password route...
 router.post('/forgot-password', async (req, res) => {
-  // ... code for forgot password
+  // ... existing code for forgot password
 });
 
 // Your existing /reset-password route...
 router.post('/reset-password', async (req, res) => {
-  // ... code for reset password
+  // ... existing code for reset password
 });
 
 

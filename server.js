@@ -19,28 +19,11 @@ import users from './src/routes/users.js';
 import uploads from './src/routes/uploads.js';
 
 // --- START: CORS CONFIGURATION ---
-// Add all your Vercel frontend URLs to this list
-const allowedOrigins = [
-  'https://steelconnect-frontend.vercel.app',
-  'steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
-   'steelconnect-frontend-e4ji967z7-sabins-projects-02d8db3a.vercel.app'
-
-  // Add new Vercel preview URLs here as they are generated
-];
-
+// This tells your backend to accept requests ONLY from your Vercel frontend
 const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
-  },
+  origin: 'https://steelconnect-frontend-e4ji967z7-sabins-projects-02d8db3a.vercel.app',
   optionsSuccessStatus: 200 
 };
-
 app.use(cors(corsOptions));
 // --- END: CORS CONFIGURATION ---
 

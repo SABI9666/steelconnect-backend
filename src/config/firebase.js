@@ -4,27 +4,28 @@ import dotenv from 'dotenv';
 // Load environment variables from your .env file
 dotenv.config();
 
-// Securely parse the service account key from environment variables
-const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+// --- START: UPDATED CREDENTIAL HANDLING ---
+// Read the Base64 encoded key from the new environment variable
+const firebaseKeyBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64;
+
+// Decode the Base64 string back into a normal JSON string
+const serviceAccountJson = Buffer.from(firebaseKeyBase64, 'base64').toString('utf-8');
+
+// Parse the decoded JSON string
+const serviceAccount = JSON.parse(serviceAccountJson);
+// --- END: UPDATED CREDENTIAL HANDLING ---
+
 
 // Initialize the Firebase Admin App only if it hasn't been already
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET // Add your storage bucket URL here
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET
   });
 }
 
-// Initialize the Firestore database instance
+// Initialize and export the services
 const adminDb = admin.firestore();
-
-// --- START: NEWLY ADDED ---
-// Initialize the Firebase Storage instance
 const adminStorage = admin.storage();
-// --- END: NEWLY ADDED ---
 
-
-// --- START: UPDATED EXPORTS ---
-// Export both the database and storage instances for other files to use
 export { adminDb, adminStorage };
-// --- END: UPDATED EXPORTS ---

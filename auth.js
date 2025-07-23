@@ -6,7 +6,8 @@ import { sendEmail } from '../utils/mailer.js';
 
 const router = express.Router();
 
-// --- START: VERIFY TOKEN MIDDLEWARE (NEWLY ADDED) ---
+// --- START: VERIFY TOKEN MIDDLEWARE ---
+// This function protects routes by checking for a valid user token.
 const verifyToken = (req, res, next) => {
   const token = req.header('Authorization')?.replace('Bearer ', '');
   
@@ -25,29 +26,31 @@ const verifyToken = (req, res, next) => {
 // --- END: VERIFY TOKEN MIDDLEWARE ---
 
 
-// REGISTRATION ROUTE
+// Your existing /register route...
 router.post('/register', async (req, res) => {
-  // ... your existing register code ...
+  // ... code for registration
 });
 
-// LOGIN ROUTE
+// Your existing /login route...
 router.post('/login', async (req, res) => {
-  // ... your existing login code ...
+  // ... code for login
 });
 
-// FORGOT PASSWORD ROUTE
+// Your existing /forgot-password route...
 router.post('/forgot-password', async (req, res) => {
-  // ... your existing forgot-password code ...
+  // ... code for forgot password
 });
 
-// RESET PASSWORD ROUTE
+// Your existing /reset-password route...
 router.post('/reset-password', async (req, res) => {
-  // ... your existing reset-password code ...
+  // ... code for reset password
 });
 
 
-// --- START: ADD NAMED EXPORT FOR verifyToken (NEWLY ADDED) ---
+// --- START: EXPORTS ---
+// Export the middleware as a named export for other files to use.
 export { verifyToken };
-// --- END: ADD NAMED EXPORT ---
 
+// Export the router as the default export.
 export default router;
+// --- END: EXPORTS ---

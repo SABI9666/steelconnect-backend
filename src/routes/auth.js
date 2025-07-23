@@ -1,296 +1,199 @@
-import express from 'express';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
+// Your Render Backend URL
+const RENDER_BACKEND_URL = 'https://steelconnect-backend.onrender.com';
 
-const router = express.Router();
-
-// Middleware to verify JWT token
-const verifyToken = (req, res, next) => {
-  const token = req.header('Authorization')?.replace('Bearer ', '');
-  
-  if (!token) {
-    return res.status(401).json({ error: 'Access denied. No token provided.' });
-  }
-  
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
-    req.user = decoded;
-    next();
-  } catch (error) {
-    res.status(400).json({ error: 'Invalid token.' });
-  }
+// Global state for the application
+const appState = {
+    currentUser: null,
+    jobs: [],
+    quotes: [],
 };
 
-// POST /auth/register
-router.post('/register', async (req, res) => {
-  try {
-    const { username, email, password, fullName } = req.body;
-    
-    // Validation
-    if (!username || !email || !password) {
-      return res.status(400).json({ 
-        error: 'Username, email, and password are required' 
-      });
-    }
-    
-    if (password.length < 6) {
-      return res.status(400).json({ 
-        error: 'Password must be at least 6 characters long' 
-      });
-    }
-    
-    // Check if user already exists (implement database check here)
-    // const existingUser = await User.findOne({ $or: [{ email }, { username }] });
-    // if (existingUser) {
-    //   return res.status(400).json({ error: 'User already exists' });
-    // }
-    
-    // Hash password
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
-    
-    // Create user (implement database save here)
-    const newUser = {
-      username,
-      email,
-      password: hashedPassword,
-      fullName: fullName || username,
-      role: 'user',
-      createdAt: new Date(),
-      isActive: true
-    };
-    
-    // Save to database
-    // const savedUser = await User.create(newUser);
-    
-    // Generate JWT token
-    const token = jwt.sign(
-      { 
-        userId: 'user-id', // replace with actual user ID
-        username,
-        email,
-        role: 'user'
-      },
-      process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '24h' }
-    );
-    
-    res.status(201).json({
-      message: 'User registered successfully',
-      token,
-      user: {
-        username,
-        email,
-        fullName: fullName || username,
-        role: 'user'
-      }
+// --- CORE UI AND NAVIGATION FUNCTIONS ---
+
+function showSection(sectionId) {
+    document.querySelectorAll('.content-section').forEach(section => {
+        section.style.display = 'none';
     });
-    
-  } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// POST /auth/login
-router.post('/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    
-    // Validation
-    if (!username || !password) {
-      return res.status(400).json({ 
-        error: 'Username and password are required' 
-      });
+    const targetSection = document.getElementById(`${sectionId}-section`);
+    if (targetSection) {
+        targetSection.style.display = 'block';
     }
-    
-    // Find user (implement database query here)
-    // const user = await User.findOne({ 
-    //   $or: [{ username }, { email: username }] 
-    // });
-    
-    // Mock user for demonstration
-    const user = {
-      id: 'user-123',
-      username: 'testuser',
-      email: 'test@example.com',
-      password: '$2b$10$hash...', // This should be the actual hashed password from database
-      fullName: 'Test User',
-      role: 'user',
-      isActive: true
-    };
-    
-    if (!user) {
-      return res.status(401).json({ error: 'Invalid credentials' });
+}
+
+function showAlert(message, type = 'info') {
+    const alertsContainer = document.getElementById('alerts');
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type}`;
+    alertDiv.textContent = message;
+    alertsContainer.prepend(alertDiv);
+    setTimeout(() => {
+        alertDiv.style.opacity = '0';
+        setTimeout(() => alertDiv.remove(), 300);
+    }, 5000);
+}
+
+function updateUIForLoggedInUser() {
+    document.getElementById('user-profile').style.display = 'flex';
+    document.querySelector('.auth-buttons').style.display = 'none';
+    document.getElementById('hero-section').style.display = 'none';
+
+    if (appState.currentUser) {
+        const user = appState.currentUser;
+        document.getElementById('userName').textContent = user.fullName || user.username;
+        document.getElementById('userType').textContent = user.role.charAt(0).toUpperCase() + user.role.slice(1);
+        const initials = (user.fullName || 'A').charAt(0).toUpperCase();
+        document.getElementById('userAvatar').textContent = initials;
     }
-    
-    if (!user.isActive) {
-      return res.status(401).json({ error: 'Account is deactivated' });
+    showSection('jobs');
+}
+
+function updateUIForLoggedOutUser() {
+    document.getElementById('user-profile').style.display = 'none';
+    document.querySelector('.auth-buttons').style.display = 'flex';
+    document.getElementById('hero-section').style.display = 'block';
+    showSection('jobs'); // Show public jobs list
+}
+
+// --- AUTHENTICATION HANDLERS ---
+
+async function handleRegister(event) {
+    event.preventDefault();
+    const fullName = document.getElementById('regName').value;
+    const username = document.getElementById('regUsername').value;
+    const email = document.getElementById('regEmail').value;
+    const password = document.getElementById('regPassword').value;
+    const role = document.getElementById('regType').value;
+
+    const userData = { fullName, username, email, password, role };
+
+    try {
+        const response = await fetch(`${RENDER_BACKEND_URL}/auth/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(userData),
+        });
+        const data = await response.json();
+        if (response.status === 201) {
+            showAlert('Registration successful! Please sign in.', 'success');
+            showSection('login');
+        } else {
+            showAlert(data.error || 'Registration failed.', 'error');
+        }
+    } catch (error) {
+        showAlert('An error occurred during registration.', 'error');
     }
-    
-    // Compare password
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-    
-    if (!isPasswordValid) {
-      return res.status(401).json({ error: 'Invalid credentials' });
+}
+
+async function handleLogin(event) {
+    event.preventDefault();
+    const username = document.getElementById('loginIdentifier').value; // Can be username or email
+    const password = document.getElementById('loginPassword').value;
+
+    try {
+        const response = await fetch(`${RENDER_BACKEND_URL}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+        });
+        const data = await response.json();
+        if (response.ok) {
+            localStorage.setItem('jwtToken', data.token);
+            appState.currentUser = { ...data.user, token: data.token };
+            updateUIForLoggedInUser();
+            showAlert('Login successful!', 'success');
+        } else {
+            showAlert(data.error || 'Login failed.', 'error');
+        }
+    } catch (error) {
+        showAlert('An error occurred during login.', 'error');
     }
-    
-    // Generate JWT token
-    const token = jwt.sign(
-      { 
-        userId: user.id,
-        username: user.username,
-        email: user.email,
-        role: user.role
-      },
-      process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '24h' }
-    );
-    
-    res.json({
-      message: 'Login successful',
-      token,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        fullName: user.fullName,
-        role: user.role
-      }
-    });
-    
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+}
 
-// POST /auth/logout
-router.post('/logout', verifyToken, (req, res) => {
-  // For JWT tokens, logout is typically handled on the client side
-  // by removing the token from storage. You could implement a token blacklist
-  // here if needed for enhanced security.
-  
-  res.json({ message: 'Logged out successfully' });
-});
+function logout() {
+    appState.currentUser = null;
+    localStorage.removeItem('jwtToken');
+    updateUIForLoggedOutUser();
+    showAlert('Logged out successfully!', 'info');
+}
 
-// GET /auth/profile
-router.get('/profile', verifyToken, (req, res) => {
-  // Return user profile information
-  res.json({
-    message: 'User profile',
-    user: {
-      userId: req.user.userId,
-      username: req.user.username,
-      email: req.user.email,
-      role: req.user.role
+async function handleForgotPassword(event) {
+    event.preventDefault();
+    const email = document.getElementById('forgotPasswordEmail').value;
+    try {
+        const response = await fetch(`${RENDER_BACKEND_URL}/auth/forgot-password`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email }),
+        });
+        const data = await response.json();
+        showAlert(data.message, 'info'); // Show the success/info message from the backend
+    } catch (error) {
+        showAlert('An error occurred. Please try again.', 'error');
     }
-  });
-});
+}
 
-// PUT /auth/profile
-router.put('/profile', verifyToken, async (req, res) => {
-  try {
-    const { fullName, email } = req.body;
-    const userId = req.user.userId;
+async function handleResetPassword(event) {
+    event.preventDefault();
+    const newPassword = document.getElementById('resetPasswordNew').value;
     
-    // Validate input
-    if (email && !/\S+@\S+\.\S+/.test(email)) {
-      return res.status(400).json({ error: 'Invalid email format' });
+    // Get the token from the URL
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+
+    if (!token) {
+        showAlert('No reset token found. Please request a new link.', 'error');
+        return;
     }
-    
-    // Update user profile (implement database update here)
-    // const updatedUser = await User.findByIdAndUpdate(
-    //   userId,
-    //   { fullName, email },
-    //   { new: true }
-    // );
-    
-    res.json({
-      message: 'Profile updated successfully',
-      user: {
-        userId,
-        username: req.user.username,
-        email: email || req.user.email,
-        fullName: fullName || req.user.fullName,
-        role: req.user.role
-      }
-    });
-    
-  } catch (error) {
-    console.error('Profile update error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
 
-// PUT /auth/change-password
-router.put('/change-password', verifyToken, async (req, res) => {
-  try {
-    const { currentPassword, newPassword } = req.body;
-    const userId = req.user.userId;
-    
-    // Validation
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({ 
-        error: 'Current password and new password are required' 
-      });
+    try {
+        const response = await fetch(`${RENDER_BACKEND_URL}/auth/reset-password`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token, newPassword }),
+        });
+        const data = await response.json();
+        if (response.ok) {
+            showAlert('Password reset successfully! You can now sign in.', 'success');
+            // Clear the token from the URL and show the login page
+            window.history.pushState({}, '', window.location.pathname);
+            showSection('login');
+        } else {
+            showAlert(data.error || 'Password reset failed.', 'error');
+        }
+    } catch (error) {
+        showAlert('An error occurred. Please try again.', 'error');
     }
-    
-    if (newPassword.length < 6) {
-      return res.status(400).json({ 
-        error: 'New password must be at least 6 characters long' 
-      });
+}
+
+// --- INITIALIZATION ---
+
+function initializeApp() {
+    // Add event listeners to all forms
+    document.getElementById('login-form').addEventListener('submit', handleLogin);
+    document.getElementById('register-form').addEventListener('submit', handleRegister);
+    document.getElementById('forgot-password-form').addEventListener('submit', handleForgotPassword);
+    document.getElementById('reset-password-form').addEventListener('submit', handleResetPassword);
+
+    // Check for a password reset token in the URL on page load
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('token')) {
+        showSection('reset-password');
+    } else {
+        // Default view
+        showSection('jobs');
     }
-    
-    // Get user from database
-    // const user = await User.findById(userId);
-    // if (!user) {
-    //   return res.status(404).json({ error: 'User not found' });
-    // }
-    
-    // Verify current password
-    // const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password);
-    // if (!isCurrentPasswordValid) {
-    //   return res.status(401).json({ error: 'Current password is incorrect' });
-    // }
-    
-    // Hash new password
-    const saltRounds = 10;
-    const hashedNewPassword = await bcrypt.hash(newPassword, saltRounds);
-    
-    // Update password in database
-    // await User.findByIdAndUpdate(userId, { password: hashedNewPassword });
-    
-    res.json({ message: 'Password changed successfully' });
-    
-  } catch (error) {
-    console.error('Password change error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
 
-// POST /auth/refresh-token
-router.post('/refresh-token', verifyToken, (req, res) => {
-  // Generate new token with extended expiry
-  const newToken = jwt.sign(
-    { 
-      userId: req.user.userId,
-      username: req.user.username,
-      email: req.user.email,
-      role: req.user.role
-    },
-    process.env.JWT_SECRET || 'your-secret-key',
-    { expiresIn: '24h' }
-  );
-  
-  res.json({
-    message: 'Token refreshed successfully',
-    token: newToken
-  });
-});
+    // Check for existing JWT token
+    const token = localStorage.getItem('jwtToken');
+    if (token) {
+        // In a real app, you'd verify the token with a `/profile` endpoint
+        // For now, we'll just update the UI
+        appState.currentUser = { token: token }; // Minimal user object
+        updateUIForLoggedInUser();
+    } else {
+        updateUIForLoggedOutUser();
+    }
+}
 
-// Export the verifyToken middleware so it can be used in other routes
-export { verifyToken };
-
-export default router;
-
+// Wait for the DOM to be fully loaded before running the app
+document.addEventListener('DOMContentLoaded', initializeApp);

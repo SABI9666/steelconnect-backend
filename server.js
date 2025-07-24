@@ -19,11 +19,10 @@ import users from './src/routes/users.js';
 import uploads from './src/routes/uploads.js';
 
 // --- CORS CONFIGURATION ---
+
 const allowedOrigins = [
-  // MAKE SURE EVERY LINE IN THIS LIST (except the last one) ENDS WITH A COMMA
-  'https://steelconnect-frontend.vercel.app',
-  'steelconnect-frontend-6w9mke1zk-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
+   'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
+  'https://steelconnect-frontend-6w9mke1zk-sabins-projects-02d8db3a.vercel.app', // <-- ADD THIS NEW URL
   'http://localhost:3000',
   'http://localhost:5173'
 ];

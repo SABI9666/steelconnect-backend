@@ -1,31 +1,31 @@
+// src/config/firebase.js
+
 import admin from 'firebase-admin';
-import dotenv from 'dotenv';
 
-// Load environment variables from your .env file
-dotenv.config();
+// Check if the environment variable for the Firebase key exists.
+// This is the key you set on Render.
+if (!process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64) {
+  throw new Error('The Firebase service account key is not set in your environment variables. Please add FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 to your environment.');
+}
 
-// --- START: UPDATED CREDENTIAL HANDLING ---
-// Read the Base64 encoded key from the new environment variable
-const firebaseKeyBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64;
+// Decode the Base64 encoded service account key.
+const serviceAccountJson = Buffer.from(
+  process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64,
+  'base64'
+).toString('utf8');
 
-// Decode the Base64 string back into a normal JSON string
-const serviceAccountJson = Buffer.from(firebaseKeyBase64, 'base64').toString('utf-8');
-
-// Parse the decoded JSON string
+// Parse the decoded JSON string into a JavaScript object.
 const serviceAccount = JSON.parse(serviceAccountJson);
-// --- END: UPDATED CREDENTIAL HANDLING ---
 
-
-// Initialize the Firebase Admin App only if it hasn't been already
+// Initialize the Firebase Admin SDK, but only if it hasn't been initialized already.
+// This prevents errors during hot-reloading in development.
 if (!admin.apps.length) {
   admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET
+    credential: admin.credential.cert(serviceAccount)
   });
 }
 
-// Initialize and export the services
+// Export the Firestore database instance so other files can use it.
 const adminDb = admin.firestore();
-const adminStorage = admin.storage();
 
-export { adminDb, adminStorage };
+export { adminDb };

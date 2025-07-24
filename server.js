@@ -19,10 +19,11 @@ import users from './src/routes/users.js';
 import uploads from './src/routes/uploads.js';
 
 // --- CORS CONFIGURATION ---
-
 const allowedOrigins = [
-   'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-6w9mke1zk-sabins-projects-02d8db3a.vercel.app', // <-- ADD THIS NEW URL
+  'https://steelconnect-frontend.vercel.app',
+  'https://steelconnect-frontend-e4ji967z7-sabins-projects-02d8db3a.vercel.app',
+  'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
+  'https://steelconnect-frontend-6w9mke1zk-sabins-projects-02d8db3a.vercel.app',
   'http://localhost:3000',
   'http://localhost:5173'
 ];
@@ -51,9 +52,14 @@ app.use((req, res, next) => {
   next();
 });
 
+// --- THIS IS THE DEPLOYMENT TEST ---
 // Health check endpoints
 app.get('/', (req, res) => {
-  res.json({ message: 'SteelConnect Backend API is running' });
+  res.json({
+    message: 'DEPLOYMENT TEST v3 - IT IS WORKING!', // <-- THE NEW TEST MESSAGE
+    status: 'running',
+    timestamp: new Date().toISOString()
+  });
 });
 
 app.get('/health', (req, res) => {

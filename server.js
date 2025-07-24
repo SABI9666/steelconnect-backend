@@ -17,9 +17,8 @@ import auth from './src/routes/auth.js';
 // --- CORS CONFIGURATION ---
 const allowedOrigins = [
   'https://steelconnect-frontend.vercel.app',
-  'https://steelconnect-frontend-e4ji967z7-sabins-projects-02d8db3a.vercel.app',
   'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-6w9mke1zk-sabins-projects-02d8db3a.vercel.app',
+  'https://steelconnect-frontend-f9igyps8b-sabins-projects-02d8db3a.vercel.app', // <-- NEW URL ADDED
   // Add any other Vercel preview URLs here
   'http://localhost:3000',
   'http://localhost:5173'

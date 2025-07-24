@@ -5,11 +5,11 @@ import dotenv from 'dotenv';
 // Load environment variables at the very top
 dotenv.config();
 
-// Initialize app and PORT immediately after environment variables
+// Initialize app and PORT
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Import all route modules from your src/routes directory
+// Import all route modules
 import auth from './src/routes/auth.js';
 import admin from './src/routes/admin.js';
 import firebase from './src/routes/firebase.js';
@@ -18,33 +18,29 @@ import quotes from './src/routes/quotes.js';
 import users from './src/routes/users.js';
 import uploads from './src/routes/uploads.js';
 
-// --- START: CORS CONFIGURATION ---
-// Add all your Vercel frontend URLs and localhost for development
+// --- CORS CONFIGURATION ---
 const allowedOrigins = [
+  // MAKE SURE EVERY LINE IN THIS LIST (except the last one) ENDS WITH A COMMA
   'https://steelconnect-frontend.vercel.app',
-  '',
+  'steelconnect-frontend-6w9mke1zk-sabins-projects-02d8db3a.vercel.app',
   'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
-   'steelconnect-frontend-6w9mke1zk-sabins-projects-02d8db3a.vercel.app'
-  'http://localhost:3000', // For local development
-  'http://localhost:5173'  // For Vite local development
+  'http://localhost:3000',
+  'http://localhost:5173'
 ];
 
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-      return callback(new Error(msg), false);
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
     }
-    return callback(null, true);
   },
-  optionsSuccessStatus: 200 
+  optionsSuccessStatus: 200
 };
 
 app.use(cors(corsOptions));
-// --- END: CORS CONFIGURATION ---
-
+// --- END CORS CONFIGURATION ---
 
 // Standard Middleware
 app.use(express.json());
@@ -58,28 +54,19 @@ app.use((req, res, next) => {
 
 // Health check endpoints
 app.get('/', (req, res) => {
-  res.json({
-    message: 'SteelConnect Backend API',
-    status: 'running',
-    timestamp: new Date().toISOString()
-  });
+  res.json({ message: 'SteelConnect Backend API is running' });
 });
 
 app.get('/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString()
-  });
+  res.json({ status: 'healthy' });
 });
 
-// --- START: NEW DEBUGGING MIDDLEWARE ---
-// This will log a message every time a request hits any /auth endpoint.
+// --- DEBUGGING MIDDLEWARE ---
 app.use('/auth', (req, res, next) => {
   console.log('>>> A request just hit the /auth router gate.');
-  next(); // This passes the request to the next handler (your auth router).
+  next();
 });
-// --- END: NEW DEBUGGING MIDDLEWARE ---
+// --- END DEBUGGING MIDDLEWARE ---
 
 // Routes
 app.use('/auth', auth);
@@ -91,27 +78,20 @@ app.use('/users', users);
 app.use('/uploads', uploads);
 
 
-// 404 handler for routes not found
+// 404 handler
 app.use('*', (req, res) => {
-  res.status(404).json({
-    error: 'Route not found',
-    path: req.originalUrl,
-    method: req.method
-  });
+  res.status(404).json({ error: 'Route not found' });
 });
 
 // Global error handler
 app.use((error, req, res, next) => {
   console.error('Global error handler:', error);
-  res.status(500).json({
-    error: 'Internal server error',
-    message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
-  });
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`✅ Server running on http://localhost:${PORT}`);
+  console.log(`✅ Server running on port ${PORT}`);
   console.log(`✅ Environment: ${process.env.NODE_ENV || 'development'}`);
 });
 

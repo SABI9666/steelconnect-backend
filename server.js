@@ -18,7 +18,11 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+<<<<<<< HEAD
 // Import all route modules. This line is important.
+=======
+// Import all route modules
+>>>>>>> ed84554e53b628e96f41355724ac68c4b0f89f04
 import auth from './src/routes/auth.js';
 // Add any other route imports you need here, for example:
 // import messages from './src/routes/messages.js';
@@ -29,7 +33,10 @@ const allowedOrigins = [
   'https://steelconnect-frontend-e4ji967z7-sabins-projects-02d8db3a.vercel.app',
   'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
   'https://steelconnect-frontend-6w9mke1zk-sabins-projects-02d8db3a.vercel.app',
+<<<<<<< HEAD
   // Add any other Vercel preview URLs here
+=======
+>>>>>>> ed84554e53b628e96f41355724ac68c4b0f89f04
   'http://localhost:3000',
   'http://localhost:5173'
 ];
@@ -58,6 +65,7 @@ app.use((req, res, next) => {
   next();
 });
 
+<<<<<<< HEAD
 // Health check endpoint
 app.get('/', (req, res) => {
   res.json({ message: 'SteelConnect Backend API is running' });
@@ -65,6 +73,30 @@ app.get('/', (req, res) => {
 
 // --- Routes ---
 // This line tells the server to use the routes from auth.js for any /auth path
+=======
+// --- THIS IS THE DEPLOYMENT TEST ---
+// Health check endpoints
+app.get('/', (req, res) => {
+  res.json({
+    message: 'DEPLOYMENT TEST v3 - IT IS WORKING!', // <-- THE NEW TEST MESSAGE
+    status: 'running',
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'healthy' });
+});
+
+// --- DEBUGGING MIDDLEWARE ---
+app.use('/auth', (req, res, next) => {
+  console.log('>>> A request just hit the /auth router gate.');
+  next();
+});
+// --- END DEBUGGING MIDDLEWARE ---
+
+// Routes
+>>>>>>> ed84554e53b628e96f41355724ac68c4b0f89f04
 app.use('/auth', auth);
 // Add any other app.use() lines for your other routes here, for example:
 // app.use('/messages', messages);

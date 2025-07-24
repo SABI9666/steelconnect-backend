@@ -1,5 +1,3 @@
-// src/utils/mailer.js
-
 import { Resend } from 'resend';
 import { htmlToText } from 'html-to-text';
 
@@ -9,8 +7,7 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 export async function sendEmail({ to, subject, html }) {
   try {
     const { data, error } = await resend.emails.send({
-      // The "from" address uses Resend's test domain, which works immediately.
-      from: 'SteelConnect <onboarding@resend.dev>',
+      from: 'SteelConnect <onboarding@resend.dev>', // You can change this later
       to: [to],
       subject: subject,
       html: html,

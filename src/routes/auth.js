@@ -1,43 +1,34 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import { adminDb } from '../config/firebase.js'; 
+import { adminDb } from '../config/firebase.js';
 import { sendEmail } from '../utils/mailer.js';
 
 const router = express.Router();
 
-// --- REGISTRATION ROUTE WITH DETAILED LOGGING ---
+// --- REGISTRATION ROUTE ---
 router.post('/register', async (req, res) => {
   try {
     const { fullName, username, email, password, role } = req.body;
     console.log('1. REGISTRATION PROCESS STARTED for:', email);
 
-    // 1. Validate input
     if (!fullName || !username || !email || !password || !role) {
-      console.log('Error: Missing required fields.');
       return res.status(400).json({ error: 'All fields are required.' });
     }
     console.log('2. Input validation passed.');
 
-    // 2. Check if user already exists
-    console.log('3. Connecting to Firestore to check for existing user...');
     const usersRef = adminDb.collection('users');
     const userSnapshot = await usersRef.where('email', '==', email).limit(1).get();
-    console.log('4. Firestore check complete.');
-    
+    console.log('3. Firestore user check complete.');
+
     if (!userSnapshot.empty) {
-      console.log('Error: User with this email already exists.');
       return res.status(409).json({ error: 'User with this email already exists.' });
     }
-    console.log('5. User does not exist, proceeding.');
+    console.log('4. User does not exist, proceeding.');
 
-    // 3. Hash the password
-    console.log('6. Hashing password...');
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
-    console.log('7. Password hashed successfully.');
+    console.log('5. Password hashed.');
 
-    // 4. Create and save the new user
     const newUser = {
       fullName,
       username,
@@ -46,24 +37,20 @@ router.post('/register', async (req, res) => {
       role,
       createdAt: new Date().toISOString(),
     };
-    console.log('8. Saving new user to Firestore...');
     const userRecord = await usersRef.add(newUser);
-    console.log('9. User saved successfully with ID:', userRecord.id);
+    console.log('6. User saved to Firestore with ID:', userRecord.id);
 
-    // 5. Send a welcome email via Resend
-    console.log('10. Sending welcome email...');
     await sendEmail({
       to: email,
       subject: 'Welcome to SteelConnect!',
-      html: `<h1>Hi ${fullName},</h1><p>Thank you for registering at SteelConnect. Your account has been created successfully.</p>`,
+      html: `<h1>Hi ${fullName},</h1><p>Thank you for registering. Your account has been created successfully.</p>`,
     });
-    console.log('11. Email sent successfully.');
-    
-    // 6. Send a final success response
-    console.log('12. REGISTRATION COMPLETE. Sending 201 response.');
-    res.status(201).json({ 
+    console.log('7. Welcome email sent.');
+
+    console.log('8. REGISTRATION COMPLETE.');
+    res.status(201).json({
         message: 'User registered successfully. Please check your email.',
-        userId: userRecord.id 
+        userId: userRecord.id
     });
 
   } catch (error) {
@@ -72,12 +59,37 @@ router.post('/register', async (req, res) => {
   }
 });
 
-// --- Your Login Route and other routes would go here ---
+// --- LOGIN ROUTE ---
 router.post('/login', async (req, res) => {
-    // Make sure your login logic is here
-    // For now, returning a placeholder
-    res.status(501).json({ message: "Login endpoint not fully implemented yet." });
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required.' });
+    }
+    const usersRef = adminDb.collection('users');
+    const userSnapshot = await usersRef.where('email', '==', email).limit(1).get();
+    if (userSnapshot.empty) {
+      return res.status(401).json({ error: 'Invalid credentials.' });
+    }
+    const userData = userSnapshot.docs[0].data();
+    const userDocId = userSnapshot.docs[0].id;
+    const isMatch = await bcrypt.compare(password, userData.password);
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Invalid credentials.' });
+    }
+    res.status(200).json({
+      message: 'Login successful',
+      user: {
+        id: userDocId,
+        fullName: userData.fullName,
+        email: userData.email,
+        role: userData.role
+      }
+    });
+  } catch (error) {
+    console.error('LOGIN ERROR:', error);
+    res.status(500).json({ error: 'An error occurred during login.' });
+  }
 });
-
 
 export default router;

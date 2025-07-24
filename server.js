@@ -19,11 +19,14 @@ import users from './src/routes/users.js';
 import uploads from './src/routes/uploads.js';
 
 // --- START: CORS CONFIGURATION ---
-// Add all your Vercel frontend URLs to this list
+// Add all your Vercel frontend URLs and localhost for development
 const allowedOrigins = [
-  'https://steelconnect-frontend.vercel.app', // Your main production URL
-  'https://steelconnect-frontend-6w9mke1zk-sabins-projects-02d8db3a.vercel.app', // Your preview URL
-  'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app' // Your other preview URL
+  'https://steelconnect-frontend.vercel.app',
+  '',
+  'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
+   'steelconnect-frontend-6w9mke1zk-sabins-projects-02d8db3a.vercel.app'
+  'http://localhost:3000', // For local development
+  'http://localhost:5173'  // For Vite local development
 ];
 
 const corsOptions = {
@@ -43,7 +46,7 @@ app.use(cors(corsOptions));
 // --- END: CORS CONFIGURATION ---
 
 
-// Middleware
+// Standard Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -70,6 +73,14 @@ app.get('/health', (req, res) => {
   });
 });
 
+// --- START: NEW DEBUGGING MIDDLEWARE ---
+// This will log a message every time a request hits any /auth endpoint.
+app.use('/auth', (req, res, next) => {
+  console.log('>>> A request just hit the /auth router gate.');
+  next(); // This passes the request to the next handler (your auth router).
+});
+// --- END: NEW DEBUGGING MIDDLEWARE ---
+
 // Routes
 app.use('/auth', auth);
 app.use('/admin', admin);
@@ -80,7 +91,7 @@ app.use('/users', users);
 app.use('/uploads', uploads);
 
 
-// 404 handler
+// 404 handler for routes not found
 app.use('*', (req, res) => {
   res.status(404).json({
     error: 'Route not found',

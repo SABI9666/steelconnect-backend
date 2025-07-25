@@ -1,4 +1,4 @@
-import express from 'express';
+mport express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 
@@ -10,11 +10,12 @@ const PORT = process.env.PORT || 3000;
 import auth from './src/routes/auth.js';
 import jobs from './src/routes/jobs.js';
 import uploads from './src/routes/uploads.js';
+import quotes from './src/routes/quotes.js';
 
 const allowedOrigins = [
-  'https://steelconnect-frontend.vercel.app',
-  'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
-   'https://steelconnect-frontend-bcxko5w3j-sabins-projects-02d8db3a.vercel.app',
+  'https://steelconnect-frontend.vercel.app','
+   'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
+   'https://steelconnect-frontend-7ibmmoryu-sabins-projects-02d8db3a.vercel.app',
   // Add all your other Vercel preview URLs here
   'http://localhost:3000',
   'http://localhost:5173'
@@ -47,6 +48,7 @@ app.get('/', (req, res) => {
 app.use('/auth', auth);
 app.use('/jobs', jobs);
 app.use('/uploads', uploads);
+app.use('/quotes', quotes);
 
 app.use('*', (req, res) => {
   res.status(404).json({ error: 'Route not found' });

@@ -13,9 +13,9 @@ import uploads from './src/routes/uploads.js';
 
 const allowedOrigins = [
   'https://steelconnect-frontend.vercel.app',
-  'steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
-  'steelconnect-frontend-68kac0qes-sabins-projects-02d8db3a.vercel.app',
-  // Add all your other Vercel preview URLs here
+  'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
+  'https://steelconnect-frontend-68kac0qes-sabins-projects-02d8db3a.vercel.app',
+  // Local development URLs
   'http://localhost:3000',
   'http://localhost:5173'
 ];

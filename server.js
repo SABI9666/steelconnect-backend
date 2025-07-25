@@ -14,7 +14,8 @@ import quotes from './src/routes/quotes.js';
 
 const allowedOrigins = [
   'https://steelconnect-frontend.vercel.app',
-  // Add all your other Vercel preview URLs here
+  'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
+  'https://steelconnect-frontend-keif0ih9l-sabins-projects-02d8db3a.vercel.app', // <-- NEW URL ADDED
   'http://localhost:3000',
   'http://localhost:5173'
 ];

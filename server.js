@@ -18,7 +18,7 @@ import jobs from './src/routes/jobs.js';
 const allowedOrigins = [
   'https://steelconnect-frontend.vercel.app',
   'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-lhwyeviog-sabins-projects-02d8db3a.vercel.app', // <-- YOUR NEW URL
+  'https://steelconnect-frontend-679t0tebo-sabins-projects-02d8db3a.vercel.app', // <-- YOUR NEW URL
   'http://localhost:3000',
   'http://localhost:5173'
 ];

@@ -1,5 +1,3 @@
-console.log('--- DEPLOYMENT TEST v5 ---'); 
-
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -17,13 +15,12 @@ import quotes from './src/routes/quotes.js';
 const allowedOrigins = [
   'https://steelconnect-frontend.vercel.app',
   'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-jgzt6sxlk-sabins-projects-02d8db3a.vercel.app',
+  'https://steelconnect-frontend-faysn1bk1-sabins-projects-02d8db3a.vercel.app', // <-- NEW URL ADDED
   'http://localhost:3000',
   'http://localhost:5173'
 ];
 const corsOptions = {
   origin: function (origin, callback) {
-    // FIXED: Changed --1 to -1
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {

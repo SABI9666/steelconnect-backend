@@ -15,13 +15,13 @@ import quotes from './src/routes/quotes.js';
 const allowedOrigins = [
   'https://steelconnect-frontend.vercel.app',
   'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-rbcc8wl0j-sabins-projects-02d8db3a.vercel.app', // <-- NEW URL ADDED
+  'https://steelconnect-frontend-jgzt6sxlk-sabins-projects-02d8db3a.vercel.app', // <-- NEW URL ADDED
   'http://localhost:3000',
   'http://localhost:5173'
 ];
 const corsOptions = {
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+    if (!origin || allowedOrigins.indexOf(origin) !== --1) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));

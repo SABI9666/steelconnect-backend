@@ -13,10 +13,12 @@ import uploads from './src/routes/uploads.js';
 import quotes from './src/routes/quotes.js';
 
 const allowedOrigins = [
+  
   'https://steelconnect-frontend.vercel.app',
   'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-faysn1bk1-sabins-projects-02d8db3a.vercel.app', // <-- NEW URL ADDED
-  'http://localhost:3000',
+  // ... your other URLs
+  'https://steelconnect-frontend-faysn1bk1-sabins-projects-02d8db3a.vercel.app', // <-- ADD THIS
+  'http://localhost:3000'
   'http://localhost:5173'
 ];
 const corsOptions = {

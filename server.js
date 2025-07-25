@@ -2,27 +2,23 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 
-// Load environment variables at the very top
 dotenv.config();
 
-// Initialize app and PORT
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Import all route modules
 import auth from './src/routes/auth.js';
 import jobs from './src/routes/jobs.js';
-// Add any other route imports you need here
+import uploads from './src/routes/uploads.js';
 
-// --- CORS CONFIGURATION ---
 const allowedOrigins = [
   'https://steelconnect-frontend.vercel.app',
-  'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-679t0tebo-sabins-projects-02d8db3a.vercel.app', // <-- YOUR NEW URL
+  'steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
+  'steelconnect-frontend-68kac0qes-sabins-projects-02d8db3a.vercel.app',
+  // Add all your other Vercel preview URLs here
   'http://localhost:3000',
   'http://localhost:5173'
 ];
-
 const corsOptions = {
   origin: function (origin, callback) {
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
@@ -35,41 +31,32 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-// --- END CORS CONFIGURATION ---
-
-// Standard Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use('/uploads', express.static('uploads'));
 
-// Request logging middleware
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
   next();
 });
 
-// Health check endpoint
 app.get('/', (req, res) => {
   res.json({ message: 'SteelConnect Backend API is running' });
 });
 
-// --- Routes ---
 app.use('/auth', auth);
 app.use('/jobs', jobs);
-// Add any other app.use() lines for your other routes here
+app.use('/uploads', uploads);
 
-
-// 404 handler for routes not found
 app.use('*', (req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 
-// Global error handler
 app.use((error, req, res, next) => {
   console.error('Global error handler:', error);
   res.status(500).json({ error: 'Internal server error' });
 });
 
-// Start server
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log(`✅ Environment: ${process.env.NODE_ENV || 'development'}`);

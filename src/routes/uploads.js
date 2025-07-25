@@ -17,23 +17,28 @@ const storage = multer.diskStorage({
     }
 });
 
-const upload = multer({
+const createUploader = (fieldName) => multer({
     storage: storage,
-    limits: { fileSize: 10000000 }, // 10MB limit
-}).single('document');
+    limits: { fileSize: 10000000 }, // 10MB
+}).single(fieldName);
 
-router.post('/', (req, res) => {
+// Endpoint for job document uploads
+router.post('/job', (req, res) => {
+    const upload = createUploader('document');
     upload(req, res, (err) => {
-        if (err) {
-            return res.status(400).json({ error: err });
-        }
-        if (req.file === undefined) {
-            return res.status(400).json({ error: 'No file selected!' });
-        }
-        res.status(200).json({
-            message: 'File uploaded successfully!',
-            filePath: `/uploads/${req.file.filename}`
-        });
+        if (err) return res.status(400).json({ error: err.message || err });
+        if (!req.file) return res.status(400).json({ error: 'No file selected!' });
+        res.status(200).json({ filePath: `/uploads/${req.file.filename}` });
+    });
+});
+
+// Endpoint for quote document uploads
+router.post('/quote', (req, res) => {
+    const upload = createUploader('quote_document');
+    upload(req, res, (err) => {
+        if (err) return res.status(400).json({ error: err.message || err });
+        if (!req.file) return res.status(400).json({ error: 'No file selected!' });
+        res.status(200).json({ filePath: `/uploads/${req.file.filename}` });
     });
 });
 

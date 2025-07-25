@@ -17,7 +17,6 @@ router.get('/', async (req, res) => {
         });
         res.status(200).json(jobs);
     } catch (error) {
-        console.error('ERROR FETCHING JOBS:', error);
         res.status(500).json({ error: 'Failed to fetch jobs.' });
     }
 });
@@ -25,7 +24,7 @@ router.get('/', async (req, res) => {
 // POST A NEW JOB
 router.post('/', async (req, res) => {
     try {
-        const { title, description, budget, deadline, skills, userId, userFullName, attachment } = req.body;
+        const { title, description, budget, deadline, skills, userId, userFullName, attachment, link } = req.body;
         if (!title || !description || !budget || !deadline || !userId) {
             return res.status(400).json({ error: 'Missing required job fields.' });
         }
@@ -38,15 +37,18 @@ router.post('/', async (req, res) => {
             posterId: userId,
             posterName: userFullName,
             attachment: attachment || '',
+            link: link || '',
             status: 'active',
             createdAt: new Date().toISOString(),
         };
         const docRef = await adminDb.collection('jobs').add(newJob);
         res.status(201).json({ message: 'Job posted successfully!', jobId: docRef.id });
     } catch (error) {
-        console.error('ERROR POSTING JOB:', error);
         res.status(500).json({ error: 'Failed to post new job.' });
     }
 });
+
+// You would add a POST route for quotes here, for example:
+// router.post('/:jobId/quotes', ...);
 
 export default router;

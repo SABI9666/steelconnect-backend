@@ -11,14 +11,15 @@ const PORT = process.env.PORT || 3000;
 
 // Import all route modules
 import auth from './src/routes/auth.js';
-// Add any other route imports you need here, for example:
-// import messages from './src/routes/messages.js';
+import jobs from './src/routes/jobs.js';
+// Add any other route imports you need here
 
 // --- CORS CONFIGURATION ---
 const allowedOrigins = [
   'https://steelconnect-frontend.vercel.app',
   'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-f9igyps8b-sabins-projects-02d8db3a.vercel.app', // <-- NEW URL ADDED
+  'https://steelconnect-frontend-f9igyps8b-sabins-projects-02d8db3a.vercel.app',
+  'https://steelconnect-frontend-6w9mke1zk-sabins-projects-02d8db3a.vercel.app',
   // Add any other Vercel preview URLs here
   'http://localhost:3000',
   'http://localhost:5173'
@@ -54,10 +55,9 @@ app.get('/', (req, res) => {
 });
 
 // --- Routes ---
-// This line tells the server to use the routes from auth.js for any /auth path
 app.use('/auth', auth);
-// Add any other app.use() lines for your other routes here, for example:
-// app.use('/messages', messages);
+app.use('/jobs', jobs);
+// Add any other app.use() lines for your other routes here
 
 
 // 404 handler for routes not found

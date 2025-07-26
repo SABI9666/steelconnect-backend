@@ -5,13 +5,41 @@ import { adminDb } from '../config/firebase.js';
 
 const router = express.Router();
 
-// GET ALL JOBS (no change)
-router.get('/', async (req, res) => { /* ... same as before ... */ });
+// GET ALL JOBS
+router.get('/', async (req, res) => {
+    try {
+        const jobsRef = adminDb.collection('jobs');
+        // Temporarily removed sorting to test the query
+        const snapshot = await jobsRef.get(); 
+        
+        if (snapshot.empty) {
+            return res.status(200).json([]);
+        }
 
-// POST A NEW JOB (no change)
-router.post('/', async (req, res) => { /* ... same as before ... */ });
+        const jobs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        res.status(200).json(jobs);
+    } catch (error) {
+        console.error("ERROR FETCHING JOBS:", error);
+        res.status(500).json({ error: 'Failed to fetch jobs.' });
+    }
+});
 
-// --- UPDATED: DELETE A JOB AND ITS ATTACHMENT ---
+// POST A NEW JOB
+router.post('/', async (req, res) => {
+    try {
+        const { title, description, budget, deadline, skills, userId, userFullName, attachment, link } = req.body;
+        if (!title || !description || !budget || !deadline || !userId) {
+            return res.status(400).json({ error: 'Missing required job fields.' });
+        }
+        const newJob = { title, description, budget, deadline, skills: skills || [], posterId: userId, posterName: userFullName, attachment: attachment || '', link: link || '', status: 'active', createdAt: new Date().toISOString() };
+        const docRef = await adminDb.collection('jobs').add(newJob);
+        res.status(201).json({ message: 'Job posted successfully!', jobId: docRef.id });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to post new job.' });
+    }
+});
+
+// DELETE A JOB
 router.delete('/:jobId', async (req, res) => {
     try {
         const { jobId } = req.params;
@@ -22,7 +50,6 @@ router.delete('/:jobId', async (req, res) => {
             return res.status(404).json({ error: 'Job not found.' });
         }
 
-        // Delete the attachment file from the server's disk
         const { attachment } = doc.data();
         if (attachment) {
             const filePath = path.join('uploads', path.basename(attachment));

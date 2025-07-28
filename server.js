@@ -17,8 +17,8 @@ const PORT = process.env.PORT || 3000;
 // This list tells your backend which frontend URLs are allowed to make requests.
 const allowedOrigins = [
   'https://steelconnect-frontend.vercel.app',
-  'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app', // <-- NEW URL
-  'https://steelconnect-frontend-gz59nddpm-sabins-projects-02d8db3a.vercel.app', // <-- NEW URL
+  'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app', // <-- NEW
+  'https://steelconnect-frontend-gz59nddpm-sabins-projects-02d8db3a.vercel.app', // <-- NEW
   'http://localhost:3000', // For local testing
   'http://localhost:5173'  // For local testing (e.g., with Vite)
 ];
@@ -68,3 +68,9 @@ app.listen(PORT, () => {
 });
 
 export default app;
+
+
+
+
+
+

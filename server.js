@@ -14,18 +14,17 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // --- CORS Configuration ---
-// This list tells your backend which frontend URLs are allowed to make requests.
 const allowedOrigins = [
   'https://steelconnect-frontend.vercel.app',
-  'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app', // <-- NEW
-  'https://steelconnect-frontend-gz59nddpm-sabins-projects-02d8db3a.vercel.app', // <-- NEW
-  'http://localhost:3000', // For local testing
-  'http://localhost:5173'  // For local testing (e.g., with Vite)
+  'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
+  'https://steelconnect-frontend-gz59nddpm-sabins-projects-02d8db3a.vercel.app',
+  'https://steelconnect-frontend-brbqs2eza-sabins-projects-02d8db3a.vercel.app', // <-- NEW URL
+  'http://localhost:3000',
+  'http://localhost:5173'
 ];
 
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
@@ -39,7 +38,6 @@ app.use(cors(corsOptions));
 app.use(express.json());
 
 // --- Serve Static Files ---
-// This line makes files in the "uploads" directory accessible to the frontend.
 app.use('/uploads', express.static('uploads'));
 
 // --- Routes ---
@@ -68,9 +66,3 @@ app.listen(PORT, () => {
 });
 
 export default app;
-
-
-
-
-
-

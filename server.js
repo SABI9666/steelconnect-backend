@@ -1,27 +1,31 @@
-console.log('--- FINAL DEPLOYMENT TEST ---'); 
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+
+// Import your route handlers
+import auth from './src/routes/auth.js';
+import jobs from './src/routes/jobs.js';
+import uploads from './src/routes/uploads.js';
+import quotes from './src/routes/quotes.js';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-import auth from './src/routes/auth.js';
-import jobs from './src/routes/jobs.js';
-import uploads from './src/routes/uploads.js';
-import quotes from './src/routes/quotes.js';
-
+// --- CORS Configuration ---
+// This list tells your backend which frontend URLs are allowed to make requests.
 const allowedOrigins = [
   'https://steelconnect-frontend.vercel.app',
-  'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-9fl9ph23h-sabins-projects-02d8db3a.vercel.app', // <-- NEW URL ADDED
-  'http://localhost:3000',
-  'http://localhost:5173'
+  'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app', // <-- PREVIOUSLY ADDED
+  'https://steelconnect-frontend-asyx5xv6q-sabins-projects-02d8db3a.vercel.app', // <-- NEW URL ADDED
+  'http://localhost:3000', // For local testing
+  'http://localhost:5173'  // For local testing (e.g., with Vite)
 ];
+
 const corsOptions = {
   origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
@@ -33,14 +37,8 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use('/uploads', express.static('uploads'));
 
-app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
-  next();
-});
-
+// --- Routes ---
 app.get('/', (req, res) => {
   res.json({ message: 'SteelConnect Backend API is running' });
 });
@@ -50,6 +48,7 @@ app.use('/jobs', jobs);
 app.use('/uploads', uploads);
 app.use('/quotes', quotes);
 
+// --- Error Handling ---
 app.use('*', (req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
@@ -59,9 +58,9 @@ app.use((error, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
+// --- Server Start ---
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
-  console.log(`✅ Environment: ${process.env.NODE_ENV || 'development'}`);
 });
 
 export default app;

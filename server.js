@@ -17,9 +17,8 @@ const PORT = process.env.PORT || 3000;
 // This list tells your backend which frontend URLs are allowed to make requests.
 const allowedOrigins = [
   'https://steelconnect-frontend.vercel.app',
-  'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-asyx5xv6q-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-hf9t7bc8q-sabins-projects-02d8db3a.vercel.app', // <-- NEW URL ADDED
+  'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app', // <-- NEW URL
+  'https://steelconnect-frontend-gz59nddpm-sabins-projects-02d8db3a.vercel.app', // <-- NEW URL
   'http://localhost:3000', // For local testing
   'http://localhost:5173'  // For local testing (e.g., with Vite)
 ];
@@ -38,6 +37,10 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.use(express.json());
+
+// --- Serve Static Files ---
+// This line makes files in the "uploads" directory accessible to the frontend.
+app.use('/uploads', express.static('uploads'));
 
 // --- Routes ---
 app.get('/', (req, res) => {

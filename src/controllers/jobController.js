@@ -1,143 +1,110 @@
+// src/controllers/jobController.js (Corrected)
+import { adminDb, admin } from '../config/firebase.js';
 
-// Job Controller
-const admin = require('firebase-admin');
-const db = admin.firestore();
-
-// Get all jobs
-const getAllJobs = async (req, res) => {
+// Get all jobs (public)
+export const getAllJobs = async (req, res, next) => {
   try {
-    const jobsSnapshot = await db.collection('jobs').get();
-    const jobs = [];
+    const jobsSnapshot = await adminDb.collection('jobs').orderBy('createdAt', 'desc').get();
+    const jobs = jobsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     
-    jobsSnapshot.forEach(doc => {
-      jobs.push({
-        id: doc.id,
-        ...doc.data()
-      });
-    });
-    
-    res.status(200).json({
-      success: true,
-      data: jobs
-    });
+    res.status(200).json({ success: true, data: jobs });
   } catch (error) {
-    console.error('Error getting jobs:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching jobs',
-      error: error.message
-    });
+    next(error);
   }
 };
 
-// Get job by ID
-const getJobById = async (req, res) => {
+// Get a single job by its ID (public)
+export const getJobById = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const jobDoc = await db.collection('jobs').doc(id).get();
+    const jobDoc = await adminDb.collection('jobs').doc(id).get();
     
     if (!jobDoc.exists) {
-      return res.status(404).json({
-        success: false,
-        message: 'Job not found'
-      });
+      return res.status(404).json({ success: false, message: 'Job not found.' });
     }
     
-    res.status(200).json({
-      success: true,
-      data: {
-        id: jobDoc.id,
-        ...jobDoc.data()
-      }
-    });
+    res.status(200).json({ success: true, data: { id: jobDoc.id, ...jobDoc.data() }});
   } catch (error) {
-    console.error('Error getting job:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching job',
-      error: error.message
-    });
+    next(error);
   }
 };
 
-// Create new job
-const createJob = async (req, res) => {
+// Create a new job (protected, for contractors)
+export const createJob = async (req, res, next) => {
   try {
+    // Assuming validation middleware has already run
     const jobData = {
       ...req.body,
+      posterId: req.user.id, // Set the poster ID from the authenticated user
+      posterName: req.user.name,
+      status: 'open',
+      quotesCount: 0,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     };
     
-    const jobRef = await db.collection('jobs').add(jobData);
+    const jobRef = await adminDb.collection('jobs').add(jobData);
     
     res.status(201).json({
       success: true,
-      data: {
-        id: jobRef.id,
-        ...jobData
-      },
-      message: 'Job created successfully'
+      message: 'Job created successfully.',
+      data: { id: jobRef.id, ...jobData }
     });
   } catch (error) {
-    console.error('Error creating job:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error creating job',
-      error: error.message
-    });
+    next(error);
   }
 };
 
-// Update job
-const updateJob = async (req, res) => {
+// Update an existing job (protected)
+export const updateJob = async (req, res, next) => {
   try {
     const { id } = req.params;
+    const jobRef = adminDb.collection('jobs').doc(id);
+    const jobDoc = await jobRef.get();
+
+    if (!jobDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Job not found.' });
+    }
+
+    // Authorization check: only the user who posted the job can update it
+    if (jobDoc.data().posterId !== req.user.id) {
+       return res.status(403).json({ success: false, message: 'You are not authorized to update this job.' });
+    }
+    
     const updateData = {
       ...req.body,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     };
     
-    await db.collection('jobs').doc(id).update(updateData);
+    await jobRef.update(updateData);
     
-    res.status(200).json({
-      success: true,
-      message: 'Job updated successfully'
-    });
+    res.status(200).json({ success: true, message: 'Job updated successfully.' });
   } catch (error) {
-    console.error('Error updating job:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error updating job',
-      error: error.message
-    });
+    next(error);
   }
 };
 
-// Delete job
-const deleteJob = async (req, res) => {
+// Delete a job (protected)
+export const deleteJob = async (req, res, next) => {
   try {
     const { id } = req.params;
-    await db.collection('jobs').doc(id).delete();
-    
-    res.status(200).json({
-      success: true,
-      message: 'Job deleted successfully'
-    });
-  } catch (error) {
-    console.error('Error deleting job:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error deleting job',
-      error: error.message
-    });
-  }
-};
+    const jobRef = adminDb.collection('jobs').doc(id);
+    const jobDoc = await jobRef.get();
 
-module.exports = {
-  getAllJobs,
-  getJobById,
-  createJob,
-  updateJob,
-  deleteJob
+     if (!jobDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Job not found.' });
+    }
+
+    // Authorization check: only the user who posted the job or an admin can delete it
+    if (jobDoc.data().posterId !== req.user.id && req.user.type !== 'admin') {
+       return res.status(403).json({ success: false, message: 'You are not authorized to delete this job.' });
+    }
+
+    // In a real app, you would also delete associated quotes and files from storage
+    await jobRef.delete();
+    
+    res.status(200).json({ success: true, message: 'Job deleted successfully.' });
+  } catch (error) {
+    next(error);
+  }
 };

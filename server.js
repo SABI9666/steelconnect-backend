@@ -18,7 +18,8 @@ const allowedOrigins = [
   'https://steelconnect-frontend.vercel.app',
   'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
   'https://steelconnect-frontend-gz59nddpm-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-brbqs2eza-sabins-projects-02d8db3a.vercel.app', // <-- NEW URL
+  'https://steelconnect-frontend-brbqs2eza-sabins-projects-02d8db3a.vercel.app',
+  'https://steelconnect-frontend-rf3s5etrn-sabins-projects-02d8db3a.vercel.app', // <-- NEW URL
   'http://localhost:3000',
   'http://localhost:5173'
 ];

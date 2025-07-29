@@ -1,12 +1,11 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken'; // <-- 1. Import jsonwebtoken
+import jwt from 'jsonwebtoken';
 import { adminDb } from '../config/firebase.js';
 import { sendEmail } from '../utils/mailer.js';
 
 const router = express.Router();
 
-// --- LOGIN ROUTE (UPDATED) ---
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -27,7 +26,6 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials.' });
     }
     
-    // ** 2. Create JWT Payload with user info **
     const payload = {
       user: {
         id: userDocId,
@@ -37,22 +35,21 @@ router.post('/login', async (req, res) => {
       }
     };
     
-    // ** 3. Sign the token with a secret key **
+    // IMPORTANT: This environment variable MUST be set correctly on your server.
     const token = jwt.sign(
       payload, 
       process.env.JWT_SECRET || 'your_default_secret_key', 
       { expiresIn: '1d' }
     );
 
-    // ** 4. Send token back to the frontend **
     res.status(200).json({
       message: 'Login successful',
-      token: token, // <-- THE MISSING PIECE
+      token: token,
       user: {
         id: userDocId,
-        fullName: userData.fullName,
+        name: userData.fullName, // Ensure frontend uses 'name'
         email: userData.email,
-        role: userData.role
+        type: userData.role // Ensure frontend uses 'type'
       }
     });
 
@@ -62,8 +59,6 @@ router.post('/login', async (req, res) => {
   }
 });
 
-
-// (The rest of your auth.js file remains the same)
-// ... registration route ...
+// ... (your other routes like registration) ...
 
 export default router;

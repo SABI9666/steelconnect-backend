@@ -7,7 +7,7 @@ import auth from './src/routes/auth.js';
 import jobs from './src/routes/jobs.js';
 import uploads from './src/routes/uploads.js';
 import quotes from './src/routes/quotes.js';
-import messages from './src/routes/messages.js'; // <-- NEW
+import messages from './src/routes/messages.js';
 
 dotenv.config();
 
@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 3000;
 const allowedOrigins = [
   'https://steelconnect-frontend.vercel.app',
   'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-do6hetpbq-sabins-projects-02d8db3a.vercel.app', // <-- UPDATED
+  'https://steelconnect-frontend-1drcz62af-sabins-projects-02d8db3a.vercel.app', // <-- NEW URL ADDED
   'http://localhost:3000',
   'http://localhost:5173'
 ];
@@ -46,7 +46,7 @@ app.use('/auth', auth);
 app.use('/jobs', jobs);
 app.use('/uploads', uploads);
 app.use('/quotes', quotes);
-app.use('/messages', messages); // <-- NEW
+app.use('/messages', messages);
 
 // --- Error Handling ---
 app.use('*', (req, res) => {

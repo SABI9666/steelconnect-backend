@@ -1,27 +1,28 @@
 import express from 'express';
 import { adminDb } from '../config/firebase.js';
-import { upload } from '../middleware/upload.js'; // <-- FIX: Import the upload middleware
+import { upload } from '../middleware/upload.js';
+// --- FIX: Import the uploadToFirebase function ---
+import { uploadToFirebase } from '../middleware/upload.js';
 
 const router = express.Router();
 
 // POST A NEW QUOTE
-// FIX: Added the 'upload.single('attachment')' middleware to handle form data
 router.post('/', upload.single('attachment'), async (req, res) => {
     try {
         const { jobId, amount, description, quoterId, quoterName } = req.body;
-        let attachmentUrl = null;
+        
+        let attachmentUrl = null; 
 
         if (req.file) {
-            // The uploadToFirebase function is in your middleware, it returns a URL
-            // This assumes uploadToFirebase is correctly implemented
-            attachmentUrl = req.file.publicUrl; // Or however you get the URL from the upload process
+            // This line now works because of the import
+            attachmentUrl = await uploadToFirebase(req.file, 'quote-attachments');
         }
         
         const newQuote = {
             jobId,
             amount: Number(amount),
             description,
-            attachment: attachmentUrl, // Use the URL from the uploaded file
+            attachment: attachmentUrl, // This will be null or a valid URL
             quoterId,
             quoterName,
             status: 'pending',
@@ -119,6 +120,3 @@ router.delete('/:quoteId', async (req, res) => {
 });
 
 export default router;
-
-
-

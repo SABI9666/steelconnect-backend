@@ -15,11 +15,12 @@ const PORT = process.env.PORT || 3000;
 
 // --- CORS Configuration ---
 const allowedOrigins = [
-  'https://steelconnect-frontend.vercel.app', // This URL is already included
-  'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app', // This URL is already included
+  'https://steelconnect-frontend.vercel.app',
+  'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
   'https://steelconnect-frontend-gz59nddpm-sabins-projects-02d8db3a.vercel.app',
   'https://steelconnect-frontend-brbqs2eza-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-rf3s5etrn-sabins-projects-02d8db3a.vercel.app', // This URL is also already included
+  'https://steelconnect-frontend-rf3s5etrn-sabins-projects-02d8db3a.vercel.app',
+  'https://steelconnect-frontend-9gl9dsbqv-sabins-projects-02d8db3a.vercel.app', // <-- NEW URL ADDED
   'http://localhost:3000',
   'http://localhost:5173'
 ];

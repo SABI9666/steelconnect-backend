@@ -1,93 +1,125 @@
-// src/controllers/messageController.js (Corrected)
 import { adminDb } from '../config/firebase.js';
-import { uploadToFirebase } from '../middleware/upload.js';
 
-// Get or create a conversation for a specific job between the current user and another user
-export const getOrCreateConversation = async (req, res, next) => {
-    try {
-        const { recipientId, jobId } = req.body;
-        const members = [req.user.id, recipientId].sort(); // Sort IDs for a consistent conversation ID
-        
-        // Create a predictable ID based on the job and members
-        const conversationId = `${jobId}_${members[0]}_${members[1]}`;
-
-        const conversationRef = adminDb.collection('conversations').doc(conversationId);
-        const conversationDoc = await conversationRef.get();
-
-        if (conversationDoc.exists) {
-            return res.json({ success: true, data: { id: conversationDoc.id, ...conversationDoc.data() } });
-        } else {
-            const newConversation = {
-                members,
-                jobId,
-                createdAt: new Date(),
-                lastMessageAt: new Date(),
-            };
-            await conversationRef.set(newConversation);
-            return res.status(201).json({ success: true, data: { id: conversationId, ...newConversation }});
-        }
-    } catch (error) {
-        next(error);
-    }
+// Get all conversations for the logged-in user
+export const getConversations = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const snapshot = await adminDb.collection('conversations')
+      .where('participantIds', 'array-contains', userId)
+      .orderBy('updatedAt', 'desc')
+      .get();
+    
+    const conversations = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    res.status(200).json({ success: true, data: conversations });
+  } catch (error) {
+    next(error);
+  }
 };
 
-// Send a message within a conversation
-export const sendMessage = async (req, res, next) => {
-    try {
-        const { conversationId, text } = req.body;
-        const conversationRef = adminDb.collection('conversations').doc(conversationId);
-        const conversationDoc = await conversationRef.get();
+// Start a new conversation or get an existing one
+export const findOrCreateConversation = async (req, res, next) => {
+  try {
+    const { jobId, recipientId } = req.body;
+    const initiatorId = req.user.id;
 
-        if (!conversationDoc.exists || !conversationDoc.data().members.includes(req.user.id)) {
-            return res.status(403).json({ success: false, message: 'You are not a member of this conversation.' });
+    const query = adminDb.collection('conversations')
+      .where('jobId', '==', jobId)
+      .where('participantIds', 'array-contains', initiatorId);
+      
+    const snapshot = await query.get();
+    
+    let existingConversation = null;
+    snapshot.forEach(doc => {
+        const data = doc.data();
+        if (data.participantIds.includes(recipientId)) {
+            existingConversation = { id: doc.id, ...data };
         }
-        
-        let attachmentUrl = null;
-        if (req.file) {
-            // The 'upload' middleware provides req.file; uploadToFirebase handles the rest
-            attachmentUrl = await uploadToFirebase(req.file, 'message-attachments');
-        }
+    });
 
-        if (!text && !attachmentUrl) {
-            return res.status(400).json({ success: false, message: 'A message must contain text or an attachment.' });
-        }
-
-        const messageData = {
-            conversationId,
-            senderId: req.user.id,
-            text: text || '',
-            attachment: attachmentUrl, // This will be the public URL
-            createdAt: new Date(),
-        };
-
-        const messageRef = await conversationRef.collection('messages').add(messageData);
-        await conversationRef.update({ 
-            lastMessageAt: new Date(), 
-            lastMessageText: text ? text.substring(0, 50) : 'File Attachment' 
-        });
-
-        res.status(201).json({ success: true, data: { id: messageRef.id, ...messageData } });
-    } catch (error) {
-        next(error);
+    if (existingConversation) {
+      return res.status(200).json({ success: true, data: existingConversation });
     }
+
+    const newConversation = {
+      jobId,
+      participantIds: [initiatorId, recipientId],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      lastMessage: 'Conversation started.'
+    };
+    const docRef = await adminDb.collection('conversations').add(newConversation);
+    res.status(201).json({ success: true, data: { id: docRef.id, ...newConversation } });
+
+  } catch (error) {
+    next(error);
+  }
 };
 
 // Get all messages for a specific conversation
 export const getMessages = async (req, res, next) => {
-    try {
-        const { conversationId } = req.params;
-        const conversationRef = adminDb.collection('conversations').doc(conversationId);
-        const conversationDoc = await conversationRef.get();
+  try {
+    const { conversationId } = req.params;
+    const userId = req.user.id;
 
-        if (!conversationDoc.exists || !conversationDoc.data().members.includes(req.user.id)) {
-            return res.status(403).json({ success: false, message: 'You are not authorized to view this conversation.' });
-        }
-
-        const messagesSnapshot = await conversationRef.collection('messages').orderBy('createdAt', 'asc').get();
-        const messages = messagesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-        res.json({ success: true, data: messages });
-    } catch (error) {
-        next(error);
+    const convoDoc = await adminDb.collection('conversations').doc(conversationId).get();
+    if (!convoDoc.exists || !convoDoc.data().participantIds.includes(userId)) {
+      return res.status(403).json({ success: false, message: 'Not authorized to view these messages.' });
     }
+    
+    const messagesSnapshot = await adminDb.collection('conversations').doc(conversationId).collection('messages')
+      .orderBy('createdAt', 'asc')
+      .get();
+      
+    const messages = messagesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    res.status(200).json({ success: true, data: messages });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Send a new message
+export const sendMessage = async (req, res, next) => {
+  try {
+    const { conversationId } = req.params;
+    const { text } = req.body;
+    const senderId = req.user.id;
+    const senderType = req.user.type;
+
+    const convoRef = adminDb.collection('conversations').doc(conversationId);
+    const convoDoc = await convoRef.get();
+
+    if (!convoDoc.exists || !convoDoc.data().participantIds.includes(senderId)) {
+      return res.status(403).json({ success: false, message: 'Not authorized to send messages here.' });
+    }
+
+    // --- PERMISSION LOGIC ---
+    if (senderType === 'designer') {
+      const { jobId } = convoDoc.data();
+      const designerId = senderId;
+      const quoteQuery = await adminDb.collection('quotes')
+        .where('jobId', '==', jobId)
+        .where('quoterId', '==', designerId)
+        .limit(1).get();
+      
+      if (quoteQuery.empty || quoteQuery.docs[0].data().status !== 'approved') {
+        return res.status(403).json({ success: false, message: 'You can only message after your quote is approved.' });
+      }
+    }
+
+    const newMessage = {
+      text,
+      senderId,
+      createdAt: new Date()
+    };
+    
+    await adminDb.collection('conversations').doc(conversationId).collection('messages').add(newMessage);
+    await convoRef.update({ 
+        lastMessage: text,
+        updatedAt: new Date() 
+    });
+
+    res.status(201).json({ success: true, message: 'Message sent.', data: newMessage });
+  } catch (error) {
+    next(error);
+  }
 };

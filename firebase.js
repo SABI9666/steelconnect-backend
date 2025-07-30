@@ -1,31 +1,29 @@
-// src/config/firebase.js
-
 import admin from 'firebase-admin';
 
-// Check if the environment variable for the Firebase key exists.
-// This is the key you set on Render.
+// Check for the required environment variable
 if (!process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64) {
-  throw new Error('The Firebase service account key is not set in your environment variables. Please add FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 to your environment.');
+  throw new Error('FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 is not set in environment variables.');
 }
 
-// Decode the Base64 encoded service account key.
+// Decode the Base64 service account key from environment variables
 const serviceAccountJson = Buffer.from(
   process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64,
   'base64'
 ).toString('utf8');
 
-// Parse the decoded JSON string into a JavaScript object.
 const serviceAccount = JSON.parse(serviceAccountJson);
 
-// Initialize the Firebase Admin SDK, but only if it hasn't been initialized already.
-// This prevents errors during hot-reloading in development.
+// Initialize Firebase Admin SDK if not already initialized
 if (!admin.apps.length) {
   admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
+    credential: admin.credential.cert(serviceAccount),
+    // --- This is the required fix ---
+    storageBucket: 'steelconnect-backend-3f684.appspot.com'
   });
 }
 
-// Export the Firestore database instance so other files can use it.
+// Export the initialized services
 const adminDb = admin.firestore();
+const adminStorage = admin.storage();
 
-export { adminDb };
+export { admin, adminDb, adminStorage };

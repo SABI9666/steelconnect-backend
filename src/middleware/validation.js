@@ -1,3 +1,5 @@
+// validation.js
+
 const { body, validationResult } = require('express-validator');
 
 const handleValidationErrors = (req, res, next) => {
@@ -64,12 +66,13 @@ const validateJob = [
     .withMessage('Location is required')
 ];
 
+// CORRECTED VALIDATION RULE FOR QUOTES
 const validateQuote = [
   body('jobId')
     .trim()
     .notEmpty()
     .withMessage('Job ID is required'),
-  body('quoteAmount')
+  body('amount') // <-- FIX: Changed from 'quoteAmount' to 'amount'
     .isFloat({ min: 0 })
     .withMessage('Quote amount must be a positive number'),
   body('timeline')

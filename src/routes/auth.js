@@ -10,7 +10,6 @@ router.post('/register', async (req, res) => {
   try {
     const { email, password, name, type } = req.body;
 
-    // Basic validation
     if (!email || !password || !name || !type) {
       return res.status(400).json({ error: 'Email, password, name, and type are required.' });
     }
@@ -33,8 +32,6 @@ router.post('/register', async (req, res) => {
     };
 
     const userRef = await adminDb.collection('users').add(newUser);
-
-    // Don't send the password back in the response
     const { password: _, ...userToReturn } = newUser;
 
     res.status(201).json({
@@ -54,54 +51,4 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required.' });
-    }
-
-    const usersRef = adminDb.collection('users');
-    const userSnapshot = await usersRef.where('email', '==', email).limit(1).get();
-    if (userSnapshot.empty) {
-      return res.status(401).json({ error: 'Invalid credentials.' });
-    }
-
-    const userDoc = userSnapshot.docs[0];
-    const userData = userDoc.data();
-    const isMatch = await bcrypt.compare(password, userData.password);
-    if (!isMatch) {
-      return res.status(401).json({ error: 'Invalid credentials.' });
-    }
-    
-    // --- FIX: Create the JWT payload consistently with 'type' and 'name' ---
-    const payload = {
-      user: {
-        id: userDoc.id,
-        email: userData.email,
-        type: userData.type, // Use 'type' from the database
-        name: userData.name
-      }
-    };
-    
-    const token = jwt.sign(
-      payload, 
-      process.env.JWT_SECRET || 'your_default_secret_key', 
-      { expiresIn: '1d' }
-    );
-
-    res.status(200).json({
-      message: 'Login successful',
-      token: token,
-      // --- FIX: Send a consistent user object to the frontend ---
-      user: {
-        id: userDoc.id,
-        name: userData.name,
-        email: userData.email,
-        type: userData.type // Send 'type' to the frontend
-      }
-    });
-
-  } catch (error) {
-    console.error('LOGIN ERROR:', error);
-    res.status(500).json({ error: 'An error occurred during login.' });
-  }
-});
-
-export default router;
+      return res.status(400).

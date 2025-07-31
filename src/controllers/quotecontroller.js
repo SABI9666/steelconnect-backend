@@ -1,4 +1,4 @@
-/ src/controllers/quoteController.js (Corrected)
+// src/controllers/quoteController.js (Corrected)
 import { adminDb, admin } from '../config/firebase.js';
 import { uploadToFirebase } from '../middleware/upload.js';
 
@@ -13,7 +13,6 @@ export const createQuote = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'The requested job posting was not found.' });
     }
     
-    // Handle file uploads
     let attachments = [];
     if (req.files && req.files.length > 0) {
       const uploadPromises = req.files.map(file => uploadToFirebase(file, 'quote-attachments'));
@@ -23,19 +22,19 @@ export const createQuote = async (req, res, next) => {
     const quoteData = {
       jobId,
       jobTitle: jobDoc.data().title,
-      designerId: req.user.id,
-      designerName: req.user.name,
+      // FIX: Changed req.user.id to req.user.userId
+      designerId: req.user.userId, 
+      designerName: req.user.name, // This now works because name is in the token
       contractorId: jobDoc.data().posterId,
       quoteAmount: parseFloat(quoteAmount),
       timeline: parseInt(timeline),
       description,
-      attachments, // Array of public URLs from Firebase Storage
+      attachments,
       status: 'submitted',
       createdAt: new Date(),
     };
 
     const quoteRef = await adminDb.collection('quotes').add(quoteData);
-    // Atomically increment the quotes count on the job document
     await jobRef.update({ quotesCount: admin.firestore.FieldValue.increment(1) });
     
     res.status(201).json({ success: true, message: 'Quote submitted successfully.', data: { id: quoteRef.id, ...quoteData } });
@@ -54,8 +53,8 @@ export const getQuotesForJob = async (req, res, next) => {
              return res.status(404).json({ success: false, message: 'Job not found.' });
         }
         
-        // Authorization: Only the contractor who posted the job can see the quotes
-        if (jobDoc.data().posterId !== req.user.id) {
+        // FIX: Changed req.user.id to req.user.userId
+        if (jobDoc.data().posterId !== req.user.userId) {
             return res.status(403).json({ success: false, message: 'You are not authorized to view these quotes.' });
         }
 
@@ -73,8 +72,8 @@ export const getQuotesByUser = async (req, res, next) => {
     try {
         const { userId } = req.params;
         
-        // Authorization: A user can only view their own quotes
-        if (userId !== req.user.id) {
+        // FIX: Changed req.user.id to req.user.userId
+        if (userId !== req.user.userId) {
             return res.status(403).json({ success: false, message: 'You are not authorized to view these quotes.' });
         }
 
@@ -99,8 +98,8 @@ export const getQuoteById = async (req, res, next) => {
 
         const quoteData = quoteDoc.data();
 
-        // Authorization: The designer who created it or the contractor who owns the job can view it
-        if (quoteData.designerId !== req.user.id && quoteData.contractorId !== req.user.id) {
+        // FIX: Changed req.user.id to req.user.userId
+        if (quoteData.designerId !== req.user.userId && quoteData.contractorId !== req.user.userId) {
             return res.status(403).json({ success: false, message: 'You are not authorized to view this quote.' });
         }
 
@@ -125,22 +124,19 @@ export const approveQuote = async (req, res, next) => {
         const jobRef = adminDb.collection('jobs').doc(quoteData.jobId);
         const jobDoc = await jobRef.get();
 
-        // Authorization: Only the contractor who posted the job can approve a quote
-        if (jobDoc.data().posterId !== req.user.id) {
+        // FIX: Changed req.user.id to req.user.userId
+        if (jobDoc.data().posterId !== req.user.userId) {
             return res.status(403).json({ success: false, message: 'You are not authorized to approve this quote.' });
         }
 
-        // Logic to set the job's assigned designer and update its status
         await jobRef.update({
             status: 'assigned',
             assignedDesignerId: quoteData.designerId,
             assignedQuoteId: id,
         });
 
-        // Update the quote's status to 'approved'
         await quoteRef.update({ status: 'approved' });
         
-        // Optionally, update all other quotes for this job to 'rejected'
         const otherQuotesSnapshot = await adminDb.collection('quotes').where('jobId', '==', quoteData.jobId).get();
         const batch = adminDb.batch();
         otherQuotesSnapshot.docs.forEach(doc => {
@@ -167,16 +163,15 @@ export const deleteQuote = async (req, res, next) => {
             return res.status(404).json({ success: false, message: 'Quote not found.' });
         }
         
-        // Authorization: Only the designer who created the quote can delete it, and only if it's not approved.
         const quoteData = quoteDoc.data();
-        if (quoteData.designerId !== req.user.id) {
+        // FIX: Changed req.user.id to req.user.userId
+        if (quoteData.designerId !== req.user.userId) {
             return res.status(403).json({ success: false, message: 'You are not authorized to delete this quote.' });
         }
         if (quoteData.status === 'approved') {
             return res.status(400).json({ success: false, message: 'Cannot delete an approved quote.' });
         }
 
-        // Atomically decrement the quotes count on the job document
         const jobRef = adminDb.collection('jobs').doc(quoteData.jobId);
         await jobRef.update({ quotesCount: admin.firestore.FieldValue.increment(-1) });
 

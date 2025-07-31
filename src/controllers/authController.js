@@ -1,10 +1,11 @@
-// src/controllers/authController.js (Corrected)
+/ src/controllers/authController.js (Corrected)
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { adminDb } from '../config/firebase.js';
 
-const generateToken = (userId, type) => {
-  return jwt.sign({ userId, type }, process.env.JWT_SECRET, {
+// FIX: Added 'name' to the token payload
+const generateToken = (userId, type, name) => {
+  return jwt.sign({ userId, type, name }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRES_IN || '30d',
   });
 };
@@ -24,13 +25,13 @@ export const register = async (req, res, next) => {
       name,
       type, // 'contractor' or 'designer'
       createdAt: new Date(),
-      isVerified: false, // Could be used for email verification later
+      isVerified: false, 
     };
 
     const userRef = await adminDb.collection('users').add(userData);
-    const token = generateToken(userRef.id, userData.type);
+    // FIX: Pass the name to the token generator
+    const token = generateToken(userRef.id, userData.type, userData.name);
     
-    // Omit password from the returned user object
     const { password: _, ...userToReturn } = userData;
 
     res.status(201).json({
@@ -60,7 +61,8 @@ export const login = async (req, res, next) => {
     }
 
     await userDoc.ref.update({ lastLogin: new Date() });
-    const token = generateToken(userDoc.id, userData.type);
+    // FIX: Pass the name to the token generator
+    const token = generateToken(userDoc.id, userData.type, userData.name);
     
     const { password: _, ...userToReturn } = userData;
     res.json({
@@ -75,6 +77,5 @@ export const login = async (req, res, next) => {
 };
 
 export const getProfile = async (req, res) => {
-  // req.user is populated by the authenticateToken middleware
   res.json({ success: true, user: req.user });
 };

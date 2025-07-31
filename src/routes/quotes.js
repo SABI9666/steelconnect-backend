@@ -1,3 +1,4 @@
+// src/routes/quotes.js (Corrected)
 import express from 'express';
 import { adminDb } from '../config/firebase.js';
 

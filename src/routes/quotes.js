@@ -41,16 +41,3 @@ router.put('/:id/approve', authenticateToken, approveQuote);
 router.delete('/:id', authenticateToken, deleteQuote);
 
 export default router;
-
-
-
-
-
-
-
-
-
-
-
-
-

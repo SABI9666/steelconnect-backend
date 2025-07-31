@@ -1,8 +1,7 @@
-// src/routes/quotes.js (Corrected)
 import express from 'express';
 import { adminDb } from '../config/firebase.js';
 
-// Corrected import path for the controller
+// Fixed import path to match actual filename (lowercase)
 import { 
   createQuote, 
   getQuotesForJob, 
@@ -10,7 +9,7 @@ import {
   getQuoteById, 
   approveQuote, 
   deleteQuote 
-} from '../controllers/quoteController.js'; 
+} from '../controllers/quotecontroller.js'; // Changed from 'quoteController.js' to 'quotecontroller.js'
 
 import { authenticateToken, isDesigner } from '../middleware/auth.js';
 import { upload } from '../middleware/upload.js';

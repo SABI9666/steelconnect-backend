@@ -5,7 +5,7 @@ import { adminDb } from '../config/firebase.js';
 
 const router = express.Router();
 
-// --- User Registration ---
+// --- User Registration (No changes needed here) ---
 router.post('/register', async (req, res) => {
   try {
     const { email, password, name, type } = req.body;
@@ -67,13 +67,12 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials.' });
     }
     
+    // --- FIX: The payload is now "flat" to match the authentication middleware ---
     const payload = {
-      user: {
-        id: userDoc.id,
-        email: userData.email,
-        type: userData.type,
-        name: userData.name
-      }
+      userId: userDoc.id,
+      email: userData.email,
+      type: userData.type,
+      name: userData.name
     };
     
     const token = jwt.sign(

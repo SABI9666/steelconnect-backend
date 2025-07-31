@@ -12,7 +12,7 @@ export const authenticateToken = async (req, res, next) => {
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_default_secret_key');
 
-    // --- FIX: Changed from 'decoded.user.id' to 'decoded.userId' to correctly read the token payload ---
+    // --- FIX: Looks for 'decoded.userId' to correctly read the token payload ---
     if (!decoded || !decoded.userId) {
       return res.status(403).json({ success: false, message: 'Token is malformed or invalid.' });
     }
@@ -23,12 +23,12 @@ export const authenticateToken = async (req, res, next) => {
     }
 
     const userData = userDoc.data();
+    // Attach user information to the request object
     req.user = {
       id: userDoc.id,
       email: userData.email,
       name: userData.name,
       type: userData.type,
-      isVerified: userData.isVerified
     };
 
     next();

@@ -18,7 +18,8 @@ const PORT = process.env.PORT || 3000;
 const allowedOrigins = [
   'https://steelconnect-frontend.vercel.app',
   'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-1drcz62af-sabins-projects-02d8db3a.vercel.app', // <-- NEW URL ADDED
+  'https://steelconnect-frontend-1drcz62af-sabins-projects-02d8db3a.vercel.app',
+  'https://steelconnect-frontend-efazbns5i-sabins-projects-02d8db3a.vercel.app', // <-- NEW URL ADDED
   'http://localhost:3000',
   'http://localhost:5173'
 ];

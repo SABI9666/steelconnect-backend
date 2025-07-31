@@ -1,18 +1,27 @@
 import express from 'express';
 import { adminDb } from '../config/firebase.js';
-import { createQuote, getQuotesForJob, getQuotesByUser, getQuoteById, approveQuote, deleteQuote } from '../controllers/quoteController.js';
+
+// Corrected import path for the controller
+import { 
+  createQuote, 
+  getQuotesForJob, 
+  getQuotesByUser, 
+  getQuoteById, 
+  approveQuote, 
+  deleteQuote 
+} from '../controllers/quoteController.js'; 
+
 import { authenticateToken, isDesigner } from '../middleware/auth.js';
 import { upload } from '../middleware/upload.js';
 
 const router = express.Router();
 
 // POST a new quote for a job
-// --- FIX: Changed from upload.single() to upload.array() to handle multiple files ---
 router.post(
   '/',
   authenticateToken,
   isDesigner,
-  upload.array('attachments', 5), // Allows up to 5 files with the field name 'attachments'
+  upload.array('attachments', 5), // Allows up to 5 attachments
   createQuote
 );
 
@@ -32,3 +41,16 @@ router.put('/:id/approve', authenticateToken, approveQuote);
 router.delete('/:id', authenticateToken, deleteQuote);
 
 export default router;
+
+
+
+
+
+
+
+
+
+
+
+
+

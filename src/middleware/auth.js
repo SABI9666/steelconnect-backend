@@ -10,14 +10,13 @@ export const authenticateToken = async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'Access token is required for authentication.' });
     }
 
-    // This secret MUST match the one used during login
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_default_secret_key');
 
-    // FIX: Access the nested user object from the payload
-    if (!decoded.user || !decoded.user.id) {
+    // --- FIX: Changed from 'decoded.user.id' to 'decoded.userId' to correctly read the token payload ---
+    if (!decoded || !decoded.userId) {
       return res.status(403).json({ success: false, message: 'Token is malformed or invalid.' });
     }
-    const userDoc = await adminDb.collection('users').doc(decoded.user.id).get();
+    const userDoc = await adminDb.collection('users').doc(decoded.userId).get();
 
     if (!userDoc.exists) {
       return res.status(401).json({ success: false, message: 'User associated with this token not found.' });
@@ -36,14 +35,6 @@ export const authenticateToken = async (req, res, next) => {
   } catch (error) {
     console.error("Authentication Error:", error.message);
     return res.status(403).json({ success: false, message: 'Invalid or expired token.' });
-  }
-};
-
-export const isAdmin = (req, res, next) => {
-  if (req.user && req.user.type === 'admin') {
-    next();
-  } else {
-    return res.status(403).json({ success: false, message: 'Admin access is required.' });
   }
 };
 

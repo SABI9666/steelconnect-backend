@@ -5,7 +5,6 @@ import dotenv from 'dotenv';
 // Import your route handlers
 import auth from './src/routes/auth.js';
 import jobs from './src/routes/jobs.js';
-import uploads from './src/routes/uploads.js';
 import quotes from './src/routes/quotes.js';
 import messages from './src/routes/messages.js';
 
@@ -20,8 +19,9 @@ const allowedOrigins = [
   'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
   'https://steelconnect-frontend-1drcz62af-sabins-projects-02d8db3a.vercel.app',
   'https://steelconnect-frontend-efazbns5i-sabins-projects-02d8db3a.vercel.app',
-  // --- NEW URL ADDED AS REQUESTED ---
   'https://steelconnect-frontend-climaeo2v-sabins-projects-02d8db3a.vercel.app',
+  // --- NEW URL ADDED ---
+  'https://steelconnect-frontend-fwpvudjyf-sabins-projects-02d8db3a.vercel.app',
   'http://localhost:3000',
   'http://localhost:5173'
 ];
@@ -45,11 +45,10 @@ app.get('/', (req, res) => {
   res.json({ message: 'SteelConnect Backend API is running' });
 });
 
-app.use('/auth', auth);
-app.use('/jobs', jobs);
-app.use('/uploads', uploads);
-app.use('/quotes', quotes);
-app.use('/messages', messages);
+app.use('/api/auth', auth);
+app.use('/api/jobs', jobs);
+app.use('/api/quotes', quotes);
+app.use('/api/messages', messages);
 
 // --- Error Handling ---
 app.use('*', (req, res) => {

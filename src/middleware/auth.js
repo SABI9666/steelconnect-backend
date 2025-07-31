@@ -26,6 +26,7 @@ export const authenticateToken = async (req, res, next) => {
     // Attach user information to the request object
     req.user = {
       id: userDoc.id,
+      userId: userDoc.id, // Added userId to match controller expectations
       email: userData.email,
       name: userData.name,
       type: userData.type,
@@ -43,5 +44,14 @@ export const isContractor = (req, res, next) => {
         next();
     } else {
         return res.status(403).json({ success: false, message: 'Access denied. Contractor role required.' });
+    }
+};
+
+// Added missing isDesigner function
+export const isDesigner = (req, res, next) => {
+    if (req.user && req.user.type === 'designer') {
+        next();
+    } else {
+        return res.status(403).json({ success: false, message: 'Access denied. Designer role required.' });
     }
 };

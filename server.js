@@ -23,8 +23,9 @@ const allowedOrigins = [
   'https://steelconnect-frontend-fwpvudjyf-sabins-projects-02d8db3a.vercel.app',
   'https://steelconnect-frontend-agxj6t88e-sabins-projects-02d8db3a.vercel.app',
   'https://steelconnect-frontend-4lrnt0hv3-sabins-projects-02d8db3a.vercel.app',
-  // --- NEW URL ADDED ---
   'https://steelconnect-frontend-3mko9i2g2-sabins-projects-02d8db3a.vercel.app',
+  // --- NEW URL ADDED ---
+  'https://steelconnect-frontend-9yxpdja13-sabins-projects-02d8db3a.vercel.app',
   'http://localhost:3000',
   'http://localhost:5173'
 ];
@@ -95,9 +96,3 @@ app.listen(PORT, () => {
 });
 
 export default app;
-
-
-
-
-
-

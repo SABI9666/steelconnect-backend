@@ -184,7 +184,60 @@ export const approveQuote = async (req, res, next) => {
     }
 };
 
-// New function to get a single quote by its ID
+// New function to get all quotes for a specific job
+export const getQuotesForJob = async (req, res, next) => {
+    try {
+        const { jobId } = req.params;
+        const contractorId = req.user.userId;
+
+        console.log('=== DEBUG GET QUOTES FOR JOB ===');
+        console.log('Requested Job ID:', jobId);
+        console.log('User ID from token:', contractorId);
+
+        // First, verify the user is the contractor who owns the job
+        const jobRef = adminDb.collection('jobs').doc(jobId);
+        const jobDoc = await jobRef.get();
+
+        if (!jobDoc.exists) {
+            console.log('❌ Job not found');
+            return res.status(404).json({ success: false, message: 'Job not found.' });
+        }
+
+        const jobData = jobDoc.data();
+        if (jobData.contractorId !== contractorId) {
+            console.log('❌ Authorization failed: user is not the job owner');
+            return res.status(403).json({ success: false, message: 'You are not authorized to view quotes for this job.' });
+        }
+        console.log('✅ Authorization passed, querying quotes for the job');
+
+        // Retrieve all quotes for the given jobId
+        const quotesSnapshot = await adminDb.collection('quotes').where('jobId', '==', jobId).get();
+
+        if (quotesSnapshot.empty) {
+            console.log('ℹ️ No quotes found for this job');
+            return res.json({ success: true, data: [] });
+        }
+
+        const quotes = quotesSnapshot.docs.map(doc => {
+            const data = { id: doc.id, ...doc.data() };
+            // Do not log sensitive quote data, just a confirmation
+            console.log('📄 Found quote:', data.id);
+            return data;
+        });
+
+        // Sort by createdAt
+        quotes.sort((a, b) => (b.createdAt?.toDate() || new Date(b.createdAt)) - (a.createdAt?.toDate() || new Date(a.createdAt)));
+
+        console.log('📋 Final response:', quotes.length, 'quotes returned');
+        console.log('=== END DEBUG ===');
+
+        res.json({ success: true, data: quotes });
+    } catch (error) {
+        console.error('❌ Error in getQuotesForJob:', error);
+        next(error);
+    }
+};
+
 export const getQuoteById = async (req, res, next) => {
     try {
         const { quoteId } = req.params;
@@ -279,13 +332,3 @@ export const deleteQuote = async (req, res, next) => {
         next(error);
     }
 };
-
-
-
-
-
-
-
-
-
-

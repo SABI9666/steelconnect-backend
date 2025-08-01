@@ -1,4 +1,3 @@
-// Import Firebase admin - adjust this path to match your project structure
 import { adminDb } from '../config/firebase.js';
 
 // This function needs to be fully implemented based on your quote creation logic
@@ -100,7 +99,6 @@ export const approveQuote = async (req, res, next) => {
     }
 };
 
-// Get all quotes for a specific job
 export const getQuotesForJob = async (req, res, next) => {
     try {
         const { jobId } = req.params;
@@ -131,6 +129,49 @@ export const getQuotesForJob = async (req, res, next) => {
     }
 };
 
+/**
+ * FIX: This function was missing. It has been added back and corrected.
+ * It allows either the designer of the quote or the contractor of the job to view a quote by its ID.
+ */
+export const getQuoteById = async (req, res, next) => {
+    try {
+        const { id: quoteId } = req.params; // Get 'id' from the route parameter
+        const userId = req.user.userId;
+        const userType = req.user.type; // Get 'type' from the authenticated user token
+
+        const quoteRef = adminDb.collection('quotes').doc(quoteId);
+        const quoteDoc = await quoteRef.get();
+
+        if (!quoteDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Quote not found.' });
+        }
+
+        const quoteData = { id: quoteDoc.id, ...quoteDoc.data() };
+
+        // Authorization check: User must be the designer of the quote OR the contractor of the associated job.
+        const isDesigner = quoteData.designerId === userId;
+        let isContractor = false;
+
+        // If the user is not the designer, check if they are the job's contractor
+        if (!isDesigner && userType === 'contractor') {
+            const jobRef = adminDb.collection('jobs').doc(quoteData.jobId);
+            const jobDoc = await jobRef.get();
+            // Correctly check 'posterId' on the job document
+            if (jobDoc.exists && jobDoc.data().posterId === userId) {
+                isContractor = true;
+            }
+        }
+        
+        if (!isDesigner && !isContractor) {
+            return res.status(403).json({ success: false, message: 'You are not authorized to view this quote.' });
+        }
+
+        res.json({ success: true, data: quoteData });
+    } catch (error) {
+        console.error('❌ Error in getQuoteById:', error);
+        next(error);
+    }
+};
 
 export const deleteQuote = async (req, res, next) => {
     try {
@@ -165,15 +206,3 @@ export const deleteQuote = async (req, res, next) => {
         next(error);
     }
 };
-
-
-
-
-
-
-
-
-
-
-
-

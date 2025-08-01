@@ -184,17 +184,108 @@ export const approveQuote = async (req, res, next) => {
     }
 };
 
+// New function to get a single quote by its ID
+export const getQuoteById = async (req, res, next) => {
+    try {
+        const { quoteId } = req.params;
+        const userId = req.user.userId;
+        const userType = req.user.userType;
+        
+        console.log('=== DEBUG GET QUOTE BY ID ===');
+        console.log('Requested Quote ID:', quoteId);
+        console.log('User ID:', userId);
+        console.log('User Type:', userType);
+
+        const quoteRef = adminDb.collection('quotes').doc(quoteId);
+        const quoteDoc = await quoteRef.get();
+
+        if (!quoteDoc.exists) {
+            console.log('❌ Quote not found');
+            return res.status(404).json({ success: false, message: 'Quote not found.' });
+        }
+
+        const quoteData = { id: quoteDoc.id, ...quoteDoc.data() };
+        console.log('📄 Quote data retrieved:', quoteData);
+
+        // Check if the user is the designer or the contractor for the job
+        const isDesigner = quoteData.designerId === userId;
+        let isContractor = false;
+
+        // If the user is not the designer, check if they are the contractor
+        if (!isDesigner) {
+            const jobRef = adminDb.collection('jobs').doc(quoteData.jobId);
+            const jobDoc = await jobRef.get();
+            if (jobDoc.exists && jobDoc.data().contractorId === userId) {
+                isContractor = true;
+            }
+        }
+        
+        if (!isDesigner && !isContractor) {
+            console.log('❌ Authorization failed: user is neither designer nor contractor');
+            return res.status(403).json({ success: false, message: 'You are not authorized to view this quote.' });
+        }
+
+        console.log('✅ Authorization passed, returning quote');
+        console.log('=== END DEBUG ===');
+
+        res.json({ success: true, data: quoteData });
+    } catch (error) {
+        console.error('❌ Error in getQuoteById:', error);
+        next(error);
+    }
+};
+
+
 export const deleteQuote = async (req, res, next) => {
     try {
-        // You will need to implement the logic for deleting a quote here.
-        // This is a placeholder to resolve the import error.
+        const { quoteId } = req.params;
+        const userId = req.user.userId;
         
-        console.log('🚧 deleteQuote function called (placeholder)');
+        console.log('=== DEBUG DELETE QUOTE ===');
+        console.log('Requested Quote ID for deletion:', quoteId);
+        console.log('User ID:', userId);
 
-        res.status(501).json({ success: false, message: 'deleteQuote function not yet implemented.' });
+        const quoteRef = adminDb.collection('quotes').doc(quoteId);
+        const quoteDoc = await quoteRef.get();
+
+        if (!quoteDoc.exists) {
+            console.log('❌ Quote not found');
+            return res.status(404).json({ success: false, message: 'Quote not found.' });
+        }
+
+        const quoteData = quoteDoc.data();
+        console.log('📄 Quote data:', quoteData);
+
+        // Verify that the user deleting the quote is the designer
+        if (quoteData.designerId !== userId) {
+            console.log('❌ Authorization failed: user is not the designer');
+            return res.status(403).json({ success: false, message: 'You are not authorized to delete this quote.' });
+        }
+
+        // Check if the quote is still in a deletable state (e.g., not approved)
+        if (quoteData.status !== 'pending') {
+             console.log('❌ Quote not in deletable state:', quoteData.status);
+             return res.status(400).json({ success: false, message: `Cannot delete a quote that is ${quoteData.status}.` });
+        }
+        
+        await quoteRef.delete();
+        console.log('✅ Quote deleted successfully');
+        console.log('=== END DEBUG ===');
+
+        res.json({ success: true, message: 'Quote deleted successfully.' });
 
     } catch (error) {
         console.error('❌ Error in deleteQuote:', error);
         next(error);
     }
 };
+
+
+
+
+
+
+
+
+
+

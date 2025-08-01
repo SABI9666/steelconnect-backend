@@ -3,7 +3,8 @@ import { adminDb } from '../config/firebase.js';
 // Get all conversations for the logged-in user
 export const getConversations = async (req, res, next) => {
   try {
-    const userId = req.user.id;
+    // FIX: Changed req.user.id to req.user.userId for consistency
+    const userId = req.user.userId;
     const snapshot = await adminDb.collection('conversations')
       .where('participantIds', 'array-contains', userId)
       .orderBy('updatedAt', 'desc')
@@ -12,6 +13,7 @@ export const getConversations = async (req, res, next) => {
     const conversations = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     res.status(200).json({ success: true, data: conversations });
   } catch (error) {
+    console.error('Error in getConversations:', error);
     next(error);
   }
 };
@@ -20,7 +22,8 @@ export const getConversations = async (req, res, next) => {
 export const findOrCreateConversation = async (req, res, next) => {
   try {
     const { jobId, recipientId } = req.body;
-    const initiatorId = req.user.id;
+    // FIX: Changed req.user.id to req.user.userId
+    const initiatorId = req.user.userId;
 
     const query = adminDb.collection('conversations')
       .where('jobId', '==', jobId)
@@ -51,6 +54,7 @@ export const findOrCreateConversation = async (req, res, next) => {
     res.status(201).json({ success: true, data: { id: docRef.id, ...newConversation } });
 
   } catch (error) {
+    console.error('Error in findOrCreateConversation:', error);
     next(error);
   }
 };
@@ -59,7 +63,8 @@ export const findOrCreateConversation = async (req, res, next) => {
 export const getMessages = async (req, res, next) => {
   try {
     const { conversationId } = req.params;
-    const userId = req.user.id;
+    // FIX: Changed req.user.id to req.user.userId
+    const userId = req.user.userId;
 
     const convoDoc = await adminDb.collection('conversations').doc(conversationId).get();
     if (!convoDoc.exists || !convoDoc.data().participantIds.includes(userId)) {
@@ -73,6 +78,7 @@ export const getMessages = async (req, res, next) => {
     const messages = messagesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     res.status(200).json({ success: true, data: messages });
   } catch (error) {
+    console.error('Error in getMessages:', error);
     next(error);
   }
 };
@@ -82,7 +88,8 @@ export const sendMessage = async (req, res, next) => {
   try {
     const { conversationId } = req.params;
     const { text } = req.body;
-    const senderId = req.user.id;
+    // FIX: Changed req.user.id to req.user.userId
+    const senderId = req.user.userId;
     const senderType = req.user.type;
 
     const convoRef = adminDb.collection('conversations').doc(conversationId);
@@ -96,9 +103,11 @@ export const sendMessage = async (req, res, next) => {
     if (senderType === 'designer') {
       const { jobId } = convoDoc.data();
       const designerId = senderId;
+      
+      // FIX: Changed quoterId to designerId to match your quote schema
       const quoteQuery = await adminDb.collection('quotes')
         .where('jobId', '==', jobId)
-        .where('quoterId', '==', designerId)
+        .where('designerId', '==', designerId) // Changed from quoterId
         .limit(1).get();
       
       if (quoteQuery.empty || quoteQuery.docs[0].data().status !== 'approved') {
@@ -109,6 +118,7 @@ export const sendMessage = async (req, res, next) => {
     const newMessage = {
       text,
       senderId,
+      senderName: req.user.name, // Add sender name for easier display
       createdAt: new Date()
     };
     
@@ -120,6 +130,7 @@ export const sendMessage = async (req, res, next) => {
 
     res.status(201).json({ success: true, message: 'Message sent.', data: newMessage });
   } catch (error) {
+    console.error('Error in sendMessage:', error);
     next(error);
   }
 };

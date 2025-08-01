@@ -1,16 +1,49 @@
 import { adminDb } from '../config/firebase.js';
 
-// Get all conversations for the logged-in user
+// Helper function to get participant details
+const getParticipantDetails = async (participantIds) => {
+    const participantPromises = participantIds.map(id => adminDb.collection('users').doc(id).get());
+    const participantDocs = await Promise.all(participantPromises);
+
+    return participantDocs.map(doc => {
+        if (!doc.exists) return { id: doc.id, name: 'Unknown User' };
+        const { name, type } = doc.data();
+        return { id: doc.id, name, type };
+    });
+};
+
+// Get all conversations for the logged-in user, now with participant details
 export const getConversations = async (req, res, next) => {
   try {
-    // FIX: Changed req.user.id to req.user.userId for consistency
     const userId = req.user.userId;
     const snapshot = await adminDb.collection('conversations')
       .where('participantIds', 'array-contains', userId)
       .orderBy('updatedAt', 'desc')
       .get();
     
-    const conversations = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    // Enrich conversations with participant and job details
+    const conversationsPromises = snapshot.docs.map(async (doc) => {
+        const conversationData = doc.data();
+        
+        // Fetch participant details
+        const participants = await getParticipantDetails(conversationData.participantIds);
+        
+        // Fetch job title
+        let jobTitle = 'Job no longer available';
+        const jobDoc = await adminDb.collection('jobs').doc(conversationData.jobId).get();
+        if (jobDoc.exists) {
+            jobTitle = jobDoc.data().title;
+        }
+
+        return { 
+            id: doc.id, 
+            ...conversationData, 
+            participants, // Add full participant objects
+            jobTitle      // Add job title
+        };
+    });
+
+    const conversations = await Promise.all(conversationsPromises);
     res.status(200).json({ success: true, data: conversations });
   } catch (error) {
     console.error('Error in getConversations:', error);
@@ -18,12 +51,16 @@ export const getConversations = async (req, res, next) => {
   }
 };
 
-// Start a new conversation or get an existing one
+// Start a new conversation or get an existing one, now returning full details
 export const findOrCreateConversation = async (req, res, next) => {
   try {
     const { jobId, recipientId } = req.body;
-    // FIX: Changed req.user.id to req.user.userId
     const initiatorId = req.user.userId;
+
+    // Prevent user from starting a conversation with themselves
+    if(initiatorId === recipientId) {
+        return res.status(400).json({ success: false, message: 'You cannot start a conversation with yourself.' });
+    }
 
     const query = adminDb.collection('conversations')
       .where('jobId', '==', jobId)
@@ -31,18 +68,30 @@ export const findOrCreateConversation = async (req, res, next) => {
       
     const snapshot = await query.get();
     
-    let existingConversation = null;
+    let existingConversationDoc = null;
     snapshot.forEach(doc => {
-        const data = doc.data();
-        if (data.participantIds.includes(recipientId)) {
-            existingConversation = { id: doc.id, ...data };
+        if (doc.data().participantIds.includes(recipientId)) {
+            existingConversationDoc = doc;
         }
     });
 
-    if (existingConversation) {
-      return res.status(200).json({ success: true, data: existingConversation });
+    // If conversation exists, fetch its details and return it
+    if (existingConversationDoc) {
+        const conversationData = existingConversationDoc.data();
+        const participants = await getParticipantDetails(conversationData.participantIds);
+        const jobDoc = await adminDb.collection('jobs').doc(jobId).get();
+        const jobTitle = jobDoc.exists ? jobDoc.data().title : 'Job no longer available';
+
+        const enrichedConversation = {
+             id: existingConversationDoc.id, 
+             ...conversationData,
+             participants,
+             jobTitle
+        };
+      return res.status(200).json({ success: true, data: enrichedConversation });
     }
 
+    // If conversation does not exist, create a new one
     const newConversation = {
       jobId,
       participantIds: [initiatorId, recipientId],
@@ -51,7 +100,21 @@ export const findOrCreateConversation = async (req, res, next) => {
       lastMessage: 'Conversation started.'
     };
     const docRef = await adminDb.collection('conversations').add(newConversation);
-    res.status(201).json({ success: true, data: { id: docRef.id, ...newConversation } });
+    
+    // Enrich the new conversation data before sending it back
+    const participants = await getParticipantDetails(newConversation.participantIds);
+    const jobDoc = await adminDb.collection('jobs').doc(jobId).get();
+    const jobTitle = jobDoc.exists ? jobDoc.data().title : 'Job no longer available';
+    
+    res.status(201).json({ 
+        success: true, 
+        data: { 
+            id: docRef.id, 
+            ...newConversation, 
+            participants,
+            jobTitle
+        } 
+    });
 
   } catch (error) {
     console.error('Error in findOrCreateConversation:', error);
@@ -63,7 +126,6 @@ export const findOrCreateConversation = async (req, res, next) => {
 export const getMessages = async (req, res, next) => {
   try {
     const { conversationId } = req.params;
-    // FIX: Changed req.user.id to req.user.userId
     const userId = req.user.userId;
 
     const convoDoc = await adminDb.collection('conversations').doc(conversationId).get();
@@ -88,9 +150,7 @@ export const sendMessage = async (req, res, next) => {
   try {
     const { conversationId } = req.params;
     const { text } = req.body;
-    // FIX: Changed req.user.id to req.user.userId
     const senderId = req.user.userId;
-    const senderType = req.user.type;
 
     const convoRef = adminDb.collection('conversations').doc(conversationId);
     const convoDoc = await convoRef.get();
@@ -99,36 +159,24 @@ export const sendMessage = async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'Not authorized to send messages here.' });
     }
 
-    // --- PERMISSION LOGIC ---
-    if (senderType === 'designer') {
-      const { jobId } = convoDoc.data();
-      const designerId = senderId;
-      
-      // FIX: Changed quoterId to designerId to match your quote schema
-      const quoteQuery = await adminDb.collection('quotes')
-        .where('jobId', '==', jobId)
-        .where('designerId', '==', designerId) // Changed from quoterId
-        .limit(1).get();
-      
-      if (quoteQuery.empty || quoteQuery.docs[0].data().status !== 'approved') {
-        return res.status(403).json({ success: false, message: 'You can only message after your quote is approved.' });
-      }
-    }
-
     const newMessage = {
       text,
       senderId,
-      senderName: req.user.name, // Add sender name for easier display
+      senderName: req.user.name,
       createdAt: new Date()
     };
     
-    await adminDb.collection('conversations').doc(conversationId).collection('messages').add(newMessage);
+    // Add the message as a sub-document and update the parent conversation
+    const messagesCollectionRef = convoRef.collection('messages');
+    const messageRef = await messagesCollectionRef.add(newMessage);
+
     await convoRef.update({ 
         lastMessage: text,
-        updatedAt: new Date() 
+        updatedAt: new Date(),
+        lastMessageBy: req.user.name
     });
 
-    res.status(201).json({ success: true, message: 'Message sent.', data: newMessage });
+    res.status(201).json({ success: true, message: 'Message sent.', data: { id: messageRef.id, ...newMessage } });
   } catch (error) {
     console.error('Error in sendMessage:', error);
     next(error);

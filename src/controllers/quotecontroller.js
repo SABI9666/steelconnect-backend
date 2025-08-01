@@ -1,25 +1,5 @@
-/ Import Firebase admin - adjust this path to match your project structure
+// Import Firebase admin - adjust this path to match your project structure
 import { adminDb } from '../config/firebase.js';
-
-export const createQuote = async (req, res, next) => {
-    try {
-        // You will need to implement the logic for creating a new quote here.
-        // This is a placeholder to resolve the import error.
-        // The implementation would typically involve:
-        // 1. Validating the incoming request body (e.g., job details, quote amount).
-        // 2. Getting the designerId from the authenticated user (req.user.userId).
-        // 3. Creating a new document in the 'quotes' collection with the provided data.
-        // 4. Sending a success response back to the client.
-        
-        console.log('🚧 createQuote function called (placeholder)');
-
-        res.status(501).json({ success: false, message: 'createQuote function not yet implemented.' });
-
-    } catch (error) {
-        console.error('❌ Error in createQuote:', error);
-        next(error);
-    }
-};
 
 export const getQuotesByUser = async (req, res, next) => {
     try {

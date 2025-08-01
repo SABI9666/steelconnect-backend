@@ -62,7 +62,7 @@ export const searchJobs = async (req, res, next) => {
       }
       
       if (matches || (!searchTerm && skills)) {
-        jobs.import { adminDb, admin } from '../config/firebase.js';
+        import { adminDb, admin } from '../config/firebase.js';
 import { uploadToFirebase } from '../middleware/upload.js';
 
 // Create a new job

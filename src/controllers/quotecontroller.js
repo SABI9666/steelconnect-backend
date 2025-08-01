@@ -5,11 +5,6 @@ export const createQuote = async (req, res, next) => {
     try {
         // You will need to implement the logic for creating a new quote here.
         // This is a placeholder to resolve the import error.
-        // The implementation would typically involve:
-        // 1. Validating the incoming request body (e.g., job details, quote amount).
-        // 2. Getting the designerId from the authenticated user (req.user.userId).
-        // 3. Creating a new document in the 'quotes' collection with the provided data.
-        // 4. Sending a success response back to the client.
         
         console.log('🚧 createQuote function called (placeholder)');
 
@@ -185,6 +180,21 @@ export const approveQuote = async (req, res, next) => {
         
     } catch (error) {
         console.error('❌ Error in approveQuote:', error);
+        next(error);
+    }
+};
+
+export const deleteQuote = async (req, res, next) => {
+    try {
+        // You will need to implement the logic for deleting a quote here.
+        // This is a placeholder to resolve the import error.
+        
+        console.log('🚧 deleteQuote function called (placeholder)');
+
+        res.status(501).json({ success: false, message: 'deleteQuote function not yet implemented.' });
+
+    } catch (error) {
+        console.error('❌ Error in deleteQuote:', error);
         next(error);
     }
 };

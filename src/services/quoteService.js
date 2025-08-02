@@ -1,4 +1,6 @@
-import { adminDb } from '../firebase.js'; // Assumes your firebase config is at 'src/firebase.js'
+// This service connects to Firestore to get quote details.
+// CORRECTED PATH: Points to your config folder
+import { adminDb } from '../config/firebase.js';
 
 /**
  * Fetches a single quote document from the Firestore 'quotes' collection.
@@ -13,7 +15,6 @@ export async function getQuoteById(quoteId) {
             console.log(`Quote with ID ${quoteId} not found in Firestore.`);
             return null;
         }
-        // Return the quote data including its ID
         return { id: doc.id, ...doc.data() };
     } catch (error) {
         console.error("Error fetching quote by ID from Firestore:", error);

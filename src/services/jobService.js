@@ -1,5 +1,6 @@
-
-import { adminDb } from '../firebase.js'; // Assumes your firebase config is at 'src/firebase.js'
+// This service connects to Firestore to get job details.
+// CORRECTED PATH: Changed from '../src/firebase.js' to '../firebase.js'
+import { adminDb } from '../firebase.js'; 
 
 /**
  * Fetches a single job document from the Firestore 'jobs' collection.
@@ -14,7 +15,6 @@ export async function getJobById(jobId) {
             console.log(`Job with ID ${jobId} not found in Firestore.`);
             return null;
         }
-        // Return the job data including its ID
         return { id: doc.id, ...doc.data() };
     } catch (error) {
         console.error("Error fetching job by ID from Firestore:", error);

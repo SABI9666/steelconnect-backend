@@ -1,6 +1,6 @@
 // This service connects to Firestore to get job details.
-// CORRECTED PATH: Changed from '../src/firebase.js' to '../firebase.js'
-import { adminDb } from '../firebase.js'; 
+// FIXED PATH: Corrected import path for firebase config
+import { adminDb } from '../config/firebase.js'; // Correct path to src/config/firebase.js
 
 /**
  * Fetches a single job document from the Firestore 'jobs' collection.

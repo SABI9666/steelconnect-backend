@@ -1,6 +1,6 @@
-// This service connects to Firestore to get quote details.
-// CORRECTED PATH: Points to your config folder
-import { adminDb } from '../config/firebase.js';
+
+// FIXED PATH: Corrected import path for firebase config
+import { adminDb } from '../config/firebase.js'; // Correct path to src/config/firebase.js
 
 /**
  * Fetches a single quote document from the Firestore 'quotes' collection.

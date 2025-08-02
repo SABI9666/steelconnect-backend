@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import PDFDocument from 'pdfkit';
-import { query } from '../db/sql.js'; // Your SQL connection
+import { query } from '../db/sql.js'; // Correct path to src/db/sql.js
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,

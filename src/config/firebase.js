@@ -1,11 +1,14 @@
 import admin from 'firebase-admin';
+import dotenv from 'dotenv';
 
-// Check for the required environment variable
+dotenv.config();
+
+// Check for the required environment variable for the service account key
 if (!process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64) {
   throw new Error('FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 is not set in environment variables.');
 }
 
-// Decode the Base64 service account key from environment variables
+// Decode the Base64 service account key
 const serviceAccountJson = Buffer.from(
   process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64,
   'base64'
@@ -17,8 +20,8 @@ const serviceAccount = JSON.parse(serviceAccountJson);
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
-    // --- FIX: Explicitly set the correct bucket name ---
-    storageBucket: 'steelconnect-backend-3f684.firebasestorage.app'
+    // Use the storage bucket from your .env file for better configuration
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET 
   });
 }
 

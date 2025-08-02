@@ -10,6 +10,8 @@ import auth from './src/routes/auth.js';
 import jobs from './src/routes/jobs.js';
 import quotes from './src/routes/quotes.js';
 import messages from './src/routes/messages.js';
+// --- NEW ROUTE IMPORTED ---
+import quoteAnalysis from './src/routes/quoteAnalysis.js';
 
 dotenv.config();
 
@@ -29,8 +31,9 @@ const allowedOrigins = [
   'https://steelconnect-frontend-pv54baz1w-sabins-projects-02d8db3a.vercel.app',
   'https://steelconnect-frontend-26zen6khb-sabins-projects-02d8db3a.vercel.app',
   'https://steelconnect-frontend-qj53ud8yl-sabins-projects-02d8db3a.vercel.app',
-  // --- NEW URL ADDED ---
   'https://steelconnect-frontend-gg487e679-sabins-projects-02d8db3a.vercel.app',
+  // --- NEW URL ADDED ---
+  'https://steelconnect-frontend-404z4xmjf-sabins-projects-02d8db3a.vercel.app',
   'http://localhost:3000',
   'http://localhost:5173'
 ];
@@ -50,7 +53,6 @@ app.use(cors(corsOptions));
 app.use(express.json());
 
 // --- File Upload & Static Serving Configuration ---
-
 const uploadsDir = 'uploads';
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
@@ -79,6 +81,9 @@ app.use('/api/auth', auth);
 app.use('/api/jobs', jobs);
 app.use('/api/quotes', quotes);
 app.use('/api/messages', messages);
+// --- NEW ROUTE REGISTERED ---
+// This handles the AI analysis endpoints like /api/quotes/:id/analyze
+app.use('/api/quotes', quoteAnalysis);
 
 
 // --- Error Handling ---

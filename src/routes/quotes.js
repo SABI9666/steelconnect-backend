@@ -1,4 +1,4 @@
-/ src/routes/quotes.js
+// src/routes/quotes.js
 
 import express from 'express';
 import {
@@ -15,9 +15,7 @@ import { upload } from '../middleware/upload.js';
 const router = express.Router();
 
 // POST /api/quotes
-// Creates a new quote. Protected for designers only.
-// This route is configured to accept up to 5 file uploads in the 'attachments' field.
-// This configuration fixes the "Unexpected field" error.
+// Creates a new quote. Protected for designers only and handles file uploads.
 router.post(
   '/',
   authenticateToken,

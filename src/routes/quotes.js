@@ -1,43 +1,49 @@
+/ src/routes/quotes.js
+
 import express from 'express';
-import { adminDb } from '../config/firebase.js';
-
-// Fixed import path to match actual filename (lowercase)
-import { 
-  createQuote, 
-  getQuotesForJob, 
-  getQuotesByUser, 
-  getQuoteById, 
-  approveQuote, 
-  deleteQuote 
-} from '../controllers/quotecontroller.js'; // Changed from 'quoteController.js' to 'quotecontroller.js'
-
+import {
+  createQuote,
+  getQuotesForJob,
+  getQuotesByUser,
+  getQuoteById,
+  approveQuote,
+  deleteQuote
+} from '../controllers/quotecontroller.js';
 import { authenticateToken, isDesigner } from '../middleware/auth.js';
 import { upload } from '../middleware/upload.js';
 
 const router = express.Router();
 
-// POST a new quote for a job
+// POST /api/quotes
+// Creates a new quote. Protected for designers only.
+// This route is configured to accept up to 5 file uploads in the 'attachments' field.
+// This configuration fixes the "Unexpected field" error.
 router.post(
   '/',
   authenticateToken,
   isDesigner,
-  upload.array('attachments', 5), // Allows up to 5 attachments
+  upload.array('attachments', 5),
   createQuote
 );
 
-// GET all quotes for a specific job (for the contractor who posted it)
+// GET /api/quotes/job/:jobId
+// Gets all quotes for a specific job (for the contractor).
 router.get('/job/:jobId', authenticateToken, getQuotesForJob);
 
-// GET all quotes submitted by a specific user (designer)
+// GET /api/quotes/user/:userId
+// Gets all quotes submitted by the logged-in designer.
 router.get('/user/:userId', authenticateToken, getQuotesByUser);
 
-// GET a single quote by its ID
+// GET /api/quotes/:id
+// Gets a single quote by its ID.
 router.get('/:id', authenticateToken, getQuoteById);
 
-// PUT to approve a quote
+// PUT /api/quotes/:id/approve
+// Approves a quote (for the contractor).
 router.put('/:id/approve', authenticateToken, approveQuote);
 
-// DELETE a quote
-router.delete('/:id', authenticateToken, deleteQuote);
+// DELETE /api/quotes/:id
+// Deletes a quote (for the designer who created it).
+router.delete('/:id', authenticateToken, isDesigner, deleteQuote);
 
 export default router;

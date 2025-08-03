@@ -10,6 +10,7 @@ import auth from './src/routes/auth.js';
 import jobs from './src/routes/jobs.js';
 import quotes from './src/routes/quotes.js';
 import messages from './src/routes/messages.js';
+import quoteAnalysis from './src/routes/quoteAnalysis.js'; // --- 1. IMPORT THE NEW ROUTE ---
 
 dotenv.config();
 
@@ -18,20 +19,14 @@ const PORT = process.env.PORT || 3000;
 
 // --- CORS Configuration ---
 const allowedOrigins = [
-  // --- NEW: Main Production URL ---
   'https://steelconnect-frontend.vercel.app',
-  
-  // --- NEW: Automatically allow all Vercel preview URLs ---
   /^https:\/\/steelconnect-frontend-.+\.vercel\.app$/,
-  
-  // --- Local development URLs ---
   'http://localhost:3000',
   'http://localhost:5173'
 ];
 
 const corsOptions = {
   origin: function (origin, callback) {
-    // Check if the origin is in the array or matches the regex
     const isAllowed = allowedOrigins.some(allowedOrigin => {
         if (allowedOrigin instanceof RegExp) {
             return allowedOrigin.test(origin);
@@ -52,7 +47,6 @@ app.use(cors(corsOptions));
 app.use(express.json());
 
 // --- File Upload & Static Serving Configuration ---
-
 const uploadsDir = 'uploads';
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
@@ -68,7 +62,6 @@ const storage = multer.diskStorage({
 });
 
 export const upload = multer({ storage: storage });
-
 app.use('/uploads', express.static(uploadsDir));
 
 
@@ -81,6 +74,7 @@ app.use('/api/auth', auth);
 app.use('/api/jobs', jobs);
 app.use('/api/quotes', quotes);
 app.use('/api/messages', messages);
+app.use('/api/analysis', quoteAnalysis); // --- 2. ADD THE ROUTE MIDDLEWARE ---
 
 
 // --- Error Handling ---

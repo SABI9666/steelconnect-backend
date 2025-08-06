@@ -1,322 +1,489 @@
-import OpenAI from 'openai';
-import { jsPDF } from 'jspdf';
-import { adminDb } from '../config/firebase.js'; // Updated import to use Firebase
+import express from 'express';
+import { authenticateToken } from '../middleware/auth.js';
+import { adminDb } from '../config/firebase.js';
+// Import the new AI analysis and PDF generation functions
+import {
+    performAndSaveAnalysis,
+    getAnalysisByQuoteId,
+    generateAnalysisPDF
+} from '../services/quoteAnalysisService.js'; // Assuming the service file is in a services directory
 
-let openai = null;
+const router = express.Router();
 
-// Only initialize OpenAI if API key is provided
-if (process.env.OPENAI_API_KEY) {
-    openai = new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY,
+// Add debugging middleware
+router.use((req, res, next) => {
+    console.log(`📊 Quote Analysis Route: ${req.method} ${req.path}`);
+    console.log(`👤 User:`, req.user?.userId || 'No user');
+    next();
+});
+
+// Test endpoint
+router.get('/test', (req, res) => {
+    console.log('✅ Test endpoint hit');
+    res.json({
+        success: true,
+        message: 'Quote analysis routes are working',
+        timestamp: new Date().toISOString()
     });
-} else {
-    console.warn('⚠️ OPENAI_API_KEY not found. AI analysis features will be disabled.');
-}
+});
 
-const QUOTE_ANALYSES_COLLECTION = 'quote_analyses';
+
+// ===============================================
+// NEW AI ANALYSIS ENDPOINTS
+// ===============================================
 
 /**
- * Performs AI analysis and saves the result to Firebase.
+ * @route   POST /api/analysis/job/:jobId/quote/:quoteId
+ * @desc    Trigger an AI analysis for a specific quote.
+ * @access  Private (Job Owner)
  */
-export async function performAndSaveAnalysis(quote, job, userId) {
-    // Check if OpenAI is available
-    if (!openai) {
-        throw new Error("OpenAI API key not configured. Please set OPENAI_API_KEY environment variable.");
-    }
+router.post('/job/:jobId/quote/:quoteId', authenticateToken, async (req, res) => {
+    const { jobId, quoteId } = req.params;
+    const userId = req.user.userId;
 
-    const systemPrompt = `You are an expert construction project analyst. Your response must be a valid JSON object with this structure: { "confidence": number, "recommendation": "string", "summary": "string", "costAnalysis": { "score": number, "budgetFit": "string", "marketComparison": "string", "valueAssessment": "string", "redFlags": ["string"] }, "timelineAnalysis": { "score": number, "realistic": "string", "deadlineComparison": "string", "industryComparison": "string", "concerns": ["string"] }, "technicalAnalysis": { "score": number, "approachQuality": "string", "completeness": "string", "expertiseLevel": "string", "strengths": ["string"] }, "riskAnalysis": { "level": "string", "overall": "string", "factors": ["string"], "mitigation": "string" }, "recommendations": [{ "type": "string", "title": "string", "description": "string", "action": "string" }], "questionsToAsk": ["string"] }.`;
-    const userPrompt = `Analyze this quote based on the project details. Project Title: ${job.title}. Project Budget: ${job.budget}. Quote Amount: ${quote.quoteAmount}. Proposed Timeline: ${quote.timeline} days. Proposal Description: ${quote.description}.`;
-
-    let analysis;
     try {
-        const response = await openai.chat.completions.create({
-            model: process.env.OPENAI_MODEL || "gpt-4",
-            messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
-            response_format: { type: "json_object" },
+        console.log(`🤖 Starting AI analysis for quote ${quoteId} on job ${jobId}`);
+
+        // 1. Verify Job Ownership
+        const jobDoc = await adminDb.collection('jobs').doc(jobId).get();
+        if (!jobDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Job not found' });
+        }
+        const jobData = { id: jobDoc.id, ...jobDoc.data() };
+        if (jobData.posterId !== userId) {
+            return res.status(403).json({ success: false, message: 'Unauthorized: You can only analyze quotes for your own jobs.' });
+        }
+
+        // 2. Fetch the Quote
+        const quoteDoc = await adminDb.collection('quotes').doc(quoteId).get();
+        if (!quoteDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Quote not found' });
+        }
+        const quoteData = { id: quoteDoc.id, ...quoteDoc.data() };
+        if (quoteData.jobId !== jobId) {
+             return res.status(400).json({ success: false, message: 'Quote does not belong to this job.' });
+        }
+
+        // 3. Check if analysis already exists
+        const existingAnalysis = await getAnalysisByQuoteId(quoteId);
+        if (existingAnalysis) {
+            console.log(`✅ Analysis already exists for quote ${quoteId}. Returning existing data.`);
+            return res.status(200).json({
+                success: true,
+                message: 'Analysis already existed and was retrieved.',
+                data: existingAnalysis.analysisData // Return the nested analysis object
+            });
+        }
+
+        // 4. Perform and Save Analysis
+        console.log(`🧠 Calling AI service to perform analysis...`);
+        const analysisResult = await performAndSaveAnalysis(quoteData, jobData, userId);
+
+        res.status(201).json({
+            success: true,
+            message: 'AI analysis completed and saved successfully.',
+            data: analysisResult // The full analysis object from the service
         });
-        analysis = JSON.parse(response.choices[0].message.content);
+
     } catch (error) {
-        console.error("Error calling OpenAI API:", error);
-        throw new Error("Failed to get analysis from AI service.");
+        console.error('❌ Error triggering AI analysis:', error);
+        // Check for specific OpenAI key error
+        if (error.message.includes("OpenAI API key not configured")) {
+             return res.status(503).json({ success: false, message: 'AI Service is currently unavailable.', error: error.message });
+        }
+        res.status(500).json({ success: false, message: 'Failed to perform AI analysis.', error: error.message });
     }
+});
 
-    try {
-        // Save to Firebase instead of SQL Server
-        const analysisData = {
-            quoteId: quote.id,
-            jobId: job.id,
-            analyzerUserId: userId,
-            analysisData: analysis, // Store as object, not JSON string
-            confidenceScore: analysis.confidence,
-            recommendation: analysis.recommendation,
-            createdAt: new Date(),
-            updatedAt: new Date()
-        };
-
-        const analysisRef = adminDb.collection(QUOTE_ANALYSES_COLLECTION);
-        const docRef = await analysisRef.add(analysisData);
-        
-        console.log(`✅ Analysis for quote ${quote.id} saved to Firebase with ID: ${docRef.id}`);
-        
-        // Return analysis with Firebase document ID
-        return {
-            id: docRef.id,
-            ...analysis
-        };
-        
-    } catch (dbError) {
-        console.error("❌ Failed to save analysis to Firebase:", dbError);
-        throw new Error("Failed to save analysis to Firebase");
-    }
-}
 
 /**
- * Fetches a saved analysis result from Firebase.
+ * @route   GET /api/analysis/quote/:quoteId
+ * @desc    Get a saved AI analysis for a quote.
+ * @access  Private
  */
-export async function getAnalysisByQuoteId(quoteId) {
+router.get('/quote/:quoteId', authenticateToken, async (req, res) => {
+    const { quoteId } = req.params;
     try {
-        const analysisRef = adminDb.collection(QUOTE_ANALYSES_COLLECTION);
-        const snapshot = await analysisRef.where('quoteId', '==', quoteId).get();
-        
-        if (snapshot.empty) {
-            return null;
+        console.log(`📄 Fetching analysis for quote: ${quoteId}`);
+        const analysis = await getAnalysisByQuoteId(quoteId);
+
+        if (!analysis) {
+            return res.status(404).json({ success: false, message: 'No analysis found for this quote. Please generate one first.' });
         }
-        
-        // Get the first (and should be only) analysis for this quote
-        const doc = snapshot.docs[0];
-        const analysisRecord = {
-            id: doc.id,
-            ...doc.data()
-        };
-        
-        // Convert Firestore timestamps to regular dates if needed
-        if (analysisRecord.createdAt && analysisRecord.createdAt.toDate) {
-            analysisRecord.createdAt = analysisRecord.createdAt.toDate();
-        }
-        if (analysisRecord.updatedAt && analysisRecord.updatedAt.toDate) {
-            analysisRecord.updatedAt = analysisRecord.updatedAt.toDate();
-        }
-        
-        // The analysisData is already an object (not JSON string) in Firebase
-        analysisRecord.analysis_data = analysisRecord.analysisData;
-        
-        return analysisRecord;
+
+        // TODO: Add authorization check to ensure user can view this analysis
+
+        res.json({ success: true, data: analysis });
+
     } catch (error) {
-        console.error("Error fetching analysis from Firebase:", error);
-        throw new Error("Failed to fetch analysis from Firebase");
+        console.error('❌ Error fetching analysis:', error);
+        res.status(500).json({ success: false, message: 'Failed to retrieve analysis.', error: error.message });
     }
-}
+});
+
 
 /**
- * Get all analyses by analyzer user ID
+ * @route   GET /api/analysis/:analysisId/pdf
+ * @desc    Generate and download a PDF report for an analysis.
+ * @access  Private
  */
-export async function getAnalysesByUserId(userId) {
+router.get('/:analysisId/pdf', authenticateToken, async (req, res) => {
+    const { analysisId } = req.params;
     try {
-        const analysisRef = adminDb.collection(QUOTE_ANALYSES_COLLECTION);
-        const snapshot = await analysisRef.where('analyzerUserId', '==', userId).get();
+        console.log(`📄 Generating PDF for analysis: ${analysisId}`);
+        // 1. Fetch the analysis document
+        const analysisDoc = await adminDb.collection('quote_analyses').doc(analysisId).get();
+        if (!analysisDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Analysis not found' });
+        }
+        const analysisData = { id: analysisDoc.id, ...analysisDoc.data() };
         
-        const analyses = [];
-        snapshot.forEach(doc => {
+        // TODO: Add authorization check here
+        
+        // 2. Fetch the associated quote and job
+        const quoteDoc = await adminDb.collection('quotes').doc(analysisData.quoteId).get();
+        const jobDoc = await adminDb.collection('jobs').doc(analysisData.jobId).get();
+        
+        if (!quoteDoc.exists || !jobDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Associated quote or job not found.' });
+        }
+        
+        const quote = quoteDoc.data();
+        const job = jobDoc.data();
+
+        // 3. Generate the PDF buffer
+        // The service function expects analysis_data key
+        analysisData.analysis_data = analysisData.analysisData;
+        const pdfBuffer = generateAnalysisPDF(analysisData, quote, job);
+
+        // 4. Send the PDF as a response
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename=analysis-report-${analysisId}.pdf`);
+        res.send(pdfBuffer);
+
+    } catch (error) {
+        console.error('❌ Error generating PDF report:', error);
+        res.status(500).json({ success: false, message: 'Failed to generate PDF report.', error: error.message });
+    }
+});
+
+
+// ===============================================
+// EXISTING STATISTICAL ANALYSIS ENDPOINTS (Unchanged)
+// ===============================================
+
+// GET - Analyze quotes for a specific job (for job owners)
+router.get('/job/:jobId', authenticateToken, async (req, res) => {
+    try {
+        console.log('📊 Starting quote analysis for job:', req.params.jobId);
+        const { jobId } = req.params;
+        const userId = req.user.userId;
+        if (!userId) {
+            console.log('❌ No user ID found');
+            return res.status(400).json({
+                success: false,
+                message: 'User ID not found in token'
+            });
+        }
+        // Verify job ownership
+        console.log('📊 Fetching job document...');
+        const jobDoc = await adminDb.collection('jobs').doc(jobId).get();
+        if (!jobDoc.exists) {
+            console.log('❌ Job not found');
+            return res.status(404).json({
+                success: false,
+                message: 'Job not found'
+            });
+        }
+        const jobData = jobDoc.data();
+        console.log('📊 Job data:', { posterId: jobData.posterId, title: jobData.title });
+        if (jobData.posterId !== userId) {
+            console.log('❌ Unauthorized access attempt');
+            return res.status(403).json({
+                success: false,
+                message: 'Unauthorized - you can only analyze quotes for your own jobs'
+            });
+        }
+        // Get all quotes for this job
+        console.log('📊 Fetching quotes for job...');
+        const quotesSnapshot = await adminDb.collection('quotes')
+            .where('jobId', '==', jobId)
+            .get();
+        console.log('📊 Found quotes:', quotesSnapshot.size);
+        if (quotesSnapshot.empty) {
+            return res.json({
+                success: true,
+                data: {
+                    totalQuotes: 0,
+                    analysis: 'No quotes received yet',
+                    jobTitle: jobData.title || 'Untitled Job',
+                    averageAmount: 0,
+                    lowestAmount: 0,
+                    highestAmount: 0,
+                    averageDeliveryTime: 0
+                }
+            });
+        }
+        const quotes = quotesSnapshot.docs.map(doc => {
             const data = doc.data();
-            
-            // Convert Firestore timestamps
-            if (data.createdAt && data.createdAt.toDate) {
-                data.createdAt = data.createdAt.toDate();
-            }
-            if (data.updatedAt && data.updatedAt.toDate) {
-                data.updatedAt = data.updatedAt.toDate();
-            }
-            
-            analyses.push({
+            return {
                 id: doc.id,
-                ...data
-            });
+                ...data,
+                // Map different possible field names to standardized ones
+                amount: data.amount || data.quoteAmount || 0,
+                deliveryTime: data.deliveryTime || data.timeline || 0
+            };
         });
-        
-        return analyses;
-    } catch (error) {
-        console.error("Error fetching analyses by user ID:", error);
-        throw new Error("Failed to fetch analyses");
-    }
-}
-
-/**
- * Delete analysis from Firebase
- */
-export async function deleteAnalysis(analysisId) {
-    try {
-        const analysisRef = adminDb.collection(QUOTE_ANALYSES_COLLECTION).doc(analysisId);
-        await analysisRef.delete();
-        return true;
-    } catch (error) {
-        console.error("Error deleting analysis from Firebase:", error);
-        throw new Error("Failed to delete analysis");
-    }
-}
-
-/**
- * Update analysis in Firebase
- */
-export async function updateAnalysis(analysisId, updateData) {
-    try {
-        const analysisRef = adminDb.collection(QUOTE_ANALYSES_COLLECTION).doc(analysisId);
-        await analysisRef.update({
-            ...updateData,
-            updatedAt: new Date()
+        console.log('📊 Processing quotes:', quotes.map(q => ({
+            id: q.id,
+            amount: q.amount,
+            deliveryTime: q.deliveryTime,
+            status: q.status
+        })));
+        // Perform analysis with better data handling
+        const amounts = quotes
+            .map(q => parseFloat(q.amount))
+            .filter(a => !isNaN(a) && a > 0);
+        const deliveryTimes = quotes
+            .map(q => parseInt(q.deliveryTime))
+            .filter(d => !isNaN(d) && d > 0);
+        console.log('📊 Valid amounts:', amounts);
+        console.log('📊 Valid delivery times:', deliveryTimes);
+        // Calculate statistics
+        const totalQuotes = quotes.length;
+        const averageAmount = amounts.length > 0 ?
+            Math.round((amounts.reduce((a, b) => a + b, 0) / amounts.length) * 100) / 100 : 0;
+        const lowestAmount = amounts.length > 0 ? Math.min(...amounts) : 0;
+        const highestAmount = amounts.length > 0 ? Math.max(...amounts) : 0;
+        const averageDeliveryTime = deliveryTimes.length > 0 ?
+            Math.round(deliveryTimes.reduce((a, b) => a + b, 0) / deliveryTimes.length) : 0;
+        // Status breakdown
+        const statusCounts = quotes.reduce((acc, quote) => {
+            const status = quote.status || 'submitted';
+            acc[status] = (acc[status] || 0) + 1;
+            return acc;
+        }, {});
+        const analysis = {
+            totalQuotes,
+            jobTitle: jobData.title || 'Untitled Job',
+            averageAmount,
+            lowestAmount,
+            highestAmount,
+            averageDeliveryTime,
+            shortestDeliveryTime: deliveryTimes.length > 0 ? Math.min(...deliveryTimes) : 0,
+            longestDeliveryTime: deliveryTimes.length > 0 ? Math.max(...deliveryTimes) : 0,
+            statusBreakdown: {
+                submitted: statusCounts.submitted || statusCounts.pending || 0,
+                approved: statusCounts.approved || statusCounts.accepted || 0,
+                rejected: statusCounts.rejected || 0
+            },
+            // Additional analysis like the comparison file
+            priceAnalysis: {
+                range: highestAmount - lowestAmount,
+                coefficient: averageAmount > 0 ? ((highestAmount - lowestAmount) / averageAmount) : 0,
+                competitiveQuotes: amounts.filter(a => a <= averageAmount * 1.1).length
+            },
+            timelineAnalysis: {
+                consistentTimelines: deliveryTimes.filter(t =>
+                    Math.abs(t - averageDeliveryTime) <= averageDeliveryTime * 0.2
+                ).length,
+                urgentQuotes: deliveryTimes.filter(t => t <= 7).length,
+                longTermQuotes: deliveryTimes.filter(t => t > 30).length
+            },
+            quotes: quotes.map(q => ({
+                id: q.id,
+                amount: q.amount,
+                deliveryTime: q.deliveryTime,
+                status: q.status || 'submitted',
+                description: q.description,
+                designerId: q.designerId,
+                designerName: q.designerName,
+                createdAt: q.createdAt,
+                // Calculate relative metrics
+                pricePosition: amounts.length > 1 ?
+                    ((q.amount - lowestAmount) / (highestAmount - lowestAmount)) * 100 : 50,
+                timelinePosition: deliveryTimes.length > 1 ?
+                    ((q.deliveryTime - Math.min(...deliveryTimes)) /
+                        (Math.max(...deliveryTimes) - Math.min(...deliveryTimes))) * 100 : 50
+            })).sort((a, b) => a.amount - b.amount) // Sort by price
+        };
+        console.log('📊 Analysis complete:', {
+            totalQuotes: analysis.totalQuotes,
+            averageAmount: analysis.averageAmount,
+            priceRange: `${analysis.lowestAmount} - ${analysis.highestAmount}`,
+            avgTimeline: analysis.averageDeliveryTime
         });
-        
-        const updatedDoc = await analysisRef.get();
-        return {
-            id: updatedDoc.id,
-            ...updatedDoc.data()
-        };
+        res.json({
+            success: true,
+            data: analysis
+        });
     } catch (error) {
-        console.error("Error updating analysis in Firebase:", error);
-        throw new Error("Failed to update analysis");
+        console.error('❌ Error analyzing quotes:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to analyze quotes',
+            error: error.message
+        });
     }
-}
+});
 
-/**
- * Generates a PDF report from analysis data using jsPDF.
- */
-export function generateAnalysisPDF(analysisData, quote, job) {
-    const { analysis_data: analysis } = analysisData;
-
+// GET - Get designer statistics
+router.get('/designer/stats', authenticateToken, async (req, res) => {
     try {
-        const doc = new jsPDF();
-        let yPosition = 20;
-        const lineHeight = 10;
-        const pageHeight = 280; // A4 page height in mm
-        
-        // Helper function to add text and manage page breaks
-        const addText = (text, fontSize = 12, isBold = false) => {
-            if (yPosition > pageHeight - 20) {
-                doc.addPage();
-                yPosition = 20;
+        const userId = req.user.userId;
+        if (!userId) {
+            return res.status(400).json({
+                success: false,
+                message: 'User ID not found in token'
+            });
+        }
+        console.log('📊 Getting designer stats for user:', userId);
+        // Get all quotes by this designer
+        const quotesSnapshot = await adminDb.collection('quotes')
+            .where('designerId', '==', userId)
+            .get();
+        const quotes = quotesSnapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+                id: doc.id,
+                ...data,
+                amount: data.amount || data.quoteAmount || 0
+            };
+        });
+        console.log('📊 Found designer quotes:', quotes.length);
+        // Calculate comprehensive stats
+        const totalQuotes = quotes.length;
+        const acceptedQuotes = quotes.filter(q =>
+            q.status === 'accepted' || q.status === 'approved'
+        ).length;
+        const pendingQuotes = quotes.filter(q =>
+            q.status === 'pending' || q.status === 'submitted'
+        ).length;
+        const rejectedQuotes = quotes.filter(q => q.status === 'rejected').length;
+        const amounts = quotes
+            .map(q => parseFloat(q.amount))
+            .filter(a => !isNaN(a) && a > 0);
+        const averageQuoteAmount = amounts.length > 0 ?
+            Math.round((amounts.reduce((sum, a) => sum + a, 0) / amounts.length) * 100) / 100 : 0;
+        const acceptanceRate = totalQuotes > 0 ?
+            Math.round((acceptedQuotes / totalQuotes) * 100 * 100) / 100 : 0;
+        // Additional insights
+        const recentQuotes = quotes.filter(q => {
+            const quoteDate = q.createdAt?.toDate ? q.createdAt.toDate() : new Date(q.createdAt);
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+            return quoteDate >= thirtyDaysAgo;
+        }).length;
+        const stats = {
+            totalQuotes,
+            acceptedQuotes,
+            pendingQuotes,
+            rejectedQuotes,
+            averageQuoteAmount,
+            acceptanceRate,
+            recentQuotes,
+            // Performance metrics
+            performance: {
+                highValueQuotes: amounts.filter(a => a > averageQuoteAmount * 1.2).length,
+                competitiveQuotes: amounts.filter(a => a <= averageQuoteAmount).length,
+                totalValue: amounts.reduce((sum, a) => sum + a, 0)
             }
-            
-            doc.setFontSize(fontSize);
-            if (isBold) {
-                doc.setFont('helvetica', 'bold');
-            } else {
-                doc.setFont('helvetica', 'normal');
-            }
-            
-            // Handle long text with word wrapping
-            const textLines = doc.splitTextToSize(text, 170);
-            doc.text(textLines, 20, yPosition);
-            yPosition += textLines.length * (fontSize * 0.4) + 5;
         };
-
-        // Title
-        addText('AI Quote Analysis Report', 20, true);
-        addText(`Generated: ${new Date().toLocaleDateString()}`, 12, false);
-        yPosition += 10;
-
-        // Project & Quote Overview
-        addText('Project & Quote Overview', 16, true);
-        addText(`Project Title: ${job.title}`);
-        addText(`Project Budget: ${job.budget}`);
-        addText(`Designer: ${quote.designerName}`);
-        addText(`Quote Amount: ${quote.quoteAmount}`);
-        addText(`Timeline: ${quote.timeline} days`);
-        yPosition += 10;
-
-        // AI Summary & Recommendation
-        addText('AI Summary & Recommendation', 16, true);
-        addText(`Recommendation: ${analysis.recommendation.replace('_', ' ')}`, 12, true);
-        addText(analysis.summary);
-        yPosition += 10;
-
-        // Detailed Analysis
-        addText('Detailed Analysis', 16, true);
-        
-        // Cost Analysis
-        addText('Cost Analysis:', 14, true);
-        addText(`• Budget Fit: ${analysis.costAnalysis.budgetFit}`);
-        addText(`• Market Comparison: ${analysis.costAnalysis.marketComparison}`);
-        addText(`• Value Assessment: ${analysis.costAnalysis.valueAssessment}`);
-        
-        if (analysis.costAnalysis.redFlags && analysis.costAnalysis.redFlags.length > 0) {
-            addText('Red Flags:', 12, true);
-            analysis.costAnalysis.redFlags.forEach(flag => {
-                addText(`• ${flag}`);
-            });
-        }
-        yPosition += 5;
-
-        // Timeline Analysis
-        addText('Timeline Analysis:', 14, true);
-        addText(`• Realistic Assessment: ${analysis.timelineAnalysis.realistic}`);
-        addText(`• Deadline Comparison: ${analysis.timelineAnalysis.deadlineComparison}`);
-        addText(`• Industry Comparison: ${analysis.timelineAnalysis.industryComparison}`);
-        
-        if (analysis.timelineAnalysis.concerns && analysis.timelineAnalysis.concerns.length > 0) {
-            addText('Concerns:', 12, true);
-            analysis.timelineAnalysis.concerns.forEach(concern => {
-                addText(`• ${concern}`);
-            });
-        }
-        yPosition += 5;
-
-        // Technical Analysis
-        addText('Technical Analysis:', 14, true);
-        addText(`• Approach Quality: ${analysis.technicalAnalysis.approachQuality}`);
-        addText(`• Completeness: ${analysis.technicalAnalysis.completeness}`);
-        addText(`• Expertise Level: ${analysis.technicalAnalysis.expertiseLevel}`);
-        
-        if (analysis.technicalAnalysis.strengths && analysis.technicalAnalysis.strengths.length > 0) {
-            addText('Strengths:', 12, true);
-            analysis.technicalAnalysis.strengths.forEach(strength => {
-                addText(`• ${strength}`);
-            });
-        }
-        yPosition += 5;
-
-        // Risk Analysis
-        addText('Risk Assessment:', 14, true);
-        addText(`• Level: ${analysis.riskAnalysis.level}`);
-        addText(`• Overall: ${analysis.riskAnalysis.overall}`);
-        addText(`• Mitigation: ${analysis.riskAnalysis.mitigation}`);
-        
-        if (analysis.riskAnalysis.factors && analysis.riskAnalysis.factors.length > 0) {
-            addText('Risk Factors:', 12, true);
-            analysis.riskAnalysis.factors.forEach(factor => {
-                addText(`• ${factor}`);
-            });
-        }
-        yPosition += 5;
-
-        // Recommendations
-        if (analysis.recommendations && analysis.recommendations.length > 0) {
-            addText('Recommendations:', 14, true);
-            analysis.recommendations.forEach((rec, index) => {
-                addText(`${index + 1}. ${rec.title}`, 12, true);
-                addText(`   ${rec.description}`);
-                addText(`   Action: ${rec.action}`);
-            });
-            yPosition += 5;
-        }
-
-        // Questions to Ask
-        if (analysis.questionsToAsk && analysis.questionsToAsk.length > 0) {
-            addText('Suggested Questions for the Designer', 14, true);
-            analysis.questionsToAsk.forEach((question, index) => {
-                addText(`${index + 1}. ${question}`);
-            });
-        }
-
-        // Footer
-        const finalY = Math.max(yPosition + 20, pageHeight - 10);
-        doc.setFontSize(8);
-        doc.setFont('helvetica', 'normal');
-        doc.text('This is an AI-generated report and should be used as a supplementary tool for decision-making.', 20, finalY, { maxWidth: 170, align: 'center' });
-
-        // Return PDF as buffer
-        return Buffer.from(doc.output('arraybuffer'));
-        
+        console.log('📊 Designer stats calculated:', stats);
+        res.json({
+            success: true,
+            data: stats
+        });
     } catch (error) {
-        console.error('Error generating PDF:', error);
-        throw new Error('Failed to generate PDF report');
+        console.error('❌ Error getting designer stats:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to get designer statistics',
+            error: error.message
+        });
     }
-}
+});
+
+// GET - Compare quotes for a specific job (new endpoint)
+router.get('/job/:jobId/compare', authenticateToken, async (req, res) => {
+    try {
+        const { jobId } = req.params;
+        const userId = req.user.userId;
+        // Verify job ownership
+        const jobDoc = await adminDb.collection('jobs').doc(jobId).get();
+        if (!jobDoc.exists || jobDoc.data().posterId !== userId) {
+            return res.status(403).json({
+                success: false,
+                message: 'Unauthorized'
+            });
+        }
+        const jobData = jobDoc.data();
+        // Get quotes with designer information
+        const quotesSnapshot = await adminDb.collection('quotes')
+            .where('jobId', '==', jobId)
+            .get();
+        if (quotesSnapshot.empty) {
+            return res.json({
+                success: true,
+                data: {
+                    comparison: 'No quotes to compare',
+                    jobTitle: jobData.title
+                }
+            });
+        }
+        const quotes = quotesSnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            amount: doc.data().amount || doc.data().quoteAmount || 0,
+            deliveryTime: doc.data().deliveryTime || doc.data().timeline || 0
+        }));
+        // Create detailed comparison similar to the PDF
+        const amounts = quotes.map(q => q.amount).filter(a => a > 0);
+        const avgAmount = amounts.reduce((a, b) => a + b, 0) / amounts.length;
+        const maxAmount = Math.max(...amounts);
+        const comparison = {
+            jobTitle: jobData.title,
+            totalQuotes: quotes.length,
+            summary: {
+                lowestQuote: Math.min(...amounts),
+                highestQuote: maxAmount,
+                averageQuote: Math.round(avgAmount * 100) / 100,
+                priceSpread: maxAmount - Math.min(...amounts)
+            },
+            detailedComparison: quotes.map(quote => {
+                const percentageOfHighest = ((quote.amount / maxAmount) * 100).toFixed(2);
+                const differenceFromMean = quote.amount - avgAmount;
+                return {
+                    id: quote.id,
+                    designerName: quote.designerName || 'Unknown',
+                    amount: quote.amount,
+                    deliveryTime: quote.deliveryTime,
+                    percentageOfHighest: `${percentageOfHighest}%`,
+                    differenceFromMean: Math.round(differenceFromMean * 100) / 100,
+                    status: quote.status,
+                    description: quote.description,
+                    // Value assessment
+                    valueRating: differenceFromMean <= 0 ? 'Good Value' :
+                        differenceFromMean <= avgAmount * 0.2 ? 'Fair Value' : 'Premium',
+                    // Timeline assessment
+                    timelineRating: quote.deliveryTime <= 14 ? 'Fast' :
+                        quote.deliveryTime <= 30 ? 'Standard' : 'Extended'
+                };
+            }).sort((a, b) => a.amount - b.amount)
+        };
+        res.json({
+            success: true,
+            data: comparison
+        });
+    } catch (error) {
+        console.error('❌ Error comparing quotes:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to compare quotes',
+            error: error.message
+        });
+    }
+});
+
+
+export default router;

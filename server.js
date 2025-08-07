@@ -1,23 +1,27 @@
-import express from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
-import path from 'path';
-import fs from 'fs';
-import multer from 'multer';
+const express = require('express');
+const cors = require('cors');
+const dotenv = require('dotenv');
+const path = require('path');
+const fs = require('fs');
+const fileUpload = require('express-fileupload');
 
-// Import your route handlers
-import auth from './src/routes/auth.js';
-import jobs from './src/routes/jobs.js';
-import quotes from './src/routes/quotes.js';
-import messages from './src/routes/messages.js';
-import quoteAnalysis from './src/routes/quoteAnalysis.js'; // --- 1. IMPORT THE NEW ROUTE ---
-
+// Load environment variables
 dotenv.config();
+
+// Import route handlers
+const authRoutes = require('./src/routes/auth.js');
+const jobRoutes = require('./src/routes/jobs.js');
+const quoteRoutes = require('./src/routes/quotes.js');
+const messageRoutes = require('./src/routes/messages.js');
+const analysisRoutes = require('./src/routes/quoteAnalysis.js');
+const estimationRoutes = require('./src/routes/estimation.js'); // Correctly imported
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// --- CORS Configuration ---
+// --- Middleware Setup ---
+
+// CORS Configuration
 const allowedOrigins = [
   'https://steelconnect-frontend.vercel.app',
   /^https:\/\/steelconnect-frontend-.+\.vercel\.app$/,
@@ -46,35 +50,33 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 
-// --- File Upload & Static Serving Configuration ---
+// File Upload Middleware
+// Using express-fileupload to match fileProcessor.js
+app.use(fileUpload({
+    createParentPath: true,
+    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
+    tempFileDir: '/temp/'
+}));
+
+// Static serving for any uploads if needed in the future
 const uploadsDir = 'uploads';
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
 }
-
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadsDir + '/');
-  },
-  filename: function (req, file, cb) {
-    cb(null, Date.now() + path.extname(file.originalname));
-  }
-});
-
-export const upload = multer({ storage: storage });
 app.use('/uploads', express.static(uploadsDir));
 
 
-// --- Routes ---
+// --- API Routes ---
 app.get('/', (req, res) => {
   res.json({ message: 'SteelConnect Backend API is running' });
 });
 
-app.use('/api/auth', auth);
-app.use('/api/jobs', jobs);
-app.use('/api/quotes', quotes);
-app.use('/api/messages', messages);
-app.use('/api/analysis', quoteAnalysis); // --- 2. ADD THE ROUTE MIDDLEWARE ---
+app.use('/api/auth', authRoutes);
+app.use('/api/jobs', jobRoutes);
+app.use('/api/quotes', quoteRoutes);
+app.use('/api/messages', messageRoutes);
+app.use('/api/analysis', analysisRoutes);
+app.use('/api/estimation', estimationRoutes); // Using the estimation router
 
 
 // --- Error Handling ---
@@ -84,9 +86,6 @@ app.use('*', (req, res) => {
 
 app.use((error, req, res, next) => {
   console.error('Global error handler:', error);
-  if (error instanceof multer.MulterError) {
-    return res.status(400).json({ error: 'File upload error: ' + error.message });
-  }
   res.status(500).json({ error: 'Internal server error' });
 });
 
@@ -96,4 +95,4 @@ app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
 
-export default app;
+module.exports = app;

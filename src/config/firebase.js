@@ -1,4 +1,4 @@
-import admin from 'firebase-admin';
+const admin = require('firebase-admin');
 
 // Check for the required environment variable
 if (!process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64) {
@@ -17,7 +17,6 @@ const serviceAccount = JSON.parse(serviceAccountJson);
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
-    // --- FIX: Explicitly set the correct bucket name ---
     storageBucket: 'steelconnect-backend-3f684.firebasestorage.app'
   });
 }
@@ -26,4 +25,4 @@ if (!admin.apps.length) {
 const adminDb = admin.firestore();
 const adminStorage = admin.storage();
 
-export { admin, adminDb, adminStorage };
+module.exports = { admin, adminDb, adminStorage };

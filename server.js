@@ -5,6 +5,7 @@ import fs from 'fs/promises';
 import { upload } from '../../server.js'; 
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 // --- FIX: Corrected all import paths to go up one directory ---
 import Estimation from '../models/Estimation.js';
 import { PDFProcessor } from '../services/pdfprocessor.js';
@@ -19,6 +20,14 @@ import quotes from './routes/quotes.js';
 import messages from './routes/messages.js';
 import estimation from './routes/estimation.js';
 >>>>>>> 599817d (Initial commit)
+=======
+// --- FIX: All import paths must start with './src/' ---
+import auth from './src/routes/auth.js';
+import jobs from './src/routes/jobs.js';
+import quotes from './src/routes/quotes.js';
+import messages from './src/routes/messages.js';
+import estimation from './src/routes/estimation.js';
+>>>>>>> faf2f2fb81c0217be00755bf017289225e6c1374
 
 const router = express.Router();
 
@@ -33,6 +42,7 @@ router.post('/generate-from-upload', upload.single('drawing'), async (req, res) 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+<<<<<<< HEAD
 // --- CORS Configuration ---
 const allowedOrigins = [
   process.env.FRONTEND_URL, 
@@ -40,6 +50,10 @@ const allowedOrigins = [
   'http://localhost:5173'
 ];
 
+=======
+// CORS, Express middleware, etc. remains the same...
+const allowedOrigins = [ process.env.FRONTEND_URL, 'http://localhost:3000', 'http://localhost:5173' ];
+>>>>>>> faf2f2fb81c0217be00755bf017289225e6c1374
 const corsOptions = {
   origin: function (origin, callback) {
     const vercelPreviewRegex = /^https:\/\/steelconnect-frontend-.*-sabins-projects-02d8db3a\.vercel\.app$/;
@@ -49,6 +63,7 @@ const corsOptions = {
       callback(new Error('Not allowed by CORS'));
 >>>>>>> 599817d (Initial commit)
     }
+<<<<<<< HEAD
 
     const drawingFile = req.file;
     const { projectName, projectLocation } = req.body;
@@ -129,26 +144,36 @@ router.get('/analytics/dashboard', async (req, res) => {});
 <<<<<<< HEAD
 export default router;
 =======
+=======
+  },
+  optionsSuccessStatus: 200
+};
+app.use(cors(corsOptions));
+app.use(express.json());
+
+// File Upload Configuration remains the same...
+const uploadsDir = 'uploads'; 
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir);
+}
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) { cb(null, uploadsDir + '/'); },
+  filename: function (req, file, cb) { cb(null, Date.now() + path.extname(file.originalname)); }
+});
+export const upload = multer({ storage: storage });
+>>>>>>> faf2f2fb81c0217be00755bf017289225e6c1374
 app.use('/uploads', express.static(uploadsDir));
 
-
 // --- Routes ---
-app.get('/', (req, res) => {
-  res.json({ message: 'SteelConnect Backend API is running' });
-});
-
+app.get('/', (req, res) => res.json({ message: 'SteelConnect Backend API is running' }));
 app.use('/api/auth', auth);
 app.use('/api/jobs', jobs);
 app.use('/api/quotes', quotes);
 app.use('/api/messages', messages);
 app.use('/api/estimation', estimation);
 
-
-// --- Error Handling ---
-app.use('*', (req, res) => {
-  res.status(404).json({ error: 'Route not found' });
-});
-
+// Error Handling remains the same...
+app.use('*', (req, res) => res.status(404).json({ error: 'Route not found' }));
 app.use((error, req, res, next) => {
   console.error('Global error handler:', error);
   if (error instanceof multer.MulterError) {
@@ -157,11 +182,8 @@ app.use((error, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-
-// --- Server Start ---
-app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
-});
+// Server Start remains the same...
+app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
 
 export default app;
 >>>>>>> 599817d (Initial commit)

@@ -18,26 +18,18 @@ const PORT = process.env.PORT || 3000;
 
 // --- CORS Configuration ---
 const allowedOrigins = [
-  'https://steelconnect-frontend.vercel.app',
-  'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-fwpvudjyf-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-agxj6t88e-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-4lrnt0hv3-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-3mko9i2g2-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-9yxpdja13-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-doo6f2n1x-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-pv54baz1w-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-26zen6khb-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-qj53ud8yl-sabins-projects-02d8db3a.vercel.app',
-  // --- NEW URL ADDED ---
-  'https://steelconnect-frontend-gg487e679-sabins-projects-02d8db3a.vercel.app',
+  // Add your main production frontend URL from environment variables
+  process.env.FRONTEND_URL, 
   'http://localhost:3000',
   'http://localhost:5173'
 ];
 
 const corsOptions = {
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+    // Regex to allow any Vercel preview URL for your project
+    const vercelPreviewRegex = /^https:\/\/steelconnect-frontend-.*-sabins-projects-02d8db3a\.vercel\.app$/;
+
+    if (!origin || allowedOrigins.indexOf(origin) !== -1 || vercelPreviewRegex.test(origin)) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));

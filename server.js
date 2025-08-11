@@ -15,7 +15,6 @@ import messages from './src/routes/messages.js';
 // --- FIX: Import the estimation routes ---
 import estimation from './src/routes/estimation.js';
 
-
 dotenv.config();
 
 const app = express();
@@ -24,7 +23,7 @@ const PORT = process.env.PORT || 3000;
 // --- CORS Configuration ---
 const allowedOrigins = [
   // Add your main production frontend URL from environment variables
-  process.env.FRONTEND_URL,
+  process.env.FRONTEND_URL, 
   'http://localhost:3000',
   'http://localhost:5173'
 ];
@@ -47,6 +46,7 @@ app.use(cors(corsOptions));
 app.use(express.json());
 
 // --- File Upload & Static Serving Configuration ---
+
 const uploadsDir = 'uploads';
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
@@ -61,7 +61,6 @@ const storage = multer.diskStorage({
   }
 });
 
-// We now export this upload configuration to be used in other files
 export const upload = multer({ storage: storage });
 
 app.use('/uploads', express.static(uploadsDir));

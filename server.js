@@ -7,13 +7,12 @@ import path from 'path';
 import fs from 'fs';
 import multer from 'multer';
 
-// Import your route handlers
-import auth from './src/routes/auth.js';
-import jobs from './src/routes/jobs.js';
-import quotes from './src/routes/quotes.js';
-import messages from './src/routes/messages.js';
-// --- FIX: Import the estimation routes ---
-import estimation from './src/routes/estimation.js';
+// --- FIX: Corrected all import paths to be relative to this file ---
+import auth from './routes/auth.js';
+import jobs from './routes/jobs.js';
+import quotes from './routes/quotes.js';
+import messages from './routes/messages.js';
+import estimation from './routes/estimation.js';
 
 dotenv.config();
 
@@ -22,7 +21,6 @@ const PORT = process.env.PORT || 3000;
 
 // --- CORS Configuration ---
 const allowedOrigins = [
-  // Add your main production frontend URL from environment variables
   process.env.FRONTEND_URL, 
   'http://localhost:3000',
   'http://localhost:5173'
@@ -30,9 +28,7 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: function (origin, callback) {
-    // Regex to allow any Vercel preview URL for your project
     const vercelPreviewRegex = /^https:\/\/steelconnect-frontend-.*-sabins-projects-02d8db3a\.vercel\.app$/;
-
     if (!origin || allowedOrigins.indexOf(origin) !== -1 || vercelPreviewRegex.test(origin)) {
       callback(null, true);
     } else {
@@ -46,7 +42,6 @@ app.use(cors(corsOptions));
 app.use(express.json());
 
 // --- File Upload & Static Serving Configuration ---
-
 const uploadsDir = 'uploads';
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
@@ -75,7 +70,6 @@ app.use('/api/auth', auth);
 app.use('/api/jobs', jobs);
 app.use('/api/quotes', quotes);
 app.use('/api/messages', messages);
-// --- FIX: Register the estimation routes with your app ---
 app.use('/api/estimation', estimation);
 
 

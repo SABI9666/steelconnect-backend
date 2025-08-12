@@ -1,5 +1,5 @@
 // services/aiAnalyzer.js
-const Anthropic = require('@anthropic-ai/sdk');
+import Anthropic from '@anthropic-ai/sdk';
 
 /**
  * Represents a structural element extracted from drawings
@@ -351,6 +351,8 @@ class AIAnalyzer {
         {
             "work_packages": [
                 {
+Use Control + Shift + m to toggle the tab key moving focus. Alternatively, use esc then tab to move to the next interactive element on the page.
+
                     "package_name": "Foundations",
                     "description": "Excavation, pad footings, strip footings",
                     "complexity": "medium",
@@ -539,4 +541,4 @@ class AIAnalyzer {
     }
 }
 
-module.exports = { AIAnalyzer, StructuralElement };
+export { AIAnalyzer, StructuralElement };

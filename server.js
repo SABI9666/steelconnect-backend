@@ -7,6 +7,7 @@ import dotenv from 'dotenv';
 import multer from 'multer';
 import fs from 'fs/promises';
 import path from 'path';
+import authRoutes from './routes/auth.js'; // --- ADDED --- (Ensure auth.js is in a 'routes' folder)
 
 // Load environment variables
 dotenv.config();
@@ -16,7 +17,7 @@ const PORT = process.env.PORT || 3000;
 
 // Ensure required directories exist
 const ensureDirectories = async () => {
-  const dirs = ['src/services', 'uploads', 'temp'];
+  const dirs = ['src/services', 'uploads', 'temp', 'routes']; // Added 'routes' for structure
   for (const dir of dirs) {
     try {
       await fs.mkdir(dir, { recursive: true });
@@ -160,7 +161,9 @@ const initializeApp = async () => {
   }
 };
 
-// Routes
+// --- Routes ---
+
+// API Documentation and Auth Routes
 app.get('/', (req, res) => {
   res.json({
     message: 'SteelConnect Backend API',
@@ -169,10 +172,19 @@ app.get('/', (req, res) => {
     endpoints: {
       health: 'GET /health',
       estimate: 'POST /api/estimate',
-      upload: 'POST /api/upload-pdf'
+      upload: 'POST /api/upload-pdf',
+      auth: {
+        register: 'POST /api/auth/register',
+        login: 'POST /api/auth/login',
+        profile: 'GET /api/auth/profile (token required)',
+        updateProfile: 'PUT /api/auth/profile (token required)',
+        changePassword: 'PUT /api/auth/change-password (token required)'
+      }
     }
   });
 });
+
+app.use('/api/auth', authRoutes); // --- ADDED ---
 
 app.get('/health', (req, res) => {
   res.json({
@@ -279,6 +291,9 @@ app.post('/api/estimate', async (req, res) => {
   }
 });
 
+
+// --- Error Handling ---
+
 // Error handling middleware
 app.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
@@ -302,9 +317,12 @@ app.use('*', (req, res) => {
   res.status(404).json({
     error: 'Not found',
     message: `Route ${req.method} ${req.originalUrl} not found`,
-    availableRoutes: ['GET /', 'GET /health', 'POST /api/upload-pdf', 'POST /api/estimate']
+    availableRoutes: ['GET /', 'GET /health', 'POST /api/upload-pdf', 'POST /api/estimate', 'POST /api/auth/login', 'POST /api/auth/register']
   });
 });
+
+
+// --- Server Start ---
 
 // Start server
 const startServer = async () => {
@@ -333,3 +351,17 @@ startServer().catch((error) => {
   console.error('❌ Failed to start server:', error);
   process.exit(1);
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
+Gemini can

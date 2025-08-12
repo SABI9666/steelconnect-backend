@@ -1,376 +1,281 @@
-import express from 'express';
-import fs from 'fs/promises';
-import multer from 'multer';
-import path from 'path';
+import mongoose from 'mongoose';
+const { Schema, model } = mongoose;
 
-// Import your services and models
-import Estimation from '../models/Estimation.js';
-import { PDFProcessor } from '../services/pdfprocessor.js';
-import { AIAnalyzer } from '../services/aiAnalyzer.js';
-import { EstimationEngine } from '../services/cost-estimation-engine.js';
-import { validateEstimationInput } from '../middleware/validation.js';
-
-const router = express.Router();
-
-// Create multer configuration locally (instead of importing from server.js)
-const uploadsDir = 'uploads';
-
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadsDir + '/');
-  },
-  filename: function (req, file, cb) {
-    cb(null, Date.now() + path.extname(file.originalname));
-  }
+// Schema for individual line items
+const EstimationItemSchema = new Schema({
+    code: { type: String, required: true },
+    description: { type: String, required: true },
+    quantity: { type: Number, required: true, min: 0 },
+    unit: { type: String, required: true },
+    unitRate: { type: Number, required: true, min: 0 },
+    totalCost: { type: Number, required: true, min: 0 },
+    category: { type: String, required: true },
+    subcategory: { type: String, default: '' },
+    notes: { type: String, default: '' },
+    riskFactor: { type: Number, default: 1.0, min: 0.5, max: 2.0 },
+    confidence: { type: Number, default: 0.8, min: 0, max: 1 }
 });
 
-const upload = multer({ 
-  storage: storage,
-  limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB limit
-  },
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|pdf|dwg|dxf/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-    
-    if (mimetype && extname) {
-      return cb(null, true);
-    } else {
-      cb(new Error('Only images, PDFs, and CAD files are allowed'));
-    }
-  }
+// Schema for cost summary
+const CostSummarySchema = new Schema({
+    base_cost: { type: Number, required: true, min: 0 },
+    location_factor: { type: Number, default: 1.0 },
+    location_adjusted: { type: Number, required: true, min: 0 },
+    complexity_multiplier: { type: Number, default: 1.0 },
+    access_factor: { type: Number, default: 1.0 },
+    risk_adjusted: { type: Number, required: true, min: 0 },
+    site_access_contingency: { type: Number, default: 0 },
+    unforeseen_contingency: { type: Number, default: 0 },
+    subtotal_ex_gst: { type: Number, required: true, min: 0 },
+    gst: { type: Number, required: true, min: 0 },
+    total_inc_gst: { type: Number, required: true, min: 0 },
+    currency: { type: String, default: 'AUD' }
 });
 
-// Generate estimation from uploaded drawing
-router.post('/generate-from-upload', upload.single('drawing'), async (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({
-            success: false,
-            message: 'No drawing file was uploaded.'
-        });
-    }
+// Schema for structured data from PDF extraction
+const StructuredDataSchema = new Schema({
+    schedules: [{
+        title: String,
+        items: [{
+            mark: String,
+            section: String,
+            length: Number,
+            quantity: Number,
+            weight: Number,
+            raw_text: String
+        }]
+    }],
+    dimensions: [{
+        text: String,
+        parsed: {
+            length: Number,
+            width: Number,
+            height: Number,
+            unit: String
+        },
+        context: String
+    }],
+    specifications: [{
+        text: String,
+        data: {
+            concreteGrade: String,
+            steelSection: String
+        },
+        context: String
+    }],
+    titleBlocks: [{
+        text: String,
+        type: String
+    }]
+});
 
-    const drawingFile = req.file;
-    const { projectName, projectLocation } = req.body;
-
-    if (!projectName || !projectLocation) {
-        // Clean up uploaded file
-        try {
-            await fs.unlink(drawingFile.path);
-        } catch (error) {
-            console.error('Failed to delete uploaded file:', error);
+// Schema for AI analysis results
+const AnalysisResultSchema = new Schema({
+    confidence: { type: Number, min: 0, max: 1, default: 0 },
+    drawingAnalysis: {
+        project_info: {
+            project_name: String,
+            drawing_number: String,
+            revision: String,
+            drawing_type: String
+        },
+        structural_systems: {
+            foundation_type: String,
+            structural_system: String,
+            floor_systems: [String],
+            roof_system: String
+        },
+        steel_analysis: {
+            total_members_identified: { type: Number, default: 0 },
+            member_types: [String],
+            max_member_size: String,
+            total_estimated_weight: String
+        },
+        concrete_analysis: {
+            grades_identified: [String],
+            element_types_inferred: [String],
+            estimated_volumes: String
         }
-        
-        return res.status(400).json({
-            success: false,
-            message: 'Project Name and Location are required.'
-        });
-    }
-
-    const uploadedFilePath = drawingFile.path;
-
-    try {
-        const pdfProcessor = new PDFProcessor();
-        const aiAnalyzer = new AIAnalyzer(process.env.ANTHROPIC_API_KEY);
-        const estimationEngine = new EstimationEngine();
-
-        console.log(`Processing file: ${uploadedFilePath}`);
-        const extractedContent = await pdfProcessor.extractContent(uploadedFilePath);
-        
-        console.log('Sending content to AI Analyzer...');
-        const analysisResult = await aiAnalyzer.analyzeStructuralDrawings(
-            [{ 
-                filename: drawingFile.originalname, 
-                text: extractedContent.text, 
-                tables: extractedContent.tables 
+    },
+    quantityTakeoff: {
+        steel_quantities: {
+            members: [{
+                section: String,
+                total_length_m: Number,
+                weight_per_m: Number,
+                total_weight_kg: Number,
+                member_type: String,
+                quantity: Number
             }],
-            projectName
-        );
-
-        console.log('Generating cost estimation...');
-        const estimationData = await estimationEngine.generateEstimation(
-            analysisResult,
-            projectLocation
-        );
-
-        res.status(200).json({
-            success: true,
-            message: 'Estimation generated successfully.',
-            data: estimationData
-        });
-
-    } catch (error) {
-        console.error('Full estimation pipeline error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'An error occurred during the estimation process.',
-            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-        });
-    } finally {
-        // Always clean up the uploaded file
-        if (uploadedFilePath) {
-            try {
-                await fs.unlink(uploadedFilePath);
-                console.log(`Deleted temporary file: ${uploadedFilePath}`);
-            } catch (cleanupError) {
-                console.error(`Failed to delete temporary file: ${uploadedFilePath}`, cleanupError);
+            summary: {
+                total_steel_weight_tonnes: { type: Number, default: 0 },
+                beam_weight_tonnes: { type: Number, default: 0 },
+                column_weight_tonnes: { type: Number, default: 0 },
+                member_count: { type: Number, default: 0 }
             }
-        }
-    }
-});
-
-// Manual calculation endpoint
-router.post('/calculate', validateEstimationInput, async (req, res) => {
-    try {
-        const estimationData = req.body;
-        
-        // Process manual calculation
-        const estimationEngine = new EstimationEngine();
-        const result = await estimationEngine.calculateManualEstimation(estimationData);
-        
-        res.status(200).json({
-            success: true,
-            message: 'Estimation calculated successfully.',
-            data: result
-        });
-    } catch (error) {
-        console.error('Manual calculation error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to calculate estimation.',
-            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-        });
-    }
-});
-
-// Process multiple files
-router.post('/process-files', upload.array('files', 10), async (req, res) => {
-    try {
-        if (!req.files || req.files.length === 0) {
-            return res.status(400).json({
-                success: false,
-                message: 'No files uploaded.'
-            });
-        }
-
-        const results = [];
-        const pdfProcessor = new PDFProcessor();
-
-        for (const file of req.files) {
-            try {
-                const content = await pdfProcessor.extractContent(file.path);
-                results.push({
-                    filename: file.originalname,
-                    success: true,
-                    content: content
-                });
-            } catch (error) {
-                results.push({
-                    filename: file.originalname,
-                    success: false,
-                    error: error.message
-                });
+        },
+        concrete_quantities: {
+            elements: [{
+                element_type: String,
+                grade: String,
+                volume_m3: Number,
+                area_m2: Number,
+                linear_m: Number,
+                estimated: { type: Boolean, default: true }
+            }],
+            summary: {
+                total_concrete_m3: { type: Number, default: 0 },
+                n32_concrete_m3: { type: Number, default: 0 },
+                n40_concrete_m3: { type: Number, default: 0 },
+                slab_area_m2: { type: Number, default: 0 }
             }
-            
-            // Clean up file
-            try {
-                await fs.unlink(file.path);
-            } catch (error) {
-                console.error('Failed to delete file:', error);
-            }
+        },
+        calculation_notes: [String]
+    },
+    specifications: {
+        concrete_specifications: {
+            grades_found: [String],
+            typical_applications: Schema.Types.Mixed,
+            cover_requirements: Schema.Types.Mixed
+        },
+        steel_specifications: {
+            sections_used: [String],
+            steel_grade: String,
+            connection_requirements: String,
+            surface_treatment: String
+        },
+        standards_applicable: [String]
+    },
+    scopeIdentification: {
+        work_packages: [{
+            package_name: String,
+            description: String,
+            complexity: { type: String, enum: ['low', 'medium', 'high'] },
+            estimated_duration_days: Number
+        }],
+        project_complexity: { type: String, enum: ['low', 'medium', 'high'] },
+        member_count_basis: Number,
+        data_confidence: Number
+    },
+    riskAssessment: {
+        technical_risks: [{
+            risk: String,
+            probability: String,
+            impact: String,
+            mitigation: String
+        }],
+        data_quality_risks: [{
+            extraction_confidence: Number,
+            recommendation: String
+        }],
+        cost_factors: {
+            complexity_multiplier: { type: Number, default: 1.0 },
+            data_confidence_factor: { type: Number, default: 1.0 }
         }
+    },
+    assumptions: [String]
+});
 
-        res.status(200).json({
-            success: true,
-            message: 'Files processed.',
-            data: results
-        });
-    } catch (error) {
-        console.error('File processing error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to process files.',
-            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-        });
+// Schema for processing metadata
+const ProcessingMetadataSchema = new Schema({
+    pdfPages: { type: Number, default: 0 },
+    structuredElementsFound: { type: Number, default: 0 },
+    aiAnalysisConfidence: { type: Number, min: 0, max: 1 },
+    processingDate: { type: Date, default: Date.now },
+    enhancedProcessing: { type: Boolean, default: false },
+    processingTimeMs: { type: Number, default: 0 },
+    errorsDuringProcessing: [String],
+    qualityMetrics: {
+        textExtractionSuccess: { type: Boolean, default: true },
+        scheduleExtractionSuccess: { type: Boolean, default: false },
+        specificationExtractionSuccess: { type: Boolean, default: false },
+        dimensionExtractionSuccess: { type: Boolean, default: false }
     }
 });
 
-// Get estimation history
-router.get('/history', async (req, res) => {
-    try {
-        const { page = 1, limit = 10 } = req.query;
-        
-        const estimations = await Estimation.find()
-            .sort({ createdAt: -1 })
-            .limit(limit * 1)
-            .skip((page - 1) * limit)
-            .exec();
-            
-        const total = await Estimation.countDocuments();
-        
-        res.status(200).json({
-            success: true,
-            data: {
-                estimations,
-                totalPages: Math.ceil(total / limit),
-                currentPage: page,
-                total
-            }
-        });
-    } catch (error) {
-        console.error('History fetch error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch estimation history.',
-            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-        });
+// Main Estimation Schema
+const EstimationSchema = new Schema({
+    // Basic project information
+    projectName: { 
+        type: String, 
+        required: true,
+        trim: true,
+        maxLength: 200
+    },
+    projectLocation: { 
+        type: String, 
+        required: true,
+        enum: ['Sydney', 'Melbourne', 'Brisbane', 'Perth', 'Adelaide', 'Canberra', 'Darwin', 'Hobart'],
+        index: true
+    },
+    clientName: {
+        type: String,
+        trim: true
+    },
+
+    // File information
+    originalFilename: { 
+        type: String, 
+        required: true 
+    },
+    fileSize: { 
+        type: Number, 
+        default: 0 
+    },
+    fileType: { 
+        type: String, 
+        default: 'pdf' 
+    },
+
+    // Processing results
+    extractionConfidence: { 
+        type: Number, 
+        min: 0, 
+        max: 1, 
+        default: 0,
+        index: true
+    },
+    structuredData: StructuredDataSchema,
+    analysisResults: AnalysisResultSchema,
+    processingMetadata: ProcessingMetadataSchema,
+
+    // Cost estimation results
+    estimationData: {
+        items: [EstimationItemSchema],
+        cost_summary: CostSummarySchema,
+        categories: Schema.Types.Mixed,
+        assumptions: [String],
+        exclusions: [String],
+        notes: { type: String, default: '' },
+        validityPeriodDays: { type: Number, default: 30 }
+    },
+
+    // Management fields
+    status: {
+        type: String,
+        required: true,
+        enum: ['Draft', 'Processing', 'Review', 'Submitted', 'Approved', 'Rejected', 'Archived'],
+        default: 'Draft',
+        index: true
+    },
+    version: {
+        type: Number,
+        default: 1,
+        min: 1
+    },
+    user: {
+        type: Schema.Types.ObjectId,
+        ref: 'User', // Assumes a 'User' model exists for associating the estimation with a user
+        required: true
     }
+
+}, {
+    // Automatically add createdAt and updatedAt timestamps
+    timestamps: true
 });
 
-// Get specific estimation
-router.get('/:id', async (req, res) => {
-    try {
-        const estimation = await Estimation.findById(req.params.id);
-        
-        if (!estimation) {
-            return res.status(404).json({
-                success: false,
-                message: 'Estimation not found.'
-            });
-        }
-        
-        res.status(200).json({
-            success: true,
-            data: estimation
-        });
-    } catch (error) {
-        console.error('Estimation fetch error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch estimation.',
-            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-        });
-    }
-});
+// Create and export the model
+const Estimation = model('Estimation', EstimationSchema);
 
-// Update estimation
-router.put('/:id', validateEstimationInput, async (req, res) => {
-    try {
-        const updatedEstimation = await Estimation.findByIdAndUpdate(
-            req.params.id,
-            { ...req.body, updatedAt: new Date() },
-            { new: true }
-        );
-        
-        if (!updatedEstimation) {
-            return res.status(404).json({
-                success: false,
-                message: 'Estimation not found.'
-            });
-        }
-        
-        res.status(200).json({
-            success: true,
-            message: 'Estimation updated successfully.',
-            data: updatedEstimation
-        });
-    } catch (error) {
-        console.error('Estimation update error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to update estimation.',
-            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-        });
-    }
-});
+export default Estimation;
 
-// Delete estimation
-router.delete('/:id', async (req, res) => {
-    try {
-        const deletedEstimation = await Estimation.findByIdAndDelete(req.params.id);
-        
-        if (!deletedEstimation) {
-            return res.status(404).json({
-                success: false,
-                message: 'Estimation not found.'
-            });
-        }
-        
-        res.status(200).json({
-            success: true,
-            message: 'Estimation deleted successfully.'
-        });
-    } catch (error) {
-        console.error('Estimation delete error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to delete estimation.',
-            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-        });
-    }
-});
-
-// Generate report
-router.post('/:id/generate-report', async (req, res) => {
-    try {
-        const estimation = await Estimation.findById(req.params.id);
-        
-        if (!estimation) {
-            return res.status(404).json({
-                success: false,
-                message: 'Estimation not found.'
-            });
-        }
-        
-        // Generate report logic here
-        // This could involve creating a PDF, Excel file, etc.
-        
-        res.status(200).json({
-            success: true,
-            message: 'Report generated successfully.',
-            data: {
-                reportUrl: `/api/estimation/${req.params.id}/report`,
-                generatedAt: new Date()
-            }
-        });
-    } catch (error) {
-        console.error('Report generation error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to generate report.',
-            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-        });
-    }
-});
-
-// Analytics dashboard
-router.get('/analytics/dashboard', async (req, res) => {
-    try {
-        const totalEstimations = await Estimation.countDocuments();
-        const recentEstimations = await Estimation.find()
-            .sort({ createdAt: -1 })
-            .limit(5);
-            
-        // Add more analytics as needed
-        const analytics = {
-            totalEstimations,
-            recentEstimations,
-            // Add more metrics here
-        };
-        
-        res.status(200).json({
-            success: true,
-            data: analytics
-        });
-    } catch (error) {
-        console.error('Analytics error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch analytics.',
-            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-        });
-    }
-});
-
-export default router;

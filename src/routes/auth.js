@@ -1,5 +1,5 @@
 import express from 'express';
-import bcryptjs from 'bcryptjs';
+import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { adminDb } from '../config/firebase.js';
 
@@ -53,7 +53,7 @@ router.post('/register', async (req, res) => {
 
     // Hash password
     const saltRounds = 12;
-    const hashedPassword = await bcryptjs.hash(password, saltRounds);
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
 
     // Create new user object
     const newUser = {
@@ -141,7 +141,7 @@ router.post('/login', async (req, res) => {
     }
 
     // Verify password
-    const isMatch = await bcryptjs.compare(password, userData.password);
+    const isMatch = await bcrypt.compare(password, userData.password);
     if (!isMatch) {
       return res.status(401).json({ 
         error: 'Invalid credentials.',
@@ -381,7 +381,7 @@ router.put('/change-password', async (req, res) => {
       const userData = userDoc.data();
 
       // Verify current password
-      const isMatch = await bcryptjs.compare(currentPassword, userData.password);
+      const isMatch = await bcrypt.compare(currentPassword, userData.password);
       if (!isMatch) {
         return res.status(401).json({ 
           error: 'Current password is incorrect.',
@@ -391,7 +391,7 @@ router.put('/change-password', async (req, res) => {
 
       // Hash new password
       const saltRounds = 12;
-      const hashedNewPassword = await bcryptjs.hash(newPassword, saltRounds);
+      const hashedNewPassword = await bcrypt.hash(newPassword, saltRounds);
 
       // Update password
       await adminDb.collection('users').doc(decoded.userId).update({

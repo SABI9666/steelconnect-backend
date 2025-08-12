@@ -1,8 +1,8 @@
 // services/reportGenerator.js
-const fs = require('fs').promises;
-const path = require('path');
+import fs from 'fs/promises';
+import path from 'path';
 
-class ReportGenerator {
+export default class ReportGenerator {
     constructor() {
         this.outputDir = "reports";
         this.gstRate = 0.10;
@@ -121,52 +121,4 @@ class ReportGenerator {
         </div>
     </div>
     <button class="print-button" onclick="window.print()">🖨️ Print</button>
-    <a href="/api/v1/projects/${projectId}/report/download" download="report-${projectId}.html" style="position: fixed; bottom: 30px; left: 30px; background: #28a745; color: white; text-decoration: none; border-radius: 50px; padding: 15px 25px; font-size: 1rem; font-weight: 600; box-shadow: 0 5px 15px rgba(0,0,0,0.2);">💾 Download</a>
-</body>
-</html>`;
-
-        const filename = `estimation_report_${projectId}.html`;
-        const filePath = path.join(this.outputDir, filename);
-        
-        // Still write the file to disk for archival purposes
-        await fs.writeFile(filePath, html, 'utf8');
-        
-        // Return the HTML content directly for the API response
-        return { content: html, type: 'text/html' };
-    }
-
-    // ... All other helper methods (_formatCurrency, _generateJsonReport, etc.) remain unchanged ...
-    _generateCategoryBreakdown(categories) {
-        return Object.entries(categories).map(([categoryName, categoryData]) => `
-            <div class="category-section">
-                <div class="category-header">
-                    <div class="category-title">${categoryName}</div>
-                    <div class="category-cost">${this._formatCurrency(categoryData.total_cost || 0)} • ${categoryData.item_count || 0} items</div>
-                </div>
-            </div>
-        `).join('');
-    }
-
-    async _generateJsonReport(data, projectId) {
-        const filename = `estimation_${projectId}.json`;
-        const filePath = path.join(this.outputDir, filename);
-        await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf8');
-        return filePath;
-    }
-    
-    _formatCurrency(amount) {
-        return new Intl.NumberFormat('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount || 0);
-    }
-
-    _formatNumber(number, decimals = 2) {
-        return new Intl.NumberFormat('en-AU', { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(number || 0);
-    }
-    
-    _getConfidenceClass(score) {
-        if (score >= 0.8) return 'confidence-high';
-        if (score >= 0.6) return 'confidence-medium';
-        return 'confidence-low';
-    }
-}
-
-module.exports = ReportGenerator;
+    <a href="/api/v1/projects/${projectId}/report/download" download="report-${projectId}.html" style="position: fixed; bottom: 30px; left: 30px; background: #28a745; color: white; text-decoration: none; border-radius: 50px; padding: 

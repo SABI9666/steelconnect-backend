@@ -1,535 +1,406 @@
+// Enhanced PDF Processor for Structural Drawings
 import fs from 'fs/promises';
 import path from 'path';
-import { fromPath } from 'pdf2pic';
-
-// Use the 'legacy' build specifically designed for Node.js environments.
 import pdfjsLib from 'pdfjs-dist/legacy/build/pdf.js';
 
-/**
- * Container for extracted PDF content
- */
-export class ExtractedContent {
-    constructor({
-        filename = '',
-        text = '',
-        tables = [],
-        images = [],
-        metadata = {},
-        drawingElements = []
-    } = {}) {
-        this.filename = filename;
-        this.text = text;
-        this.tables = tables;
-        this.images = images;
-        this.metadata = metadata;
-        this.drawingElements = drawingElements;
-    }
-}
-
-/**
- * Advanced PDF processing for structural drawings
- */
-export class PDFProcessor {
+export class EnhancedPDFProcessor {
     constructor() {
-        this.supportedFormats = ['.pdf', '.dwg', '.dxf'];
-        this.tableKeywords = [
-            'schedule', 'legend', 'notes', 'specification',
-            'material', 'steel', 'concrete', 'footing', 'beam'
-        ];
-        
-        // The workerSrc configuration is not needed when using the legacy Node.js build.
+        this.structuralKeywords = {
+            concrete: ['concrete', 'n20', 'n25', 'n32', 'n40', 'mpa', 'slab', 'beam', 'column', 'footing'],
+            steel: ['ub', 'uc', 'pfc', 'shs', 'rhs', 'steel', 'beam', 'column', 'purlin', 'girt'],
+            dimensions: ['mm', 'cm', 'm', 'length', 'width', 'height', 'thickness', 'diameter'],
+            quantities: ['qty', 'quantity', 'no.', 'number', 'total', 'sum'],
+            materials: ['grade', 'class', 'strength', 'reinforcement', 'mesh', 'bar']
+        };
     }
 
-    /**
-     * Main extraction method for PDF files
-     * @param {string} filePath - Path to the file
-     * @returns {Promise<Object>} Extracted content
-     */
-    async extractContent(filePath) {
-        try {
-            const filename = path.basename(filePath);
-            const fileExt = path.extname(filename).toLowerCase();
-
-            if (fileExt === '.pdf') {
-                return await this._extractPdfContent(filePath);
-            } else if (['.dwg', '.dxf'].includes(fileExt)) {
-                return await this._extractCadContent(filePath);
-            } else {
-                throw new Error(`Unsupported file format: ${fileExt}`);
-            }
-        } catch (error) {
-            console.error(`Content extraction error for ${filePath}: ${error.message}`);
-            throw error;
-        }
-    }
-
-    /**
-     * Extract comprehensive content from PDF using pdfjs-dist
-     * @param {string} filePath - Path to PDF file
-     * @returns {Promise<Object>} Extracted content
-     */
-    async _extractPdfContent(filePath) {
+    async extractStructuralContent(filePath) {
         try {
             const dataBuffer = await fs.readFile(filePath);
-            
-            // UPDATED: Convert the Node.js Buffer to a Uint8Array, as required by pdfjs-dist.
             const uint8Array = new Uint8Array(dataBuffer);
-
-            // UPDATED: Pass the Uint8Array to the getDocument method.
             const doc = await pdfjsLib.getDocument(uint8Array).promise;
 
             const extractedContent = {
                 filename: path.basename(filePath),
-                text: '',
-                tables: [],
-                images: [],
-                metadata: {},
-                drawingElements: [],
-                pages: []
+                pages: [],
+                structuredData: {
+                    titleBlocks: [],
+                    schedules: [],
+                    dimensions: [],
+                    specifications: [],
+                    quantities: []
+                },
+                rawText: '',
+                confidence: 0
             };
 
-            // Extract basic metadata
-            const metadata = await doc.getMetadata();
-            extractedContent.metadata = {
-                pageCount: doc.numPages,
-                title: metadata.info?.Title || '',
-                author: metadata.info?.Author || '',
-                subject: metadata.info?.Subject || '',
-                creator: metadata.info?.Creator || '',
-                producer: metadata.info?.Producer || '',
-                creationDate: metadata.info?.CreationDate || '',
-                modificationDate: metadata.info?.ModDate || ''
-            };
-
-            // Extract text content from all pages
-            let fullText = '';
-            for (let i = 1; i <= doc.numPages; i++) {
-                const page = await doc.getPage(i);
-                const textContent = await page.getTextContent();
-                const pageText = textContent.items.map(item => item.str).join(' ');
-                fullText += pageText + '\n';
-                
-                extractedContent.pages.push({
-                    pageNumber: i,
-                    text: pageText,
-                    dimensions: page.view,
-                    rotation: page.rotate
-                });
+            // Process each page with enhanced analysis
+            for (let pageNum = 1; pageNum <= doc.numPages; pageNum++) {
+                const page = await doc.getPage(pageNum);
+                const pageData = await this._extractPageData(page, pageNum);
+                extractedContent.pages.push(pageData);
+                extractedContent.rawText += pageData.text + '\n';
             }
-            extractedContent.text = fullText;
 
-            // Process text for tables and elements
-            const textLines = fullText.split('\n').filter(line => line.trim());
+            // Analyze and structure the extracted content
+            await this._structureContent(extractedContent);
             
-            // Extract tables from text
-            extractedContent.tables = await this._extractTablesFromText(textLines);
-
-            // Extract images (basic implementation)
-            extractedContent.images = await this._extractImages(filePath);
-
-            // Extract drawing elements from text patterns
-            extractedContent.drawingElements = await this._extractDrawingElements(textLines);
-
-            // Post-process to identify structural elements
-            return await this._postProcessContent(extractedContent);
+            return extractedContent;
 
         } catch (error) {
-            console.error(`PDF extraction error: ${error.message}`);
+            console.error(`Enhanced PDF extraction error: ${error.message}`);
             throw error;
         }
     }
 
-    /**
-     * Extract tables from text lines
-     * @param {string[]} textLines - Array of text lines
-     * @returns {Promise<Array>} Extracted tables
-     */
-    async _extractTablesFromText(textLines) {
-        const tables = [];
-        let currentTable = [];
-        let tableIndex = 0;
-
-        for (let i = 0; i < textLines.length; i++) {
-            const line = textLines[i];
-
-            if (this._isTableLine(line)) {
-                currentTable.push({
-                    text: line.trim(),
-                    lineNumber: i,
-                    page: Math.floor(i / 50) // Rough page estimation
-                });
-            } else if (currentTable.length > 0) {
-                // End of current table
-                if (currentTable.length > 2) { // Minimum rows for a table
-                    const tableDict = {
-                        tableId: `table_${tableIndex}`,
-                        page: currentTable[0].page,
-                        rows: [],
-                        type: 'extracted',
-                        bbox: null
-                    };
-
-                    // Convert table data to structured format
-                    for (const row of currentTable) {
-                        const columns = this._splitTableRow(row.text);
-                        tableDict.rows.push(columns);
-                    }
-
-                    if (tableDict.rows.length > 0) {
-                        tables.push(tableDict);
-                        tableIndex++;
-                    }
-                }
-                currentTable = [];
-            }
-        }
-
-        // Add final table if exists
-        if (currentTable.length > 2) {
-            const tableDict = {
-                tableId: `table_${tableIndex}`,
-                page: currentTable[0].page,
-                rows: [],
-                type: 'extracted',
-                bbox: null
-            };
-
-            for (const row of currentTable) {
-                const columns = this._splitTableRow(row.text);
-                tableDict.rows.push(columns);
-            }
-
-            if (tableDict.rows.length > 0) {
-                tables.push(tableDict);
-            }
-        }
-
-        return tables;
-    }
-
-    /**
-     * Check if a line of text appears to be part of a table
-     * @param {string} text - Text line to check
-     * @returns {boolean} True if appears to be table content
-     */
-    _isTableLine(text) {
-        const indicators = [
-            /\s+\d+\s+/.test(text), // Numbers with spaces
-            /\|\s*\w+\s*\|/.test(text), // Pipe-separated
-            /\t/.test(text), // Tab-separated
-            this.tableKeywords.some(keyword => text.toLowerCase().includes(keyword)),
-            /^\s*\w+\s+\d+/.test(text), // Text followed by numbers
-            /^\s*[A-Z]\d+/.test(text), // Reference codes like N12, M16
-        ];
-
-        return indicators.some(indicator => indicator);
-    }
-
-    /**
-     * Split table row into columns
-     * @param {string} text - Table row text
-     * @returns {string[]} Array of column values
-     */
-    _splitTableRow(text) {
-        // Try different splitting methods
-        if (text.includes('|')) {
-            return text.split('|').map(col => col.trim());
-        } else if (text.includes('\t')) {
-            return text.split('\t').map(col => col.trim());
-        } else if (/\s{3,}/.test(text)) { // Multiple spaces
-            return text.split(/\s{3,}/).map(col => col.trim());
-        } else {
-            // Try to split on spaces while preserving meaningful groups
-            const parts = text.split(/\s+/);
-            return parts.length > 1 ? parts : [text.trim()];
-        }
-    }
-
-    /**
-     * Extract images from PDF (basic implementation)
-     * @param {string} filePath - Path to PDF file
-     * @returns {Promise<Array>} Array of image information
-     */
-    async _extractImages(filePath) {
-        const images = [];
+    async _extractPageData(page, pageNum) {
+        const viewport = page.getViewport({ scale: 1.0 });
+        const textContent = await page.getTextContent();
         
-        try {
-            const options = {
-                density: 100,
-                saveFilename: "page",
-                savePath: "./temp/",
-                format: "png",
-                width: 600,
-                height: 600
+        const pageData = {
+            pageNumber: pageNum,
+            text: '',
+            textItems: [],
+            dimensions: { width: viewport.width, height: viewport.height },
+            structuredElements: []
+        };
+
+        // Enhanced text extraction with positioning
+        for (const item of textContent.items) {
+            const textItem = {
+                text: item.str,
+                x: item.transform[4],
+                y: item.transform[5],
+                width: item.width,
+                height: item.height,
+                font: item.fontName,
+                fontSize: Math.abs(item.transform[0])
             };
-            const convert = fromPath(filePath, options);
-
-            // Note: This would convert PDF pages to images
-            // For actual image extraction from PDF, you'd need a different approach
             
-            images.push({
-                imageId: 'pdf_conversion',
-                page: 1,
-                size: 0,
-                width: 600,
-                height: 600,
-                colorspace: 'RGB',
-                hasAlpha: false,
-                data: null // Would contain actual image data
-            });
-
-        } catch (error) {
-            console.error(`Image extraction error: ${error.message}`);
+            pageData.textItems.push(textItem);
+            pageData.text += item.str + ' ';
         }
 
-        return images;
+        // Identify structured elements based on positioning and content
+        pageData.structuredElements = this._identifyStructuredElements(pageData.textItems);
+        
+        return pageData;
     }
 
-    /**
-     * Extract drawing elements from text lines
-     * @param {string[]} textLines - Array of text lines
-     * @returns {Promise<Array>} Array of drawing elements
-     */
-    async _extractDrawingElements(textLines) {
+    _identifyStructuredElements(textItems) {
         const elements = [];
+        const sortedItems = [...textItems].sort((a, b) => b.y - a.y); // Top to bottom
 
-        try {
-            textLines.forEach((line, index) => {
-                if (line.trim()) {
-                    const element = {
-                        page: Math.floor(index / 50), // Rough page estimation
-                        type: 'text',
-                        text: line.trim(),
-                        lineNumber: index,
-                        fontInfo: {} // Would need more advanced parsing
-                    };
-                    elements.push(element);
+        let currentGroup = [];
+        let lastY = null;
+        const LINE_TOLERANCE = 10;
+
+        for (const item of sortedItems) {
+            if (lastY === null || Math.abs(item.y - lastY) < LINE_TOLERANCE) {
+                currentGroup.push(item);
+            } else {
+                if (currentGroup.length > 0) {
+                    elements.push(this._analyzeGroup(currentGroup));
                 }
-            });
-
-        } catch (error) {
-            console.error(`Drawing elements extraction error: ${error.message}`);
+                currentGroup = [item];
+            }
+            lastY = item.y;
         }
 
-        return elements;
-    }
-
-    /**
-     * Post-process extracted content to identify structural elements
-     * @param {Object} content - Extracted content object
-     * @returns {Promise<Object>} Post-processed content
-     */
-    async _postProcessContent(content) {
-        try {
-            // Identify steel schedules
-            content.steelSchedule = this._identifySteelSchedule(content.text);
-
-            // Identify concrete specifications
-            content.concreteSpecifications = this._identifyConcreteSpecs(content.text);
-
-            // Identify dimensions and quantities
-            content.dimensions = this._extractDimensions(content.text);
-
-            // Identify drawing numbers and revisions
-            content.drawingInfo = this._extractDrawingInfo(content.text);
-
-            // Clean and structure tables
-            content.structuredTables = this._structureTables(content.tables);
-
-            return content;
-
-        } catch (error) {
-            console.error(`Post-processing error: ${error.message}`);
-            return content;
+        if (currentGroup.length > 0) {
+            elements.push(this._analyzeGroup(currentGroup));
         }
+
+        return elements.filter(el => el !== null);
     }
 
-    /**
-     * Identify steel member schedules in text
-     * @param {string} text - Text to analyze
-     * @returns {Array} Array of steel elements found
-     */
-    _identifySteelSchedule(text) {
-        const steelElements = [];
-        const patterns = [
-            /UB\s*\d+\s*x?\s*\d+\.?\d*/gi,  // Universal beams
-            /UC\s*\d+\s*x?\s*\d+\.?\d*/gi,  // Universal columns
-            /PFC\s*\d+/gi,  // Parallel flange channels
-            /SHS\s*\d+\s*x?\s*\d+\s*x?\s*\d+\.?\d*/gi,  // Square hollow sections
-            /RHS\s*\d+\s*x?\s*\d+\s*x?\s*\d+\.?\d*/gi,  // Rectangular hollow sections
-            /CEE?\s*\d+/gi,  // C sections
+    _analyzeGroup(group) {
+        const text = group.map(item => item.text).join(' ').trim();
+        if (!text) return null;
+
+        const element = {
+            text: text,
+            type: 'text',
+            bbox: this._getGroupBoundingBox(group),
+            items: group
+        };
+
+        // Classify the element type
+        if (this._isTitle(text)) {
+            element.type = 'title';
+        } else if (this._isScheduleHeader(text)) {
+            element.type = 'schedule_header';
+        } else if (this._isScheduleRow(text)) {
+            element.type = 'schedule_row';
+            element.data = this._parseScheduleRow(text);
+        } else if (this._isDimension(text)) {
+            element.type = 'dimension';
+            element.data = this._parseDimension(text);
+        } else if (this._isSpecification(text)) {
+            element.type = 'specification';
+            element.data = this._parseSpecification(text);
+        }
+
+        return element;
+    }
+
+    _getGroupBoundingBox(group) {
+        const xs = group.map(item => item.x);
+        const ys = group.map(item => item.y);
+        return {
+            left: Math.min(...xs),
+            right: Math.max(...xs.map((x, i) => x + group[i].width)),
+            top: Math.max(...ys),
+            bottom: Math.min(...ys.map((y, i) => y - group[i].height))
+        };
+    }
+
+    _isTitle(text) {
+        const titlePatterns = [
+            /^(STEEL|CONCRETE|FOOTING|BEAM|COLUMN)\s+(SCHEDULE|LIST|TABLE)/i,
+            /^(DRAWING|DWG)\s*(NO|NUMBER)[:.]?\s*[A-Z0-9-]+/i,
+            /^(STRUCTURAL|FOUNDATION|FLOOR)\s+(PLAN|SECTION|ELEVATION)/i
         ];
-
-        patterns.forEach(pattern => {
-            let match;
-            while ((match = pattern.exec(text)) !== null) {
-                steelElements.push({
-                    section: match[0],
-                    position: [match.index, match.index + match[0].length],
-                    context: text.substring(Math.max(0, match.index - 50), match.index + match[0].length + 50)
-                });
-            }
-        });
-        return steelElements;
+        return titlePatterns.some(pattern => pattern.test(text));
     }
 
-    /**
-     * Identify concrete specifications
-     * @param {string} text - Text to analyze
-     * @returns {Array} Array of concrete specifications found
-     */
-    _identifyConcreteSpecs(text) {
-        const concreteSpecs = [];
-        const gradePatterns = [ /N\d{2,3}/gi, /\d{2,3}\s*MPa/gi ];
-
-        gradePatterns.forEach(pattern => {
-            let match;
-            while ((match = pattern.exec(text)) !== null) {
-                concreteSpecs.push({
-                    grade: match[0],
-                    position: [match.index, match.index + match[0].length],
-                    context: text.substring(Math.max(0, match.index - 30), match.index + match[0].length + 30)
-                });
-            }
-        });
-        return concreteSpecs;
+    _isScheduleHeader(text) {
+        const headers = ['mark', 'size', 'length', 'quantity', 'grade', 'weight', 'member', 'section'];
+        const words = text.toLowerCase().split(/\s+/);
+        const headerCount = words.filter(word => headers.includes(word)).length;
+        return headerCount >= 2;
     }
 
-    /**
-     * Extract dimensions from text
-     * @param {string} text - Text to analyze
-     * @returns {Array} Array of dimensions found
-     */
-    _extractDimensions(text) {
-        const dimensions = [];
+    _isScheduleRow(text) {
+        // Look for patterns like: B1 200UB25 6000 4 or similar
         const patterns = [
-            /\d+\s*x\s*\d+\s*x\s*\d+/g,
-            /\d+\s*mm\s*x\s*\d+\s*mm/g,
-            /\d+\.\d+\s*m\s*x\s*\d+\.\d+\s*m/g,
-            /Ø\s*\d+/g,
+            /^[A-Z]\d+\s+\d+[A-Z]+\d+\s+\d+\s+\d+/,  // Mark, Section, Length, Qty
+            /^[A-Z]+\d*\s+\d+\s*x\s*\d+\s*x\s*\d+/,   // Section with dimensions
+            /^\d+\s+[A-Z]+\d+\s+\d+/                   // Simple schedule row
         ];
-
-        patterns.forEach(pattern => {
-            let match;
-            while ((match = pattern.exec(text)) !== null) {
-                dimensions.push({
-                    dimension: match[0],
-                    position: [match.index, match.index + match[0].length],
-                    context: text.substring(Math.max(0, match.index - 20), match.index + match[0].length + 20)
-                });
-            }
-        });
-        return dimensions;
+        return patterns.some(pattern => pattern.test(text));
     }
 
-    /**
-     * Extract drawing numbers, revisions, dates
-     * @param {string} text - Text to analyze
-     * @returns {Object} Drawing information
-     */
-    _extractDrawingInfo(text) {
+    _isDimension(text) {
+        const dimensionPatterns = [
+            /\d+\s*x\s*\d+\s*x\s*\d+\s*(mm|m)/i,
+            /\d+\.\d+\s*m\s*x\s*\d+\.\d+\s*m/i,
+            /ø\s*\d+\s*(mm)?/i,
+            /\d+\s*(mm|m)\s+(long|wide|thick)/i
+        ];
+        return dimensionPatterns.some(pattern => pattern.test(text));
+    }
+
+    _isSpecification(text) {
+        return this.structuralKeywords.concrete.some(kw => 
+            text.toLowerCase().includes(kw)
+        ) || this.structuralKeywords.steel.some(kw => 
+            text.toLowerCase().includes(kw)
+        );
+    }
+
+    _parseScheduleRow(text) {
+        const parts = text.split(/\s+/);
+        const data = {};
+        
+        // Try to identify common schedule patterns
+        if (parts.length >= 4) {
+            // Pattern: Mark, Section, Length, Quantity
+            data.mark = parts[0];
+            data.section = parts[1];
+            data.length = this._parseNumber(parts[2]);
+            data.quantity = this._parseNumber(parts[3]);
+            
+            if (parts.length > 4) {
+                data.weight = this._parseNumber(parts[4]);
+            }
+        }
+        
+        return data;
+    }
+
+    _parseDimension(text) {
+        const dimensionMatch = text.match(/(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x?\s*(\d+(?:\.\d+)?)?/i);
+        if (dimensionMatch) {
+            return {
+                length: parseFloat(dimensionMatch[1]),
+                width: parseFloat(dimensionMatch[2]),
+                height: dimensionMatch[3] ? parseFloat(dimensionMatch[3]) : null,
+                unit: this._extractUnit(text)
+            };
+        }
+        return { raw: text };
+    }
+
+    _parseSpecification(text) {
+        const specs = {};
+        
+        // Extract concrete grades
+        const concreteMatch = text.match(/N(\d{2,3})/i);
+        if (concreteMatch) {
+            specs.concreteGrade = `N${concreteMatch[1]}`;
+        }
+        
+        // Extract steel sections
+        const steelMatch = text.match(/(\d+)(UB|UC|PFC|SHS|RHS)(\d+)/i);
+        if (steelMatch) {
+            specs.steelSection = `${steelMatch[1]}${steelMatch[2]}${steelMatch[3]}`;
+        }
+        
+        return specs;
+    }
+
+    _parseNumber(str) {
+        const num = parseFloat(str);
+        return isNaN(num) ? 0 : num;
+    }
+
+    _extractUnit(text) {
+        const unitMatch = text.match(/(mm|cm|m|kg|tonne)/i);
+        return unitMatch ? unitMatch[1].toLowerCase() : 'mm';
+    }
+
+    async _structureContent(extractedContent) {
+        const allElements = extractedContent.pages.flatMap(page => page.structuredElements);
+        
+        // Group elements by type
+        extractedContent.structuredData.titleBlocks = allElements.filter(el => el.type === 'title');
+        extractedContent.structuredData.schedules = this._buildSchedules(allElements);
+        extractedContent.structuredData.dimensions = allElements.filter(el => el.type === 'dimension');
+        extractedContent.structuredData.specifications = allElements.filter(el => el.type === 'specification');
+        
+        // Calculate confidence based on structured data found
+        extractedContent.confidence = this._calculateConfidence(extractedContent.structuredData);
+        
+        return extractedContent;
+    }
+
+    _buildSchedules(elements) {
+        const schedules = [];
+        let currentSchedule = null;
+        
+        for (const element of elements) {
+            if (element.type === 'schedule_header') {
+                // Start new schedule
+                if (currentSchedule) {
+                    schedules.push(currentSchedule);
+                }
+                currentSchedule = {
+                    title: element.text,
+                    headers: element.text.toLowerCase().split(/\s+/),
+                    rows: []
+                };
+            } else if (element.type === 'schedule_row' && currentSchedule) {
+                currentSchedule.rows.push(element);
+            }
+        }
+        
+        if (currentSchedule) {
+            schedules.push(currentSchedule);
+        }
+        
+        return schedules;
+    }
+
+    _calculateConfidence(structuredData) {
+        let score = 0;
+        const maxScore = 100;
+        
+        // Award points for finding structured data
+        if (structuredData.schedules.length > 0) score += 40;
+        if (structuredData.dimensions.length > 0) score += 20;
+        if (structuredData.specifications.length > 0) score += 20;
+        if (structuredData.titleBlocks.length > 0) score += 20;
+        
+        return Math.min(score, maxScore) / maxScore;
+    }
+
+    // Method to convert structured data for AI analysis
+    formatForAIAnalysis(extractedContent) {
+        const formatted = {
+            filename: extractedContent.filename,
+            confidence: extractedContent.confidence,
+            
+            // Structured summaries for better AI understanding
+            project_info: this._extractProjectInfo(extractedContent),
+            steel_schedules: this._formatSteelSchedules(extractedContent.structuredData.schedules),
+            concrete_elements: this._formatConcreteElements(extractedContent),
+            dimensions_found: this._formatDimensions(extractedContent.structuredData.dimensions),
+            
+            // Raw text for fallback
+            raw_text: extractedContent.rawText.substring(0, 10000), // Limit for API
+            
+            // Processing metadata
+            pages_processed: extractedContent.pages.length,
+            elements_found: {
+                schedules: extractedContent.structuredData.schedules.length,
+                dimensions: extractedContent.structuredData.dimensions.length,
+                specifications: extractedContent.structuredData.specifications.length
+            }
+        };
+        
+        return formatted;
+    }
+
+    _extractProjectInfo(content) {
         const info = {};
-        const dwgPatterns = [ /DRG\s*No\.?\s*:?\s*([A-Z]?\d+\.?\d*)/i, /Drawing\s*No\.?\s*:?\s*([A-Z]?\d+\.?\d*)/i, /(\d+-\d+)/g ];
-        for (const pattern of dwgPatterns) {
-            const match = text.match(pattern);
-            if (match) { info.drawingNumber = match[1]; break; }
+        const titleBlocks = content.structuredData.titleBlocks;
+        
+        for (const title of titleBlocks) {
+            const text = title.text;
+            
+            // Extract drawing number
+            const dwgMatch = text.match(/(?:DWG|DRAWING)\s*(?:NO|NUMBER)[:.]?\s*([A-Z0-9-]+)/i);
+            if (dwgMatch) info.drawing_number = dwgMatch[1];
+            
+            // Extract revision
+            const revMatch = text.match(/REV[:.]?\s*([A-Z0-9]+)/i);
+            if (revMatch) info.revision = revMatch[1];
         }
-
-        const revPatterns = [ /REV\.?\s*:?\s*([A-Z0-9]+)/i, /Revision\s*:?\s*([A-Z0-9]+)/i ];
-        for (const pattern of revPatterns) {
-            const match = text.match(pattern);
-            if (match) { info.revision = match[1]; break; }
-        }
-
-        const datePatterns = [ /\d{1,2}[/-]\d{1,2}[/-]\d{2,4}/g, /\d{1,2}\s+\w{3,9}\s+\d{2,4}/g ];
-        for (const pattern of datePatterns) {
-            const matches = text.match(pattern);
-            if (matches) { info.dates = matches; break; }
-        }
+        
         return info;
     }
 
-    /**
-     * Structure and clean up extracted tables
-     * @param {Array} tables - Array of extracted tables
-     * @returns {Array} Array of structured tables
-     */
-    _structureTables(tables) {
-        const structured = [];
-        for (const table of tables) {
-            if (!table.rows || table.rows.length === 0) continue;
-            const structuredTable = {
-                tableId: table.tableId || '',
-                page: table.page || 0,
-                type: this._classifyTable(table.rows),
-                headers: [],
-                data: [],
-                summary: {}
-            };
-            if (table.rows.length > 0) {
-                structuredTable.headers = table.rows[0];
-                structuredTable.data = table.rows.slice(1);
+    _formatSteelSchedules(schedules) {
+        return schedules.map(schedule => ({
+            title: schedule.title,
+            items: schedule.rows.map(row => ({
+                mark: row.data?.mark || '',
+                section: row.data?.section || '',
+                length: row.data?.length || 0,
+                quantity: row.data?.quantity || 0,
+                weight: row.data?.weight || 0,
+                raw_text: row.text
+            }))
+        }));
+    }
+
+    _formatConcreteElements(content) {
+        const elements = [];
+        const specs = content.structuredData.specifications;
+        const dimensions = content.structuredData.dimensions;
+        
+        // Correlate specifications with dimensions where possible
+        for (const spec of specs) {
+            if (spec.data?.concreteGrade) {
+                elements.push({
+                    grade: spec.data.concreteGrade,
+                    context: spec.text,
+                    associated_dimensions: dimensions.filter(dim => 
+                        Math.abs(dim.bbox.top - spec.bbox.top) < 50 // Same approximate area
+                    )
+                });
             }
-            structuredTable.summary = {
-                rowCount: structuredTable.data.length,
-                columnCount: structuredTable.headers.length,
-                hasNumbers: structuredTable.data.some(row => row.some(cell => /\d/.test(String(cell))))
-            };
-            structured.push(structuredTable);
         }
-        return structured;
+        
+        return elements;
     }
 
-    /**
-     * Classify table type based on content
-     * @param {Array} rows - Table rows
-     * @returns {string} Table type classification
-     */
-    _classifyTable(rows) {
-        if (!rows || rows.length === 0) return 'unknown';
-        const allText = rows.flat().join(' ').toLowerCase();
-
-        if (['steel', 'beam', 'ub', 'pfc', 'shs'].some(keyword => allText.includes(keyword))) return 'steel_schedule';
-        if (['concrete', 'n20', 'n32', 'n40', 'mpa'].some(keyword => allText.includes(keyword))) return 'concrete_schedule';
-        if (['footing', 'pf', 'pad'].some(keyword => allText.includes(keyword))) return 'footing_schedule';
-        if (['anchor', 'm12', 'm16', 'hilti'].some(keyword => allText.includes(keyword))) return 'anchor_schedule';
-        if (allText.includes('schedule')) return 'general_schedule';
-        if (['note', 'specification', 'requirement'].some(keyword => allText.includes(keyword))) return 'notes';
-        return 'data_table';
-    }
-
-    /**
-     * Extract content from CAD files (placeholder)
-     * @param {string} filePath - Path to CAD file
-     * @returns {Promise<Object>} CAD content (placeholder)
-     */
-    async _extractCadContent(filePath) {
-        return {
-            filename: path.basename(filePath),
-            text: `CAD file: ${path.basename(filePath)} (processing not yet implemented)`,
-            tables: [],
-            images: [],
-            metadata: { fileType: 'CAD', status: 'not_processed' },
-            drawingElements: []
-        };
-    }
-
-    /**
-     * Generate summary of extracted content
-     * @param {Object} content - Extracted content object
-     * @returns {Object} Content summary
-     */
-    getContentSummary(content) {
-        return {
-            filename: content.filename || '',
-            pages: content.pages ? content.pages.length : 0,
-            textLength: content.text ? content.text.length : 0,
-            tableCount: content.tables ? content.tables.length : 0,
-            imageCount: content.images ? content.images.length : 0,
-            steelElementsFound: content.steelSchedule ? content.steelSchedule.length : 0,
-            concreteSpecsFound: content.concreteSpecifications ? content.concreteSpecifications.length : 0,
-            dimensionsFound: content.dimensions ? content.dimensions.length : 0,
-            drawingInfo: content.drawingInfo || {},
-        };
+    _formatDimensions(dimensions) {
+        return dimensions.map(dim => ({
+            text: dim.text,
+            parsed: dim.data,
+            context: 'structural_element' // Could be enhanced to classify type
+        }));
     }
 }

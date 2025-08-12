@@ -1,13 +1,12 @@
-
-const fs = require('fs').promises;
-const path = require('path');
-const pdf2pic = require('pdf2pic');
-const pdfParse = require('pdf-parse');
+import fs from 'fs/promises';
+import path from 'path';
+import pdf2pic from 'pdf2pic';
+import pdfParse from 'pdf-parse';
 
 /**
  * Container for extracted PDF content
  */
-class ExtractedContent {
+export class ExtractedContent {
     constructor({
         filename = '',
         text = '',
@@ -28,7 +27,7 @@ class ExtractedContent {
 /**
  * Advanced PDF processing for structural drawings
  */
-class PDFProcessor {
+export class PDFProcessor {
     constructor() {
         this.supportedFormats = ['.pdf', '.dwg', '.dxf'];
         this.tableKeywords = [
@@ -610,5 +609,3 @@ class PDFProcessor {
         };
     }
 }
-
-module.exports = { PDFProcessor, ExtractedContent };

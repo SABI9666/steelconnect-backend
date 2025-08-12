@@ -1,5 +1,5 @@
-/**
- * Individual cost item class
+/** 
+ * Individual cost item class 
  */
 class EstimationItem {
     constructor({
@@ -17,15 +17,15 @@ class EstimationItem {
     }) {
         this.code = code;
         this.description = description;
-        this.quantity = quantity;
+        this.quantity = parseFloat(quantity) || 0;
         this.unit = unit;
-        this.unitRate = unitRate;
-        this.totalCost = totalCost;
+        this.unitRate = parseFloat(unitRate) || 0;
+        this.totalCost = parseFloat(totalCost) || 0;
         this.category = category;
         this.subcategory = subcategory;
         this.notes = notes;
-        this.riskFactor = riskFactor;
-        this.confidence = confidence;
+        this.riskFactor = parseFloat(riskFactor) || 1.0;
+        this.confidence = parseFloat(confidence) || 0.8;
     }
 
     toObject() {
@@ -45,10 +45,10 @@ class EstimationItem {
     }
 }
 
-/**
- * Advanced cost estimation engine with AI-derived quantities
+/** 
+ * Advanced cost estimation engine with AI-derived quantities 
  */
-class EstimationEngine {
+export class EstimationEngine {
     constructor() {
         this.locationFactors = {
             "Sydney": 1.15,
@@ -60,43 +60,31 @@ class EstimationEngine {
             "Darwin": 1.25,
             "Hobart": 1.05
         };
-
         this.gstRate = 0.10;
         this.baseRates = this._initializeBaseRates();
     }
 
-    /**
-     * Initialize comprehensive base rates database
+    /** 
+     * Initialize comprehensive base rates database 
      */
     _initializeBaseRates() {
         return {
             concrete: {
-                n20: { rate: 280, unit: "m³", includes: ["supply", "pour"] },
-                n25: { rate: 300, unit: "m³", includes: ["supply", "pour"] },
-                n32: { rate: 320, unit: "m³", includes: ["supply", "pour"] },
-                n40: { rate: 380, unit: "m³", includes: ["supply", "pour", "superplasticiser"] },
-                pumping: { rate: 25, unit: "m³", minimum: 800 },
-                testing: { rate: 180, unit: "test" },
-                curing_compound: { rate: 15, unit: "m²" }
+                n20: { rate: 280, unit: "m³" },
+                n25: { rate: 300, unit: "m³" },
+                n32: { rate: 320, unit: "m³" },
+                n40: { rate: 380, unit: "m³" },
+                pumping: { rate: 25, unit: "m³", minimum: 800 }
             },
             reinforcement: {
-                n12_bars: { rate: 2800, unit: "tonne", weight_per_m: 0.888 },
-                n16_bars: { rate: 2850, unit: "tonne", weight_per_m: 1.578 },
-                n20_bars: { rate: 2900, unit: "tonne", weight_per_m: 2.466 },
-                n24_bars: { rate: 2950, unit: "tonne", weight_per_m: 3.553 },
-                sl72_mesh: { rate: 8.50, unit: "m²", weight_per_m2: 5.72 },
-                sl82_mesh: { rate: 9.20, unit: "m²", weight_per_m2: 6.72 },
-                cutting_bending: { rate: 150, unit: "tonne" },
-                installation: { rate: 200, unit: "tonne" }
+                n12_bars: { rate: 2800, unit: "tonne" },
+                n16_bars: { rate: 2850, unit: "tonne" },
+                n20_bars: { rate: 2900, unit: "tonne" },
+                n24_bars: { rate: 2950, unit: "tonne" },
+                sl72_mesh: { rate: 8.50, unit: "m²" },
+                sl82_mesh: { rate: 9.20, unit: "m²" }
             },
             structural_steel: {
-                hollow_sections: {
-                    "100x100x5_shs": { rate: 3.20, unit: "kg", weight_per_m: 14.9 },
-                    "100x100x6_shs": { rate: 3.20, unit: "kg", weight_per_m: 17.7 },
-                    "125x125x5_shs": { rate: 3.20, unit: "kg", weight_per_m: 18.9 },
-                    "125x125x6_shs": { rate: 3.20, unit: "kg", weight_per_m: 22.4 },
-                    "150x150x8_shs": { rate: 3.25, unit: "kg", weight_per_m: 35.4 }
-                },
                 universal_beams: {
                     "150ub14": { rate: 3.15, unit: "kg", weight_per_m: 14.0 },
                     "200ub18": { rate: 3.15, unit: "kg", weight_per_m: 18.2 },
@@ -105,105 +93,89 @@ class EstimationEngine {
                     "250ub31": { rate: 3.15, unit: "kg", weight_per_m: 31.4 },
                     "310ub32": { rate: 3.15, unit: "kg", weight_per_m: 32.0 }
                 },
+                hollow_sections: {
+                    "100x100x5_shs": { rate: 3.20, unit: "kg", weight_per_m: 14.9 },
+                    "125x125x5_shs": { rate: 3.20, unit: "kg", weight_per_m: 18.9 },
+                    "150x150x8_shs": { rate: 3.25, unit: "kg", weight_per_m: 35.4 }
+                },
                 channels: {
                     "100pfc": { rate: 3.25, unit: "kg", weight_per_m: 10.4 },
                     "150pfc": { rate: 3.25, unit: "kg", weight_per_m: 17.0 },
-                    "200pfc": { rate: 3.25, unit: "kg", weight_per_m: 23.4 },
-                    "250pfc": { rate: 3.25, unit: "kg", weight_per_m: 31.0 }
-                },
-                purlins: {
-                    "c200": { rate: 45, unit: "m", weight_per_m: 24.0 },
-                    "c250": { rate: 52, unit: "m", weight_per_m: 28.5 },
-                    "c300": { rate: 58, unit: "m", weight_per_m: 34.2 }
+                    "200pfc": { rate: 3.25, unit: "kg", weight_per_m: 23.4 }
                 }
             },
             fabrication: {
-                simple: { rate: 800, unit: "tonne", description: "Simple connections" },
-                medium: { rate: 1200, unit: "tonne", description: "Standard connections" },
-                complex: { rate: 1800, unit: "tonne", description: "Complex connections" },
-                shop_drawings: { rate: 8500, unit: "item", minimum: 5000 }
+                simple: { rate: 800, unit: "tonne" },
+                medium: { rate: 1200, unit: "tonne" },
+                complex: { rate: 1800, unit: "tonne" }
             },
             treatment: {
-                galvanizing: { rate: 800, unit: "tonne", minimum: 150 },
-                epoxy_painting: { rate: 25, unit: "m²" },
-                zinc_rich_primer: { rate: 18, unit: "m²" }
+                galvanizing: { rate: 800, unit: "tonne", minimum: 150 }
             },
             erection: {
-                steel_erection: { rate: 650, unit: "tonne", includes: ["crane", "crew"] },
-                crane_hire: { rate: 180, unit: "hour", minimum: 4 },
-                site_welding: { rate: 120, unit: "hour" },
-                temporary_works: { rate: 350, unit: "tonne" }
+                steel_erection: { rate: 650, unit: "tonne" }
             },
             anchors: {
                 m12_mechanical: { rate: 35, unit: "each" },
                 m16_mechanical: { rate: 42, unit: "each" },
-                m20_mechanical: { rate: 55, unit: "each" },
-                m12_chemical: { rate: 28, unit: "each" },
-                m16_chemical: { rate: 32, unit: "each" },
-                m20_chemical: { rate: 38, unit: "each" },
-                installation: { rate: 25, unit: "each", minimum: 500 }
+                m20_mechanical: { rate: 55, unit: "each" }
             },
             formwork: {
                 slab_formwork: { rate: 35, unit: "m²" },
                 beam_formwork: { rate: 65, unit: "m²" },
-                column_formwork: { rate: 85, unit: "m²" },
-                wall_formwork: { rate: 45, unit: "m²" }
+                column_formwork: { rate: 85, unit: "m²" }
             },
             excavation: {
                 general_excavation: { rate: 25, unit: "m³" },
-                rock_excavation: { rate: 85, unit: "m³" },
-                backfill: { rate: 18, unit: "m³" },
-                compaction: { rate: 12, unit: "m³" }
-            },
-            professional: {
-                structural_inspection: { rate: 750, unit: "visit" },
-                concrete_testing: { rate: 180, unit: "test" },
-                geotechnical_testing: { rate: 280, unit: "test" },
-                load_testing: { rate: 450, unit: "test" },
-                engineering_certification: { rate: 3500, unit: "item" }
+                backfill: { rate: 18, unit: "m³" }
             }
         };
     }
 
-    /**
-     * Generate comprehensive cost estimation from AI analysis
+    /** 
+     * Generate comprehensive cost estimation from AI analysis 
      */
-    async generateEstimation(analysisResult, location) {
+    async generateEstimation(analysisResult, location = "Sydney") {
         try {
             const estimationItems = [];
-
-            // Process each analysis component
-            if (analysisResult.quantity_takeoff) {
-                const concreteItems = await this._estimateConcreteWorks(
-                    analysisResult.quantity_takeoff, location
-                );
-                estimationItems.push(...concreteItems);
-
-                const steelItems = await this._estimateSteelWorks(
-                    analysisResult.quantity_takeoff, location
-                );
-                estimationItems.push(...steelItems);
-
-                const miscItems = await this._estimateMiscellaneousWorks(
-                    analysisResult.quantity_takeoff, location
-                );
-                estimationItems.push(...miscItems);
+            
+            // Validate input
+            if (!analysisResult || !analysisResult.quantityTakeoff) {
+                throw new Error("Invalid analysis result: missing quantityTakeoff");
             }
 
+            const quantities = analysisResult.quantityTakeoff;
+
+            // Process concrete works
+            const concreteItems = await this._estimateConcreteWorks(quantities, location);
+            estimationItems.push(...concreteItems);
+
+            // Process steel works
+            const steelItems = await this._estimateSteelWorks(quantities, location);
+            estimationItems.push(...steelItems);
+
+            // Process reinforcement
+            const reinfItems = await this._estimateReinforcement(quantities, location);
+            estimationItems.push(...reinfItems);
+
+            // Process miscellaneous works
+            const miscItems = await this._estimateMiscellaneousWorks(quantities, location);
+            estimationItems.push(...miscItems);
+
             // Add professional services
-            const professionalItems = await this._estimateProfessionalServices(
-                analysisResult, location
-            );
+            const professionalItems = await this._estimateProfessionalServices(analysisResult, location);
             estimationItems.push(...professionalItems);
 
-            // Calculate totals and apply factors
+            // Calculate cost summary
             const costSummary = await this._calculateCostSummary(
-                estimationItems, location, analysisResult.risk_assessment || {}
+                estimationItems,
+                location,
+                analysisResult.riskAssessment || {}
             );
 
             // Generate final estimation package
             const estimationData = {
-                project_id: analysisResult.project_id,
+                project_id: analysisResult.projectId || 'unknown',
                 items: estimationItems.map(item => item.toObject()),
                 cost_summary: costSummary,
                 categories: this._groupByCategory(estimationItems),
@@ -222,141 +194,86 @@ class EstimationEngine {
         }
     }
 
-    /**
-     * Estimate concrete works from quantities
+    /** 
+     * Estimate concrete works from quantities 
      */
     async _estimateConcreteWorks(quantities, location) {
         const items = [];
         const concreteQty = quantities.concrete_quantities || {};
 
-        // Footings
-        if (concreteQty.footings?.volume_m3 > 0) {
-            const volume = concreteQty.footings.volume_m3;
-            const formwork = concreteQty.footings.formwork_m2 || volume * 6; // Estimate formwork
-
-            // Concrete supply and pour
-            const concreteRate = this.baseRates.concrete.n32.rate * 
-                (this.locationFactors[location] || 1.0);
-            
-            items.push(new EstimationItem({
-                code: "CON_001",
-                description: "Footing concrete N32",
-                quantity: volume,
-                unit: "m³",
-                unitRate: concreteRate,
-                totalCost: volume * concreteRate,
-                category: "Concrete",
-                subcategory: "Footings"
-            }));
-
-            // Formwork
-            const formworkRate = this.baseRates.formwork.slab_formwork.rate;
-            items.push(new EstimationItem({
-                code: "FORM_001",
-                description: "Footing formwork",
-                quantity: formwork,
-                unit: "m²",
-                unitRate: formworkRate,
-                totalCost: formwork * formworkRate,
-                category: "Formwork",
-                subcategory: "Footings"
-            }));
-
-            // Excavation (estimate 1.5x concrete volume)
-            const excavation = volume * 1.5;
-            const excavationRate = this.baseRates.excavation.general_excavation.rate;
-            items.push(new EstimationItem({
-                code: "EXC_001",
-                description: "Footing excavation",
-                quantity: excavation,
-                unit: "m³",
-                unitRate: excavationRate,
-                totalCost: excavation * excavationRate,
-                category: "Excavation",
-                subcategory: "Footings"
-            }));
+        if (!concreteQty.elements || !Array.isArray(concreteQty.elements)) {
+            return items;
         }
 
-        // Slabs
-        if (concreteQty.slabs?.volume_m3 > 0) {
-            const volume = concreteQty.slabs.volume_m3;
-            const area = concreteQty.slabs.area_m2 || 0;
+        // Process each concrete element
+        for (const element of concreteQty.elements) {
+            const volume = parseFloat(element.volume_m3) || 0;
+            const area = parseFloat(element.area_m2) || 0;
+            const grade = element.grade || 'n32';
 
-            const concreteRate = this.baseRates.concrete.n32.rate * 
-                (this.locationFactors[location] || 1.0);
-
-            items.push(new EstimationItem({
-                code: "CON_002",
-                description: "Slab concrete N32",
-                quantity: volume,
-                unit: "m³",
-                unitRate: concreteRate,
-                totalCost: volume * concreteRate,
-                category: "Concrete",
-                subcategory: "Slabs"
-            }));
-
-            if (area > 0) {
-                // Slab preparation
-                items.push(new EstimationItem({
-                    code: "PREP_001",
-                    description: "Slab preparation",
-                    quantity: area,
-                    unit: "m²",
-                    unitRate: 15,
-                    totalCost: area * 15,
-                    category: "Site Preparation",
-                    subcategory: "Slabs"
-                }));
-
-                // Polythene membrane
-                items.push(new EstimationItem({
-                    code: "MEM_001",
-                    description: "Polythene membrane",
-                    quantity: area,
-                    unit: "m²",
-                    unitRate: 8,
-                    totalCost: area * 8,
-                    category: "Materials",
-                    subcategory: "Slabs"
-                }));
-            }
-        }
-
-        // Beams and Columns
-        for (const element of ["beams", "columns"]) {
-            if (concreteQty[element]?.volume_m3 > 0) {
-                const volume = concreteQty[element].volume_m3;
-                const formwork = concreteQty[element].formwork_m2 || 0;
-
-                const concreteGrade = element === "columns" ? "n40" : "n32";
-                const concreteRate = this.baseRates.concrete[concreteGrade].rate * 
+            if (volume > 0) {
+                const gradeKey = grade.toLowerCase();
+                const concreteRate = (this.baseRates.concrete[gradeKey]?.rate || 320) * 
                     (this.locationFactors[location] || 1.0);
 
                 items.push(new EstimationItem({
-                    code: `CON_${element.toUpperCase()}`,
-                    description: `${element.charAt(0).toUpperCase() + element.slice(1)} concrete ${concreteGrade.toUpperCase()}`,
+                    code: `CON_${element.element_type?.toUpperCase()}_001`,
+                    description: `${element.element_type} concrete ${grade.toUpperCase()}`,
                     quantity: volume,
                     unit: "m³",
                     unitRate: concreteRate,
                     totalCost: volume * concreteRate,
                     category: "Concrete",
-                    subcategory: element.charAt(0).toUpperCase() + element.slice(1)
+                    subcategory: element.element_type
                 }));
 
-                if (formwork > 0) {
-                    const formworkType = `${element.slice(0, -1)}_formwork`;
-                    const formworkRate = this.baseRates.formwork[formworkType].rate;
-                    
+                // Add concrete pumping
+                const pumpingRate = this.baseRates.concrete.pumping.rate;
+                const pumpingCost = Math.max(volume * pumpingRate, this.baseRates.concrete.pumping.minimum);
+                
+                items.push(new EstimationItem({
+                    code: `CON_PUMP_001`,
+                    description: `Concrete pumping - ${element.element_type}`,
+                    quantity: volume,
+                    unit: "m³",
+                    unitRate: pumpingCost / volume,
+                    totalCost: pumpingCost,
+                    category: "Concrete",
+                    subcategory: "Pumping"
+                }));
+
+                // Add formwork for beams and columns
+                if (element.element_type === 'beam' || element.element_type === 'column') {
+                    const formworkArea = area || (volume * 4); // Estimate if not provided
+                    const formworkType = `${element.element_type}_formwork`;
+                    const formworkRate = this.baseRates.formwork[formworkType]?.rate || 65;
+
                     items.push(new EstimationItem({
-                        code: `FORM_${element.toUpperCase()}`,
-                        description: `${element.charAt(0).toUpperCase() + element.slice(1)} formwork`,
-                        quantity: formwork,
+                        code: `FORM_${element.element_type?.toUpperCase()}_001`,
+                        description: `${element.element_type} formwork`,
+                        quantity: formworkArea,
                         unit: "m²",
                         unitRate: formworkRate,
-                        totalCost: formwork * formworkRate,
+                        totalCost: formworkArea * formworkRate,
                         category: "Formwork",
-                        subcategory: element.charAt(0).toUpperCase() + element.slice(1)
+                        subcategory: element.element_type
+                    }));
+                }
+
+                // Add excavation for footings
+                if (element.element_type === 'footing') {
+                    const excavation = volume * 1.2; // Add 20% for over-dig
+                    const excRate = this.baseRates.excavation.general_excavation.rate;
+
+                    items.push(new EstimationItem({
+                        code: "EXC_FOOTING_001",
+                        description: "Footing excavation",
+                        quantity: excavation,
+                        unit: "m³",
+                        unitRate: excRate,
+                        totalCost: excavation * excRate,
+                        category: "Excavation",
+                        subcategory: "Footings"
                     }));
                 }
             }
@@ -365,313 +282,275 @@ class EstimationEngine {
         return items;
     }
 
-    /**
-     * Estimate structural steel works
+    /** 
+     * Estimate structural steel works 
      */
     async _estimateSteelWorks(quantities, location) {
         const items = [];
-        const steelQty = quantities.structural_steel || {};
+        const steelQty = quantities.steel_quantities || {};
+
+        if (!steelQty.members || !Array.isArray(steelQty.members)) {
+            return items;
+        }
+
         let totalWeight = 0;
 
-        // Steel members
-        for (const memberType of ["beams", "columns"]) {
-            if (steelQty[memberType]) {
-                for (const member of steelQty[memberType]) {
-                    const section = (member.section || "").toLowerCase().replace(/\s/g, "");
-                    const length = member.length_m || 0;
-                    const quantity = member.quantity || 1;
+        // Process each steel member
+        for (let i = 0; i < steelQty.members.length; i++) {
+            const member = steelQty.members[i];
+            const section = member.section || '';
+            const totalLength = parseFloat(member.total_length_m) || 0;
+            const weight = parseFloat(member.total_weight_kg) || 0;
+            const quantity = parseInt(member.quantity) || 1;
 
-                    // Find matching rate
-                    const [weightPerM, ratePerKg] = this._getSteelRates(section);
+            // Find steel section details from the base rates database
+            const sectionDetails = this._findSteelSectionDetails(section);
 
-                    if (weightPerM > 0) {
-                        const totalLength = length * quantity;
-                        const weight = (totalLength * weightPerM) / 1000; // Convert to tonnes
-                        totalWeight += weight;
-
-                        const cost = weight * 1000 * ratePerKg * (this.locationFactors[location] || 1.0);
-
-                        items.push(new EstimationItem({
-                            code: `STEEL_${memberType.toUpperCase()}_${items.length + 1}`,
-                            description: `${member.section} ${memberType.slice(0, -1)}`,
-                            quantity: totalLength,
-                            unit: "m",
-                            unitRate: cost / totalLength,
-                            totalCost: cost,
-                            category: "Structural Steel",
-                            subcategory: memberType.charAt(0).toUpperCase() + memberType.slice(1),
-                            notes: `Weight: ${weight.toFixed(2)}t`
-                        }));
-                    }
+            if (!sectionDetails) {
+                console.warn(`Steel section "${section}" not found in base rates.`);
+                // Use fallback calculation
+                const estimatedWeight = totalLength * this._estimateWeightPerMeter(section) * quantity;
+                if (estimatedWeight > 0) {
+                    totalWeight += estimatedWeight;
+                    const fallbackRate = 3.2 * (this.locationFactors[location] || 1.0);
+                    
+                    items.push(new EstimationItem({
+                        code: `STEEL_SUPPLY_${i + 1}`,
+                        description: `Structural Steel Supply - ${section}`,
+                        quantity: estimatedWeight,
+                        unit: "kg",
+                        unitRate: fallbackRate,
+                        totalCost: estimatedWeight * fallbackRate,
+                        category: "Structural Steel",
+                        subcategory: "Supply",
+                        notes: "Estimated section - verify with supplier"
+                    }));
                 }
+                continue;
+            }
+
+            // Use provided weight, or calculate if necessary
+            let finalWeightKg = weight;
+            if (finalWeightKg <= 0 && sectionDetails.weight_per_m && totalLength > 0) {
+                finalWeightKg = totalLength * sectionDetails.weight_per_m;
+            }
+
+            if (finalWeightKg > 0) {
+                totalWeight += finalWeightKg;
+                const locationFactor = this.locationFactors[location] || 1.0;
+                const supplyRate = sectionDetails.rate * locationFactor;
+
+                items.push(new EstimationItem({
+                    code: `STEEL_SUPPLY_${i + 1}`,
+                    description: `Structural Steel Supply - ${section}`,
+                    quantity: finalWeightKg,
+                    unit: "kg",
+                    unitRate: supplyRate,
+                    totalCost: finalWeightKg * supplyRate,
+                    category: "Structural Steel",
+                    subcategory: "Supply"
+                }));
             }
         }
 
-        // Fabrication costs
+        // Add aggregate costs based on total weight
         if (totalWeight > 0) {
-            // Determine complexity based on connection count
-            const connections = steelQty.connections || {};
-            let complexity = "medium"; // Default
+            const totalWeightTonnes = totalWeight / 1000;
 
-            if ((connections.welded_connections || 0) > 20) {
-                complexity = "complex";
-            } else if ((connections.bolted_connections || 0) < 10) {
-                complexity = "simple";
-            }
-
-            const fabRate = this.baseRates.fabrication[complexity].rate;
-            const fabCost = totalWeight * fabRate;
-
+            // Fabrication
+            const fabRate = this.baseRates.fabrication.medium.rate;
             items.push(new EstimationItem({
-                code: "FAB_001",
-                description: `Steel fabrication - ${complexity}`,
-                quantity: totalWeight,
+                code: "STEEL_FAB_001",
+                description: "Structural Steel Fabrication (Medium Complexity)",
+                quantity: totalWeightTonnes,
                 unit: "tonne",
                 unitRate: fabRate,
-                totalCost: fabCost,
-                category: "Steel Fabrication",
+                totalCost: totalWeightTonnes * fabRate,
+                category: "Structural Steel",
                 subcategory: "Fabrication"
             }));
 
-            // Shop drawings
-            items.push(new EstimationItem({
-                code: "FAB_002",
-                description: "Shop drawings and engineering",
-                quantity: 1,
-                unit: "item",
-                unitRate: 8500,
-                totalCost: 8500,
-                category: "Steel Fabrication",
-                subcategory: "Engineering"
-            }));
-
-            // Galvanizing
+            // Surface Treatment
             const galvRate = this.baseRates.treatment.galvanizing.rate;
-            const galvCost = totalWeight * galvRate;
+            const galvMinCharge = this.baseRates.treatment.galvanizing.minimum;
+            const galvCost = Math.max(totalWeightTonnes * galvRate, galvMinCharge);
 
             items.push(new EstimationItem({
-                code: "GALV_001",
-                description: "Hot dip galvanizing",
-                quantity: totalWeight,
+                code: "STEEL_TREAT_001",
+                description: "Hot-dip Galvanizing",
+                quantity: totalWeightTonnes,
                 unit: "tonne",
-                unitRate: galvRate,
+                unitRate: totalWeightTonnes > 0 ? galvCost / totalWeightTonnes : 0,
                 totalCost: galvCost,
-                category: "Steel Treatment",
-                subcategory: "Galvanizing"
+                category: "Structural Steel",
+                subcategory: "Treatment"
             }));
 
             // Erection
             const erectionRate = this.baseRates.erection.steel_erection.rate;
-            const erectionCost = totalWeight * erectionRate * (this.locationFactors[location] || 1.0);
-
             items.push(new EstimationItem({
-                code: "ERECT_001",
-                description: "Steel erection including crane",
-                quantity: totalWeight,
+                code: "STEEL_ERECT_001",
+                description: "Structural Steel Erection",
+                quantity: totalWeightTonnes,
                 unit: "tonne",
                 unitRate: erectionRate,
-                totalCost: erectionCost,
-                category: "Steel Erection",
-                subcategory: "Installation"
+                totalCost: totalWeightTonnes * erectionRate,
+                category: "Structural Steel",
+                subcategory: "Erection"
             }));
         }
 
         return items;
     }
 
-    /**
-     * Estimate miscellaneous works like anchors, reinforcement
+    /** 
+     * Estimate reinforcement quantities 
      */
-    async _estimateMiscellaneousWorks(quantities, location) {
+    async _estimateReinforcement(quantities, location) {
         const items = [];
+        const reinforcement = quantities.reinforcement_quantities || {};
 
-        // Reinforcement
-        const rebarQty = quantities.reinforcement_quantities || {};
+        // Process deformed bars
+        if (reinforcement.deformed_bars) {
+            const bars = reinforcement.deformed_bars;
+            const locationFactor = this.locationFactors[location] || 1.0;
 
-        if (rebarQty.deformed_bars) {
-            const bars = rebarQty.deformed_bars;
-
-            for (const [barSize, kg] of Object.entries(bars)) {
-                if (kg > 0) {
-                    const size = barSize.replace("_kg", "");
-                    const rateKey = `${size}_bars`;
-
-                    if (this.baseRates.reinforcement[rateKey]) {
-                        const ratePerTonne = this.baseRates.reinforcement[rateKey].rate;
-                        const tonnes = kg / 1000;
-                        const cost = tonnes * ratePerTonne * (this.locationFactors[location] || 1.0);
-
-                        items.push(new EstimationItem({
-                            code: `REBAR_${size.toUpperCase()}`,
-                            description: `${size.toUpperCase()} deformed bars`,
-                            quantity: tonnes,
-                            unit: "tonne",
-                            unitRate: ratePerTonne,
-                            totalCost: cost,
-                            category: "Reinforcement",
-                            subcategory: "Deformed Bars"
-                        }));
-                    }
+            Object.entries(bars).forEach(([barType, weightKg]) => {
+                const weight = parseFloat(weightKg) || 0;
+                if (weight > 0) {
+                    const weightTonnes = weight / 1000;
+                    const rate = this.baseRates.reinforcement[`${barType}_bars`]?.rate || 2850;
+                    
+                    items.push(new EstimationItem({
+                        code: `REINF_${barType.toUpperCase()}_001`,
+                        description: `${barType.toUpperCase()} deformed bars`,
+                        quantity: weightTonnes,
+                        unit: "tonne",
+                        unitRate: rate * locationFactor,
+                        totalCost: weightTonnes * rate * locationFactor,
+                        category: "Reinforcement",
+                        subcategory: "Deformed Bars"
+                    }));
                 }
-            }
+            });
         }
 
-        // Mesh reinforcement
-        if (rebarQty.mesh) {
-            const mesh = rebarQty.mesh;
+        // Process mesh
+        if (reinforcement.mesh) {
+            const mesh = reinforcement.mesh;
+            const locationFactor = this.locationFactors[location] || 1.0;
 
-            for (const [meshType, m2] of Object.entries(mesh)) {
-                if (m2 > 0 && meshType !== "other_m2") {
-                    const rate = this.baseRates.reinforcement[`${meshType}_mesh`]?.rate || 8.5;
-                    const cost = m2 * rate;
-
+            Object.entries(mesh).forEach(([meshType, areaM2]) => {
+                const area = parseFloat(areaM2) || 0;
+                if (area > 0) {
+                    const rate = this.baseRates.reinforcement[`${meshType}_mesh`]?.rate || 9.0;
+                    
                     items.push(new EstimationItem({
-                        code: `MESH_${meshType.toUpperCase()}`,
-                        description: `${meshType.toUpperCase()} reinforcing mesh`,
-                        quantity: m2,
+                        code: `MESH_${meshType.toUpperCase()}_001`,
+                        description: `${meshType.toUpperCase()} reinforcement mesh`,
+                        quantity: area,
                         unit: "m²",
-                        unitRate: rate,
-                        totalCost: cost,
+                        unitRate: rate * locationFactor,
+                        totalCost: area * rate * locationFactor,
                         category: "Reinforcement",
                         subcategory: "Mesh"
                     }));
                 }
-            }
+            });
         }
 
-        // Anchors and fixings
-        const miscQty = quantities.miscellaneous || {};
+        return items;
+    }
 
-        if (miscQty.anchors) {
-            const anchors = miscQty.anchors;
+    /** 
+     * Estimate miscellaneous works 
+     */
+    async _estimateMiscellaneousWorks(quantities, location) {
+        const items = [];
+        const misc = quantities.miscellaneous || {};
 
-            for (const [anchorType, qty] of Object.entries(anchors)) {
+        // Process anchors
+        if (misc.anchors) {
+            const anchors = misc.anchors;
+            const locationFactor = this.locationFactors[location] || 1.0;
+
+            Object.entries(anchors).forEach(([anchorType, quantity]) => {
+                const qty = parseInt(quantity) || 0;
                 if (qty > 0) {
-                    const rate = this.baseRates.anchors[anchorType]?.rate || 35;
-                    const cost = qty * rate;
-
+                    const rate = this.baseRates.anchors[anchorType]?.rate || 40;
+                    
                     items.push(new EstimationItem({
-                        code: `ANCHOR_${anchorType.toUpperCase()}`,
-                        description: `${anchorType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())} anchors`,
+                        code: `ANCHOR_${anchorType.toUpperCase()}_001`,
+                        description: `${anchorType.replace('_', ' ')} anchors`,
                         quantity: qty,
                         unit: "each",
-                        unitRate: rate,
-                        totalCost: cost,
-                        category: "Anchors & Fixings",
+                        unitRate: rate * locationFactor,
+                        totalCost: qty * rate * locationFactor,
+                        category: "Miscellaneous",
                         subcategory: "Anchors"
                     }));
                 }
-            }
-
-            // Installation allowance
-            const totalAnchors = Object.values(anchors).reduce((sum, qty) => sum + qty, 0);
-            if (totalAnchors > 0) {
-                const installCost = Math.max(500, totalAnchors * 15); // Minimum $500 or $15 per anchor
-
-                items.push(new EstimationItem({
-                    code: "ANCHOR_INSTALL",
-                    description: "Anchor installation and testing",
-                    quantity: 1,
-                    unit: "item",
-                    unitRate: installCost,
-                    totalCost: installCost,
-                    category: "Anchors & Fixings",
-                    subcategory: "Installation"
-                }));
-            }
+            });
         }
 
         return items;
     }
 
-    /**
-     * Estimate professional services and testing
+    /** 
+     * Estimate professional services 
      */
     async _estimateProfessionalServices(analysisResult, location) {
         const items = [];
+        const baseCost = this._calculateBaseCost(analysisResult);
+        const locationFactor = this.locationFactors[location] || 1.0;
 
-        // Base professional services
-        const services = [
-            ["PROF_001", "Structural engineering inspections", 8, "visits", 750],
-            ["PROF_002", "Geotechnical testing", 15, "tests", 280],
-            ["PROF_003", "Concrete testing", 25, "tests", 180],
-            ["PROF_004", "Compliance certification", 1, "item", 3500]
-        ];
+        // Engineering design (percentage of construction cost)
+        const engineeringRate = baseCost * 0.08; // 8% of construction cost
+        items.push(new EstimationItem({
+            code: "PROF_ENG_001",
+            description: "Structural Engineering Design",
+            quantity: 1,
+            unit: "LS",
+            unitRate: engineeringRate * locationFactor,
+            totalCost: engineeringRate * locationFactor,
+            category: "Professional Services",
+            subcategory: "Engineering"
+        }));
 
-        for (const [code, desc, qty, unit, rate] of services) {
-            const adjustedRate = rate * (this.locationFactors[location] || 1.0);
-            const cost = qty * adjustedRate;
-
-            items.push(new EstimationItem({
-                code: code,
-                description: desc,
-                quantity: qty,
-                unit: unit,
-                unitRate: adjustedRate,
-                totalCost: cost,
-                category: "Professional Services",
-                subcategory: "Testing & Certification"
-            }));
-        }
-
-        // Project-specific services based on complexity
-        const scope = analysisResult.scope_identification || {};
-        const complexity = scope.project_complexity || "medium";
-
-        if (complexity === "high") {
-            // Additional services for complex projects
-            items.push(new EstimationItem({
-                code: "PROF_005",
-                description: "Additional structural review",
-                quantity: 1,
-                unit: "item",
-                unitRate: 2500,
-                totalCost: 2500,
-                category: "Professional Services",
-                subcategory: "Engineering"
-            }));
-
-            items.push(new EstimationItem({
-                code: "PROF_006",
-                description: "Load testing (1% of anchors)",
-                quantity: 3,
-                unit: "tests",
-                unitRate: 450,
-                totalCost: 1350,
-                category: "Professional Services",
-                subcategory: "Testing"
-            }));
-        }
+        // Project management
+        const pmRate = baseCost * 0.05; // 5% of construction cost
+        items.push(new EstimationItem({
+            code: "PROF_PM_001",
+            description: "Project Management",
+            quantity: 1,
+            unit: "LS",
+            unitRate: pmRate * locationFactor,
+            totalCost: pmRate * locationFactor,
+            category: "Professional Services",
+            subcategory: "Management"
+        }));
 
         return items;
     }
 
-    /**
-     * Calculate comprehensive cost summary with risk factors
+    /** 
+     * Calculate comprehensive cost summary 
      */
     async _calculateCostSummary(items, location, riskAssessment) {
         const baseCost = items.reduce((sum, item) => sum + item.totalCost, 0);
-
-        // Apply location factor (already applied to individual items)
         const locationFactor = this.locationFactors[location] || 1.0;
-        const locationAdjusted = baseCost;
+        const complexityMultiplier = riskAssessment.cost_factors?.complexity_multiplier || 1.0;
+        const dataConfidenceFactor = riskAssessment.cost_factors?.data_confidence_factor || 1.0;
 
-        // Risk adjustments
-        const riskFactors = riskAssessment.cost_factors || {};
-        const complexityMult = riskFactors.complexity_multiplier || 1.0;
-        const accessFactor = riskFactors.access_factor || 1.0;
+        // Apply adjustments
+        const locationAdjusted = baseCost * locationFactor;
+        const riskAdjusted = locationAdjusted * complexityMultiplier * dataConfidenceFactor;
 
-        // Apply risk factors
-        const riskAdjusted = locationAdjusted * complexityMult * accessFactor;
-
-        // Contingencies
-        const siteAccessContingency = riskAdjusted * 0.03;
-        const unforeseenContingency = riskAdjusted * 0.05;
-
-        // Subtotal before GST
+        // Add contingencies
+        const siteAccessContingency = riskAdjusted * 0.05; // 5%
+        const unforeseenContingency = riskAdjusted * 0.10; // 10%
+        
         const subtotalExGst = riskAdjusted + siteAccessContingency + unforeseenContingency;
-
-        // GST
         const gst = subtotalExGst * this.gstRate;
         const totalIncGst = subtotalExGst + gst;
 
@@ -679,632 +558,128 @@ class EstimationEngine {
             base_cost: Math.round(baseCost * 100) / 100,
             location_factor: locationFactor,
             location_adjusted: Math.round(locationAdjusted * 100) / 100,
-            complexity_multiplier: complexityMult,
-            access_factor: accessFactor,
+            complexity_multiplier: complexityMultiplier,
+            access_factor: dataConfidenceFactor,
             risk_adjusted: Math.round(riskAdjusted * 100) / 100,
             site_access_contingency: Math.round(siteAccessContingency * 100) / 100,
             unforeseen_contingency: Math.round(unforeseenContingency * 100) / 100,
             subtotal_ex_gst: Math.round(subtotalExGst * 100) / 100,
             gst: Math.round(gst * 100) / 100,
             total_inc_gst: Math.round(totalIncGst * 100) / 100,
-            currency: "AUD"
+            currency: 'AUD'
         };
     }
 
-    /**
-     * Get steel rates and weights for a section
+    /** 
+     * Helper methods 
      */
-    _getSteelRates(section) {
-        // Clean section name
-        section = section.toLowerCase().replace(/\s/g, "").replace(/x/g, "");
-
-        // Search in different categories
-        for (const category of ["hollow_sections", "universal_beams", "channels", "purlins"]) {
-            const rates = this.baseRates.structural_steel[category] || {};
-
-            // Try exact match first
-            if (rates[section]) {
-                return [rates[section].weight_per_m, rates[section].rate];
-            }
-
-            // Try partial matches
-            for (const [key, value] of Object.entries(rates)) {
-                if (section.includes(key) || key.includes(section)) {
-                    return [value.weight_per_m, value.rate];
+    _findSteelSectionDetails(sectionName) {
+        const cleanSection = sectionName.toLowerCase().replace(/\s/g, '');
+        
+        for (const category of Object.values(this.baseRates.structural_steel)) {
+            for (const [key, details] of Object.entries(category)) {
+                if (cleanSection.includes(key.replace(/[_x]/g, '')) || 
+                    key.replace(/[_x]/g, '').includes(cleanSection)) {
+                    return details;
                 }
             }
         }
-
-        // Default values if not found
-        console.warn(`Steel section '${section}' not found in rates database`);
-        return [20.0, 3.20]; // Default 20kg/m, $3.20/kg
+        return null;
     }
 
-    /**
-     * Group estimation items by category
-     */
+    _estimateWeightPerMeter(section) {
+        if (!section) return 20;
+        
+        const sectionLower = section.toLowerCase().replace(/\s/g, '');
+        
+        const weightTable = {
+            '150ub14': 14.0, '200ub18': 18.2, '200ub25': 25.4,
+            '250ub26': 25.7, '250ub31': 31.4, '310ub32': 32.0,
+            '100shs': 14.9, '125shs': 18.9, '150shs': 35.4,
+            '100pfc': 10.4, '150pfc': 17.0, '200pfc': 23.4
+        };
+        
+        for (const [key, weight] of Object.entries(weightTable)) {
+            if (sectionLower.includes(key.replace(/[a-z]/g, ''))) {
+                return weight;
+            }
+        }
+        
+        const numberMatch = section.match(/(\d+)/);
+        if (numberMatch) {
+            const size = parseInt(numberMatch[1]);
+            return Math.max(10, size * 0.15);
+        }
+        
+        return 20;
+    }
+
+    _calculateBaseCost(analysisResult) {
+        const steelSummary = analysisResult.quantityTakeoff?.steel_quantities?.summary || {};
+        const concreteSummary = analysisResult.quantityTakeoff?.concrete_quantities?.summary || {};
+        
+        const steelCost = (steelSummary.total_steel_weight_tonnes || 0) * 3500; // AUD per tonne
+        const concreteCost = (concreteSummary.total_concrete_m3 || 0) * 400; // AUD per m3
+        
+        return steelCost + concreteCost;
+    }
+
     _groupByCategory(items) {
         const categories = {};
-
-        for (const item of items) {
+        
+        items.forEach(item => {
             const category = item.category;
             if (!categories[category]) {
                 categories[category] = {
                     items: [],
-                    total_cost: 0,
-                    item_count: 0
+                    total: 0
                 };
             }
-
             categories[category].items.push(item.toObject());
-            categories[category].total_cost += item.totalCost;
-            categories[category].item_count += 1;
-        }
+            categories[category].total += item.totalCost;
+        });
 
-        // Sort categories by cost (highest first)
-        const sortedCategories = Object.entries(categories)
-            .sort(([,a], [,b]) => b.total_cost - a.total_cost)
-            .reduce((obj, [key, value]) => {
-                obj[key] = value;
-                return obj;
-            }, {});
-
-        return sortedCategories;
+        return categories;
     }
 
-    /**
-     * Generate estimation assumptions
-     */
     _generateAssumptions(analysisResult) {
-        const baseAssumptions = [
-            "Site access available during normal working hours",
-            "Materials delivered to site boundary",
-            "Standard ground conditions as per geotechnical report",
-            "No contaminated materials encountered",
-            "Existing services locations as documented",
-            "Work completed during normal weather conditions",
-            "Crane access available for steel erection",
-            "Current material and labor market rates",
-            "No delays due to permit approvals"
+        const assumptions = [
+            "Steel sections conform to AS/NZS standards",
+            "Standard connection details unless noted",
+            "Site access available for delivery and crane operations",
+            "All concrete work includes standard reinforcement",
+            "Hot-dip galvanizing for all structural steel",
+            "Standard foundation conditions assumed"
         ];
 
-        // Add project-specific assumptions from AI analysis
-        const aiAssumptions = analysisResult.assumptions || [];
+        if ((analysisResult.confidence || 0) < 0.8) {
+            assumptions.push("Quantities estimated due to limited data extraction - manual verification recommended");
+        }
 
-        return [...baseAssumptions, ...aiAssumptions];
+        const memberCount = analysisResult.quantityTakeoff?.steel_quantities?.summary?.member_count || 0;
+        if (memberCount > 0) {
+            assumptions.push(`Approximately ${memberCount} steel members as per schedules`);
+        }
+
+        return assumptions;
     }
 
-    /**
-     * Generate standard exclusions
-     */
     _generateExclusions() {
         return [
-            "Architectural finishes and fit-out works",
-            "Electrical and mechanical services installation",
-            "Building permits and council fees",
-            "Crane permits and traffic management",
-            "Site establishment beyond structural works",
-            "Variations to existing conditions not documented",
-            "Work outside normal business hours",
-            "Scaffolding and temporary access platforms",
-            "Contaminated soil removal",
-            "Rock excavation (unless specifically noted)"
+            "Building permits and approvals",
+            "Site survey and soil testing",
+            "Electrical and mechanical services",
+            "Architectural finishes",
+            "Temporary works not specified",
+            "Price escalation beyond validity period",
+            "Variations to scope of work"
         ];
     }
 
-    /**
-     * Calculate overall confidence score for the estimation
-     */
     _calculateConfidenceScore(items) {
-        if (items.length === 0) {
-            return 0.5;
-        }
-
-        // Weight confidence by cost
-        const totalCost = items.reduce((sum, item) => sum + item.totalCost, 0);
+        if (items.length === 0) return 0;
         
-        if (totalCost === 0) {
-            return 0.5;
-        }
-
-        const weightedConfidence = items.reduce((sum, item) => {
-            return sum + (item.confidence * (item.totalCost / totalCost));
-        }, 0);
-
-        return Math.min(1.0, Math.max(0.0, weightedConfidence));
-    }
-
-    /**
-     * Get current material rates for location
-     */
-    async getMaterialRates(location) {
-        const rates = {};
-
-        for (const [category, materials] of Object.entries(this.baseRates)) {
-            rates[category] = {};
-
-            if (typeof materials === 'object' && materials !== null) {
-                for (const [material, data] of Object.entries(materials)) {
-                    if (typeof data === 'object' && data !== null && data.rate !== undefined) {
-                        const adjustedRate = data.rate * (this.locationFactors[location] || 1.0);
-                        rates[category][material] = {
-                            ...data,
-                            adjusted_rate: Math.round(adjustedRate * 100) / 100,
-                            location_factor: this.locationFactors[location] || 1.0
-                        };
-                    }
-                }
-            }
-        }
-
-        return {
-            rates: rates,
-            last_updated: new Date().toISOString(),
-            location: location
-        };
-    }
-
-    /**
-     * Update material rates
-     */
-    async updateMaterialRates(ratesData) {
-        // This would typically update a database
-        // For now, just log the update
-        console.log(`Material rates update requested:`, ratesData);
-
-        // In production, this would:
-        // 1. Validate the new rates
-        // 2. Update the database
-        // 3. Refresh the in-memory cache
-        // 4. Log the changes for audit
+        const averageConfidence = items.reduce((sum, item) => sum + item.confidence, 0) / items.length;
+        return Math.round(averageConfidence * 100) / 100;
     }
 }
-
-/**
- * Report Generator Class
- * Generate various report formats from estimation data
- */
-class ReportGenerator {
-    constructor() {
-        this.outputDir = "reports";
-        // In a browser environment, you might use IndexedDB or localStorage
-        // In Node.js, you would create the directory
-    }
-
-    /**
-     * Generate report in specified format
-     */
-    async generateReport(estimationData, format, projectId) {
-        try {
-            switch (format) {
-                case "pdf":
-                    return await this._generatePdfReport(estimationData, projectId);
-                case "excel":
-                    return await this._generateExcelReport(estimationData, projectId);
-                case "json":
-                    return await this._generateJsonReport(estimationData, projectId);
-                case "html":
-                    return await this._generateHtmlReport(estimationData, projectId);
-                default:
-                    throw new Error(`Unsupported format: ${format}`);
-            }
-        } catch (error) {
-            console.error(`Report generation error: ${error.message}`);
-            throw error;
-        }
-    }
-
-    /**
-     * Generate HTML report (browser-friendly alternative to PDF)
-     */
-    async _generateHtmlReport(data, projectId) {
-        const filename = `estimation_${projectId}.html`;
-        
-        const html = `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Structural Cost Estimation Report</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            line-height: 1.6;
-            margin: 0;
-            padding: 20px;
-            color: #333;
-        }
-        .header {
-            border-bottom: 3px solid #007acc;
-            padding-bottom: 20px;
-            margin-bottom: 30px;
-        }
-        .header h1 {
-            color: #007acc;
-            margin: 0;
-            font-size: 28px;
-        }
-        .project-info {
-            background: #f8f9fa;
-            padding: 20px;
-            border-radius: 5px;
-            margin-bottom: 30px;
-        }
-        .project-info table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        .project-info td {
-            padding: 8px;
-            border-bottom: 1px solid #dee2e6;
-        }
-        .project-info td:first-child {
-            font-weight: bold;
-            width: 150px;
-        }
-        .cost-summary {
-            margin-bottom: 30px;
-        }
-        .cost-summary h2 {
-            color: #007acc;
-            border-bottom: 2px solid #007acc;
-            padding-bottom: 10px;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-bottom: 20px;
-        }
-        th, td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #ddd;
-        }
-        th {
-            background-color: #007acc;
-            color: white;
-            font-weight: bold;
-        }
-        tr:nth-child(even) {
-            background-color: #f2f2f2;
-        }
-        .total-row {
-            background-color: #e8f4f8 !important;
-            font-weight: bold;
-            border-top: 2px solid #007acc;
-        }
-        .category-section {
-            margin-bottom: 30px;
-        }
-        .category-section h3 {
-            color: #495057;
-            background: #e9ecef;
-            padding: 10px;
-            margin: 0 0 15px 0;
-        }
-        .assumptions, .exclusions {
-            margin-top: 30px;
-        }
-        .assumptions h2, .exclusions h2 {
-            color: #007acc;
-            border-bottom: 2px solid #007acc;
-            padding-bottom: 10px;
-        }
-        .assumptions ul, .exclusions ul {
-            padding-left: 20px;
-        }
-        .assumptions li, .exclusions li {
-            margin-bottom: 8px;
-        }
-        .currency {
-            text-align: right;
-        }
-        @media print {
-            body { margin: 0; }
-            .header { border-bottom: 2px solid #000; }
-        }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>Structural Cost Estimation Report</h1>
-        <p>Professional Cost Analysis and Breakdown</p>
-    </div>
-
-    <div class="project-info">
-        <table>
-            <tr>
-                <td>Project ID:</td>
-                <td>${projectId}</td>
-            </tr>
-            <tr>
-                <td>Location:</td>
-                <td>${data.location || 'N/A'}</td>
-            </tr>
-            <tr>
-                <td>Generated:</td>
-                <td>${new Date(data.estimation_date).toLocaleDateString('en-AU', { 
-                    year: 'numeric', 
-                    month: 'long', 
-                    day: 'numeric' 
-                })}</td>
-            </tr>
-            <tr>
-                <td>Total Cost:</td>
-                <td class="currency"><strong>${data.cost_summary.total_inc_gst.toLocaleString()} AUD (inc GST)</strong></td>
-            </tr>
-            <tr>
-                <td>Confidence Score:</td>
-                <td>${Math.round(data.confidence_score * 100)}%</td>
-            </tr>
-        </table>
-    </div>
-
-    <div class="cost-summary">
-        <h2>Cost Summary</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>Item</th>
-                    <th class="currency">Amount (AUD)</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td>Base Cost</td>
-                    <td class="currency">${data.cost_summary.base_cost.toLocaleString()}</td>
-                </tr>
-                <tr>
-                    <td>Risk Adjustments</td>
-                    <td class="currency">${(data.cost_summary.risk_adjusted - data.cost_summary.base_cost).toLocaleString()}</td>
-                </tr>
-                <tr>
-                    <td>Contingencies</td>
-                    <td class="currency">${(data.cost_summary.site_access_contingency + data.cost_summary.unforeseen_contingency).toLocaleString()}</td>
-                </tr>
-                <tr>
-                    <td>Subtotal (ex GST)</td>
-                    <td class="currency">${data.cost_summary.subtotal_ex_gst.toLocaleString()}</td>
-                </tr>
-                <tr>
-                    <td>GST (${(this.gstRate || 0.10) * 100}%)</td>
-                    <td class="currency">${data.cost_summary.gst.toLocaleString()}</td>
-                </tr>
-                <tr class="total-row">
-                    <td><strong>Total (inc GST)</strong></td>
-                    <td class="currency"><strong>${data.cost_summary.total_inc_gst.toLocaleString()}</strong></td>
-                </tr>
-            </tbody>
-        </table>
-    </div>
-
-    <div class="category-breakdown">
-        <h2>Cost Breakdown by Category</h2>
-        ${Object.entries(data.categories || {}).map(([category, categoryData]) => `
-            <div class="category-section">
-                <h3>${category}: ${categoryData.total_cost.toLocaleString()}</h3>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Code</th>
-                            <th>Description</th>
-                            <th>Quantity</th>
-                            <th>Unit</th>
-                            <th class="currency">Rate</th>
-                            <th class="currency">Total</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${categoryData.items.slice(0, 10).map(item => `
-                            <tr>
-                                <td>${item.code}</td>
-                                <td>${item.description}</td>
-                                <td>${item.quantity.toFixed(1)}</td>
-                                <td>${item.unit}</td>
-                                <td class="currency">${item.unitRate.toFixed(2)}</td>
-                                <td class="currency">${item.totalCost.toLocaleString()}</td>
-                            </tr>
-                        `).join('')}
-                        ${categoryData.items.length > 10 ? `
-                            <tr>
-                                <td colspan="6" style="text-align: center; font-style: italic;">
-                                    ... and ${categoryData.items.length - 10} more items
-                                </td>
-                            </tr>
-                        ` : ''}
-                    </tbody>
-                </table>
-            </div>
-        `).join('')}
-    </div>
-
-    <div class="assumptions">
-        <h2>Assumptions</h2>
-        <ul>
-            ${(data.assumptions || []).slice(0, 15).map(assumption => `
-                <li>${assumption}</li>
-            `).join('')}
-        </ul>
-    </div>
-
-    <div class="exclusions">
-        <h2>Exclusions</h2>
-        <ul>
-            ${(data.exclusions || []).slice(0, 15).map(exclusion => `
-                <li>${exclusion}</li>
-            `).join('')}
-        </ul>
-    </div>
-
-    <script>
-        // Add print functionality
-        window.print = function() {
-            window.print();
-        };
-        
-        // Add export functionality
-        function exportToJSON() {
-            const dataStr = JSON.stringify(${JSON.stringify(data)}, null, 2);
-            const dataBlob = new Blob([dataStr], {type: 'application/json'});
-            const url = URL.createObjectURL(dataBlob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = '${filename.replace('.html', '.json')}';
-            link.click();
-        }
-    </script>
-</body>
-</html>`;
-
-        return {
-            filename: filename,
-            content: html,
-            type: 'text/html'
-        };
-    }
-
-    /**
-     * Generate JSON report
-     */
-    async _generateJsonReport(data, projectId) {
-        const filename = `estimation_${projectId}.json`;
-        const content = JSON.stringify(data, null, 2);
-        
-        return {
-            filename: filename,
-            content: content,
-            type: 'application/json'
-        };
-    }
-
-    /**
-     * Generate Excel-compatible CSV report
-     */
-    async _generateExcelReport(data, projectId) {
-        const filename = `estimation_${projectId}.csv`;
-        
-        // Create CSV content for line items
-        const headers = ['Code', 'Description', 'Quantity', 'Unit', 'Unit Rate', 'Total Cost', 'Category', 'Subcategory'];
-        const csvRows = [headers.join(',')];
-        
-        // Add data rows
-        for (const item of data.items || []) {
-            const row = [
-                `"${item.code}"`,
-                `"${item.description}"`,
-                item.quantity,
-                `"${item.unit}"`,
-                item.unitRate,
-                item.totalCost,
-                `"${item.category}"`,
-                `"${item.subcategory}"`
-            ];
-            csvRows.push(row.join(','));
-        }
-        
-        // Add summary section
-        csvRows.push('');
-        csvRows.push('COST SUMMARY');
-        csvRows.push(`"Base Cost","${data.cost_summary.base_cost}"`);
-        csvRows.push(`"Risk Adjusted","${data.cost_summary.risk_adjusted}"`);
-        csvRows.push(`"Subtotal ex GST","${data.cost_summary.subtotal_ex_gst}"`);
-        csvRows.push(`"GST","${data.cost_summary.gst}"`);
-        csvRows.push(`"Total inc GST","${data.cost_summary.total_inc_gst}"`);
-        
-        const content = csvRows.join('\n');
-        
-        return {
-            filename: filename,
-            content: content,
-            type: 'text/csv'
-        };
-    }
-
-    /**
-     * Placeholder for PDF generation
-     */
-    async _generatePdfReport(data, projectId) {
-        // In a real implementation, you would use a PDF library
-        // For now, return HTML as fallback
-        return await this._generateHtmlReport(data, projectId);
-    }
-}
-
-// Usage Example and Export
-const estimationEngine = new EstimationEngine();
-const reportGenerator = new ReportGenerator();
-
-// Example usage function
-async function runEstimationExample() {
-    try {
-        // Sample analysis result (normally would come from AI analysis)
-        const sampleAnalysis = {
-            project_id: "PROJ_2024_001",
-            quantity_takeoff: {
-                concrete_quantities: {
-                    footings: {
-                        volume_m3: 45.5,
-                        formwork_m2: 180
-                    },
-                    slabs: {
-                        volume_m3: 125.0,
-                        area_m2: 500
-                    }
-                },
-                structural_steel: {
-                    beams: [
-                        { section: "200UB25", length_m: 6.0, quantity: 8 },
-                        { section: "250UB31", length_m: 8.0, quantity: 4 }
-                    ],
-                    columns: [
-                        { section: "150x150x8 SHS", length_m: 3.5, quantity: 12 }
-                    ]
-                },
-                reinforcement_quantities: {
-                    deformed_bars: {
-                        n16_kg: 2500,
-                        n20_kg: 1800
-                    },
-                    mesh: {
-                        sl72: 450
-                    }
-                }
-            },
-            risk_assessment: {
-                cost_factors: {
-                    complexity_multiplier: 1.1,
-                    access_factor: 1.05
-                }
-            },
-            scope_identification: {
-                project_complexity: "medium"
-            }
-        };
-
-        // Generate estimation
-        const estimation = await estimationEngine.generateEstimation(sampleAnalysis, "Sydney");
-        
-        console.log("Estimation generated successfully:");
-        console.log(`Total Cost: ${estimation.cost_summary.total_inc_gst.toLocaleString()} AUD`);
-        console.log(`Confidence: ${Math.round(estimation.confidence_score * 100)}%`);
-        
-        // Generate HTML report
-        const report = await reportGenerator.generateReport(estimation, "html", "PROJ_2024_001");
-        console.log(`Report generated: ${report.filename}`);
-        
-        return estimation;
-        
-    } catch (error) {
-        console.error("Error running estimation example:", error);
-        throw error;
-    }
-}
-
-// Export for ES modules
-export {
-    EstimationEngine,
-    EstimationItem,
-    ReportGenerator,
-    runEstimationExample
-};

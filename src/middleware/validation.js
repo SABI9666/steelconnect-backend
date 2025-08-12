@@ -1,8 +1,10 @@
 // validation.js
 
-const { body, validationResult } = require('express-validator');
+// 1. Switched to ES Module 'import' syntax
+import { body, validationResult } from 'express-validator';
 
-const handleValidationErrors = (req, res, next) => {
+// 2. Switched to ES Module 'export' syntax for each function/variable
+export const handleValidationErrors = (req, res, next) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({
@@ -14,7 +16,7 @@ const handleValidationErrors = (req, res, next) => {
   next();
 };
 
-const validateRegistration = [
+export const validateRegistration = [
   body('email')
     .isEmail()
     .normalizeEmail()
@@ -31,7 +33,7 @@ const validateRegistration = [
     .withMessage('User type must be contractor, designer, or admin')
 ];
 
-const validateLogin = [
+export const validateLogin = [
   body('email')
     .isEmail()
     .normalizeEmail()
@@ -41,7 +43,7 @@ const validateLogin = [
     .withMessage('Password is required')
 ];
 
-const validateJob = [
+export const validateJob = [
   body('title')
     .trim()
     .isLength({ min: 5, max: 200 })
@@ -66,13 +68,12 @@ const validateJob = [
     .withMessage('Location is required')
 ];
 
-// CORRECTED VALIDATION RULE FOR QUOTES
-const validateQuote = [
+export const validateQuote = [
   body('jobId')
     .trim()
     .notEmpty()
     .withMessage('Job ID is required'),
-  body('amount') // <-- FIX: Changed from 'quoteAmount' to 'amount'
+  body('amount')
     .isFloat({ min: 0 })
     .withMessage('Quote amount must be a positive number'),
   body('timeline')
@@ -84,7 +85,7 @@ const validateQuote = [
     .withMessage('Description must be at least 10 characters')
 ];
 
-const validateMessage = [
+export const validateMessage = [
   body('conversationId')
     .trim()
     .notEmpty()
@@ -96,11 +97,19 @@ const validateMessage = [
     .withMessage('Message text cannot be empty if provided')
 ];
 
-module.exports = {
-  handleValidationErrors,
-  validateRegistration,
-  validateLogin,
-  validateJob,
-  validateQuote,
-  validateMessage
-};
+// 3. Added the missing 'validateEstimationInput' export
+export const validateEstimationInput = [
+    body('jobId')
+        .trim()
+        .notEmpty()
+        .withMessage('Job ID is required for estimation'),
+    body('amount')
+        .isFloat({ min: 0 })
+        .withMessage('Estimated amount must be a positive number'),
+    body('details')
+        .trim()
+        .isLength({ min: 10 })
+        .withMessage('Estimation details must be at least 10 characters')
+];
+
+// 4. Removed the old 'module.exports' block

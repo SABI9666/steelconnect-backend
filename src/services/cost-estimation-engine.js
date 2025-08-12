@@ -1,5 +1,3 @@
-
-
 /**
  * Individual cost item class
  */
@@ -1222,6 +1220,15 @@ class ReportGenerator {
             type: 'text/csv'
         };
     }
+
+    /**
+     * Placeholder for PDF generation
+     */
+    async _generatePdfReport(data, projectId) {
+        // In a real implementation, you would use a PDF library
+        // For now, return HTML as fallback
+        return await this._generateHtmlReport(data, projectId);
+    }
 }
 
 // Usage Example and Export
@@ -1294,19 +1301,10 @@ async function runEstimationExample() {
     }
 }
 
-// Export for use in other modules
-if (typeof module !== 'undefined' && module.exports) {
-    // Node.js environment
-    module.exports = {
-        EstimationEngine,
-        EstimationItem,
-        ReportGenerator,
-        runEstimationExample
-    };
-} else {
-    // Browser environment
-    window.EstimationEngine = EstimationEngine;
-    window.EstimationItem = EstimationItem;
-    window.ReportGenerator = ReportGenerator;
-    window.runEstimationExample = runEstimationExample;
-}
+// Export for ES modules
+export {
+    EstimationEngine,
+    EstimationItem,
+    ReportGenerator,
+    runEstimationExample
+};

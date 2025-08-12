@@ -1,5 +1,5 @@
 // services/aiAnalyzer.js
-const Anthropic = require('@anthropic-ai/sdk');
+import Anthropic from '@anthropic-ai/sdk';
 
 /**
  * Represents a structural element extracted from drawings
@@ -539,4 +539,4 @@ class AIAnalyzer {
     }
 }
 
-module.exports = { AIAnalyzer, StructuralElement };
+export { AIAnalyzer, StructuralElement };

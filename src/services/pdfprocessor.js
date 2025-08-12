@@ -2,8 +2,8 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fromPath } from 'pdf2pic';
 
-// UPDATED: Use the specific build for Node.js/ES Module environments
-import * as pdfjsLib from 'pdfjs-dist/build/pdf.mjs';
+// UPDATED: Use the 'legacy' build specifically designed for Node.js environments.
+import pdfjsLib from 'pdfjs-dist/legacy/build/pdf.js';
 
 /**
  * Container for extracted PDF content
@@ -37,9 +37,7 @@ export class PDFProcessor {
             'material', 'steel', 'concrete', 'footing', 'beam'
         ];
         
-        // UPDATED: Set a robust path to the worker script for server environments.
-        // This is necessary to prevent initialization errors with the library.
-        pdfjsLib.GlobalWorkerOptions.workerSrc = './node_modules/pdfjs-dist/build/pdf.worker.mjs';
+        // NOTE: The workerSrc configuration is not needed when using the legacy Node.js build.
     }
 
     /**
@@ -73,6 +71,7 @@ export class PDFProcessor {
     async _extractPdfContent(filePath) {
         try {
             const dataBuffer = await fs.readFile(filePath);
+            // Use the getDocument method from the imported library
             const doc = await pdfjsLib.getDocument(dataBuffer).promise;
 
             const extractedContent = {

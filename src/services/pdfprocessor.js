@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { fromPath } from 'pdf2pic';
-import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.js';
+import * as pdfjsLib from 'pdfjs-dist';
 
 /**
  * Container for extracted PDF content
@@ -34,8 +34,9 @@ export class PDFProcessor {
             'schedule', 'legend', 'notes', 'specification',
             'material', 'steel', 'concrete', 'footing', 'beam'
         ];
-        // Set the workerSrc for pdfjs-dist. It's needed for the library to function.
-        pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.mjs`;
+        // The worker is primarily for browser environments, but setting it is good practice.
+        // For Node.js, pdfjs-dist uses a different mechanism that doesn't rely on this worker.
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `pdfjs-dist/build/pdf.worker.mjs`;
     }
 
     /**

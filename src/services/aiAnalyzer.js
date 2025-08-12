@@ -23,8 +23,8 @@ class AIAnalyzer {
     constructor(apiKey) {
         this.client = new Anthropic({ apiKey });
         this.maxTokens = 4096;
-        // UPDATED: Using the Sonnet 4 model, released in May 2025.
-        this.model = "claude sonnet 4";
+        // CORRECTED: Using the official model identifier for the latest Sonnet model.
+        this.model = "claude-3-5-sonnet-20240620";
     }
 
     /**

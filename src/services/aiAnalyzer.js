@@ -23,7 +23,7 @@ class AIAnalyzer {
     constructor(apiKey) {
         this.client = new Anthropic({ apiKey });
         this.maxTokens = 4096;
-        // UPDATED: Using the latest and most advanced Sonnet model.
+        // Using the latest and most advanced Sonnet model.
         this.model = "claude-3-5-sonnet-20240620";
     }
 
@@ -540,14 +540,5 @@ class AIAnalyzer {
     }
 }
 
-
-
-
-
-
-
-
-
-
-
-
+// UPDATED: Export the classes so they can be imported by other files.
+export { AIAnalyzer, StructuralElement };

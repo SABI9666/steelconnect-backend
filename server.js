@@ -5,7 +5,7 @@ import path from 'path';
 import fs from 'fs';
 
 // --- Route Imports ---
-// This path structure assumes server.js is in the project's root directory.
+// Assumes server.js is in the project's root directory
 import auth from './src/routes/auth.js';
 import jobs from './src/routes/jobs.js';
 import quotes from './src/routes/quotes.js';
@@ -17,7 +17,6 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // --- CORS Configuration ---
-// Defines which frontend URLs are allowed to access this backend.
 const allowedOrigins = [
   process.env.FRONTEND_URL,
   'http://localhost:3000',
@@ -26,7 +25,6 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allows Vercel preview deployments to connect
     const vercelPreviewRegex = /^https:\/\/steelconnect-frontend-.*-sabins-projects-02d8db3a\.vercel\.app$/;
     if (!origin || allowedOrigins.indexOf(origin) !== -1 || vercelPreviewRegex.test(origin)) {
       callback(null, true);
@@ -38,7 +36,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.use(express.json()); // Middleware to parse JSON bodies
+app.use(express.json()); // Middleware to parse JSON request bodies
 
 // --- File Upload & Static Serving Configuration ---
 const uploadsDir = 'uploads';
@@ -55,10 +53,10 @@ const storage = multer.diskStorage({
   }
 });
 
-// The 'upload' constant is exported so it can be used in other route files.
+// The 'upload' constant is exported so it can be used in your route files
 export const upload = multer({ storage: storage });
 
-// Serves uploaded files publicly
+// Serves uploaded files publicly from the /uploads endpoint
 app.use('/uploads', express.static(uploadsDir));
 
 // --- API Routes ---
@@ -70,10 +68,10 @@ app.use('/api/messages', messages);
 app.use('/api/estimation', estimation);
 
 // --- Error Handling Middleware ---
-// Catches requests to non-existent routes
+// Catches requests to routes that don't exist
 app.use('*', (req, res) => res.status(404).json({ error: 'Route not found' }));
 
-// Catches all other errors that occur in the application
+// Global error handler to catch all other errors
 app.use((error, req, res, next) => {
   console.error('Global error handler:', error);
   if (error instanceof multer.MulterError) {

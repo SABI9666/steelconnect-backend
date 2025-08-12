@@ -195,7 +195,7 @@ app.post('/api/upload-pdf', upload.single('pdf'), async (req, res) => {
       });
     }
 
-    console.log(\`📄 Received PDF: \${req.file.originalname} (\${req.file.size} bytes)\`);
+    console.log(`📄 Received PDF: ${req.file.originalname} (${req.file.size} bytes)`);
 
     // Dynamically import the PDF processor
     const { PdfProcessor } = await import('./src/services/pdfProcessor.js');
@@ -301,7 +301,7 @@ app.use((error, req, res, next) => {
 app.use('*', (req, res) => {
   res.status(404).json({
     error: 'Not found',
-    message: \`Route \${req.method} \${req.originalUrl} not found\`,
+    message: `Route ${req.method} ${req.originalUrl} not found`,
     availableRoutes: ['GET /', 'GET /health', 'POST /api/upload-pdf', 'POST /api/estimate']
   });
 });
@@ -311,9 +311,9 @@ const startServer = async () => {
   await initializeApp();
   
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(\`🌟 SteelConnect Backend running on port \${PORT}\`);
-    console.log(\`🔗 Health check: http://localhost:\${PORT}/health\`);
-    console.log(\`📋 API docs: http://localhost:\${PORT}/\`);
+    console.log(`🌟 SteelConnect Backend running on port ${PORT}`);
+    console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+    console.log(`📋 API docs: http://localhost:${PORT}/`);
   });
 };
 

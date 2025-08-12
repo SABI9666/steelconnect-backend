@@ -2,7 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fromPath } from 'pdf2pic';
 
-// UPDATED: Use the 'legacy' build specifically designed for Node.js environments.
+// Use the 'legacy' build specifically designed for Node.js environments.
 import pdfjsLib from 'pdfjs-dist/legacy/build/pdf.js';
 
 /**
@@ -37,7 +37,7 @@ export class PDFProcessor {
             'material', 'steel', 'concrete', 'footing', 'beam'
         ];
         
-        // NOTE: The workerSrc configuration is not needed when using the legacy Node.js build.
+        // The workerSrc configuration is not needed when using the legacy Node.js build.
     }
 
     /**
@@ -71,8 +71,12 @@ export class PDFProcessor {
     async _extractPdfContent(filePath) {
         try {
             const dataBuffer = await fs.readFile(filePath);
-            // Use the getDocument method from the imported library
-            const doc = await pdfjsLib.getDocument(dataBuffer).promise;
+            
+            // UPDATED: Convert the Node.js Buffer to a Uint8Array, as required by pdfjs-dist.
+            const uint8Array = new Uint8Array(dataBuffer);
+
+            // UPDATED: Pass the Uint8Array to the getDocument method.
+            const doc = await pdfjsLib.getDocument(uint8Array).promise;
 
             const extractedContent = {
                 filename: path.basename(filePath),

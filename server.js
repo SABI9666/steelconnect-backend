@@ -7,7 +7,7 @@ import dotenv from 'dotenv';
 import multer from 'multer';
 import fs from 'fs/promises';
 import path from 'path';
-import authRoutes from './routes/auth.js'; // --- ADDED --- (Ensure auth.js is in a 'routes' folder)
+import authRoutes from '.src/routes/auth.js'; // --- ADDED --- (Ensure auth.js is in a 'routes' folder)
 
 // Load environment variables
 dotenv.config();

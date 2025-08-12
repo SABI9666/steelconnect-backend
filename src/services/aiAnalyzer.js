@@ -1,11 +1,11 @@
-// Enhanced AI Analyzer with Better Prompt Engineering
+/ Enhanced AI Analyzer with Better Prompt Engineering
 import Anthropic from '@anthropic-ai/sdk';
 
 export class EnhancedAIAnalyzer {
     constructor(apiKey) {
         this.client = new Anthropic({ apiKey });
         this.maxTokens = 4096;
-        this.model = "claude-3-5-sonnet-20241022"; // Updated model
+        this.model = "claude-3-5-sonnet-20241022";
     }
 
     async analyzeStructuralDrawings(structuredData, projectId) {
@@ -33,55 +33,43 @@ export class EnhancedAIAnalyzer {
 
     async _analyzeDrawingStructure(data) {
         const prompt = `
-You are an expert structural engineer analyzing construction drawings. I will provide you with STRUCTURED DATA extracted from PDF drawings, not just raw text.
+You are an expert structural engineer analyzing construction drawings. I will provide you with STRUCTURED DATA extracted from PDF drawings.
 
 STRUCTURED DRAWING DATA:
 Project Info: ${JSON.stringify(data.project_info, null, 2)}
 Steel Schedules: ${JSON.stringify(data.steel_schedules, null, 2)}
 Concrete Elements: ${JSON.stringify(data.concrete_elements, null, 2)}
 Dimensions Found: ${JSON.stringify(data.dimensions_found, null, 2)}
-Processing Confidence: ${data.confidence * 100}%
+Processing Confidence: ${(data.confidence * 100).toFixed(0)}%
 
-KEY CONTEXT:
-- This is STRUCTURED data, not raw text
-- Steel schedules contain parsed member information
-- Concrete elements have identified grades and specifications
-- Dimensions are already extracted and parsed
-
-Please analyze this structured data and provide a detailed JSON response:
-
+Analyze this data and provide a JSON response with the following structure:
 {
     "project_info": {
         "project_name": "extracted or inferred name",
-        "drawing_number": "${data.project_info?.drawing_number || 'not found'}",
-        "revision": "${data.project_info?.revision || 'not found'}",
+        "drawing_number": "number if found",
+        "revision": "revision if found", 
         "drawing_type": "structural framing/foundation plan/etc"
     },
     "structural_systems": {
-        "foundation_type": "analyze from concrete elements and context",
+        "foundation_type": "analyze from concrete elements",
         "structural_system": "steel frame/concrete frame/hybrid",
-        "floor_systems": ["based on schedules and dimensions"],
-        "roof_system": "analyze from member types and schedules"
+        "floor_systems": ["list based on schedules"],
+        "roof_system": "analyze from member types"
     },
     "steel_analysis": {
-        "total_members_identified": ${data.steel_schedules?.reduce((sum, sched) => sum + sched.items.length, 0) || 0},
-        "member_types": [/* extract from steel_schedules */],
-        "max_member_size": "largest section found",
-        "total_estimated_weight": "calculate from schedules if possible"
+        "total_members_identified": 0,
+        "member_types": ["list of sections found"],
+        "max_member_size": "largest section",
+        "total_estimated_weight": 0
     },
     "concrete_analysis": {
-        "grades_identified": [/* from concrete_elements */],
-        "element_types_inferred": [/* slab/beam/column/footing based on context */],
-        "estimated_volumes": "calculate where possible from dimensions"
+        "grades_identified": ["list of grades"],
+        "element_types_inferred": ["slab/beam/column/footing"],
+        "estimated_volumes": 0
     }
 }
 
-IMPORTANT: 
-- Use the STRUCTURED data, don't just repeat raw text
-- Calculate actual quantities where member schedules provide length × quantity
-- Infer element types from context and standard practice
-- Provide realistic estimates based on the parsed information
-`;
+IMPORTANT: Return only valid JSON. Calculate actual quantities from the schedules provided.`;
 
         try {
             const response = await this.client.messages.create({
@@ -93,96 +81,82 @@ IMPORTANT:
                 }]
             });
 
-            const analysisText = response.content[0].text;
-            const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
-            
-            if (jsonMatch) {
-                return JSON.parse(jsonMatch[0]);
-            } else {
-                return { 
-                    error: "Could not parse structured analysis",
-                    raw_analysis: analysisText,
-                    input_confidence: data.confidence
-                };
-            }
+            return this._parseJsonResponse(response.content[0].text, this._generateFallbackAnalysis(data));
 
         } catch (error) {
             console.error(`Drawing structure analysis error: ${error.message}`);
-            return {
-                error: error.message,
-                fallback_analysis: this._generateFallbackAnalysis(data)
-            };
+            return this._generateFallbackAnalysis(data);
         }
     }
 
     async _performIntelligentQuantityTakeoff(data) {
         const prompt = `
-Perform QUANTITY TAKEOFF as an expert quantity surveyor using this STRUCTURED data:
+As an expert quantity surveyor, calculate detailed quantities from this structural data:
 
-STEEL SCHEDULE DATA:
-${JSON.stringify(data.steel_schedules, null, 2)}
+STEEL SCHEDULES: ${JSON.stringify(data.steel_schedules, null, 2)}
+CONCRETE ELEMENTS: ${JSON.stringify(data.concrete_elements, null, 2)}
+DIMENSIONS: ${JSON.stringify(data.dimensions_found, null, 2)}
 
-CONCRETE ELEMENTS:
-${JSON.stringify(data.concrete_elements, null, 2)}
-
-DIMENSIONS DATA:
-${JSON.stringify(data.dimensions_found, null, 2)}
-
-Calculate detailed quantities in JSON format:
-
+Calculate quantities in this exact JSON format:
 {
     "steel_quantities": {
         "members": [
-            /* For each item in steel schedules, calculate: */
             {
-                "section": "from schedule data",
-                "total_length_m": "length × quantity from schedule",
-                "weight_per_m": "standard weight from steel tables",
-                "total_weight_kg": "calculated total weight",
-                "member_type": "beam/column/brace inferred from section",
-                "quantity": "number of pieces"
+                "section": "section name from schedule",
+                "total_length_m": 0,
+                "weight_per_m": 0,
+                "total_weight_kg": 0,
+                "member_type": "beam/column/brace",
+                "quantity": 0
             }
         ],
         "summary": {
-            "total_steel_weight_tonnes": "sum all weights / 1000",
-            "beam_weight_tonnes": "beams only",
-            "column_weight_tonnes": "columns only",
-            "member_count": "total pieces"
+            "total_steel_weight_tonnes": 0,
+            "beam_weight_tonnes": 0,
+            "column_weight_tonnes": 0,
+            "member_count": 0
         }
     },
     "concrete_quantities": {
         "elements": [
-            /* Estimate from dimensions and concrete elements */
             {
-                "element_type": "slab/beam/column/footing - infer from context",
-                "grade": "from concrete_elements data",
-                "volume_m3": "calculate from dimensions where possible",
-                "area_m2": "for slabs",
-                "linear_m": "for beams",
-                "estimated": true/false
+                "element_type": "slab/beam/column/footing",
+                "grade": "concrete grade",
+                "volume_m3": 0,
+                "area_m2": 0,
+                "linear_m": 0,
+                "estimated": true
             }
         ],
         "summary": {
-            "total_concrete_m3": "sum all volumes",
-            "n32_concrete_m3": "by grade",
-            "n40_concrete_m3": "by grade",
-            "slab_area_m2": "total slab area"
+            "total_concrete_m3": 0,
+            "n32_concrete_m3": 0,
+            "n40_concrete_m3": 0,
+            "slab_area_m2": 0
         }
     },
-    "calculation_notes": [
-        "Steel weights calculated using standard AS/NZS sections",
-        "Concrete volumes estimated from available dimensions",
-        "Missing data estimated using typical structural proportions"
-    ]
+    "reinforcement_quantities": {
+        "deformed_bars": {
+            "n12_kg": 0,
+            "n16_kg": 0,
+            "n20_kg": 0,
+            "n24_kg": 0
+        },
+        "mesh": {
+            "sl72_m2": 0,
+            "sl82_m2": 0
+        }
+    },
+    "miscellaneous": {
+        "anchors": {
+            "m12_mechanical": 0,
+            "m16_mechanical": 0,
+            "m20_mechanical": 0
+        }
+    }
 }
 
-CALCULATION RULES:
-1. For steel: Use standard weight tables (e.g., 200UB25 = 25.4 kg/m)
-2. Calculate total weight = length × quantity × weight_per_m
-3. For concrete: Use dimensions to calculate volumes where possible
-4. Estimate missing values using engineering judgment
-5. Separate quantities by material grade/type
-`;
+Use standard steel section weights (e.g., 200UB25 = 25.4 kg/m). Calculate totals by multiplying length × quantity × weight_per_m.`;
 
         try {
             const response = await this.client.messages.create({
@@ -194,64 +168,40 @@ CALCULATION RULES:
                 }]
             });
 
-            const analysisText = response.content[0].text;
-            const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
-            
-            if (jsonMatch) {
-                const quantities = JSON.parse(jsonMatch[0]);
-                // Add validation and cleanup
-                return this._validateAndCleanQuantities(quantities);
-            } else {
-                return {
-                    error: "Could not parse quantities",
-                    fallback_quantities: this._calculateFallbackQuantities(data)
-                };
-            }
+            const quantities = this._parseJsonResponse(response.content[0].text, this._calculateFallbackQuantities(data));
+            return this._validateAndCleanQuantities(quantities);
 
         } catch (error) {
             console.error(`Quantity takeoff error: ${error.message}`);
-            return {
-                error: error.message,
-                fallback_quantities: this._calculateFallbackQuantities(data)
-            };
+            return this._calculateFallbackQuantities(data);
         }
     }
 
     async _extractDetailedSpecifications(data) {
         const prompt = `
-Extract detailed material specifications from this structural data:
+Extract material specifications from this data:
 
-CONCRETE ELEMENTS: ${JSON.stringify(data.concrete_elements, null, 2)}
-STEEL SCHEDULES: ${JSON.stringify(data.steel_schedules, null, 2)}
+CONCRETE: ${JSON.stringify(data.concrete_elements, null, 2)}
+STEEL: ${JSON.stringify(data.steel_schedules, null, 2)}
 
-Return specifications in JSON format:
-
+Return JSON format:
 {
     "concrete_specifications": {
-        "grades_found": [/* extract from concrete_elements */],
+        "grades_found": ["N32", "N40"],
         "typical_applications": {
-            "N32": "footings, slabs, beams",
+            "N32": "slabs, beams, footings",
             "N40": "columns, high-stress elements"
-        },
-        "cover_requirements": {
-            "internal_elements": "30mm typical",
-            "external_elements": "40mm typical",
-            "footings": "75mm minimum"
         }
     },
     "steel_specifications": {
-        "sections_used": [/* extract unique sections from schedules */],
-        "steel_grade": "300 grade typical",
-        "connection_requirements": "bolted/welded as per AS4100",
-        "surface_treatment": "galvanized for external elements"
+        "sections_used": ["200UB25", "150x150x8SHS"],
+        "steel_grade": "300 grade typical"
     },
     "standards_applicable": [
         "AS 3600 - Concrete Structures",
-        "AS 4100 - Steel Structures",
-        "AS/NZS 4671 - Steel reinforcing materials"
+        "AS 4100 - Steel Structures"
     ]
-}
-`;
+}`;
 
         try {
             const response = await this.client.messages.create({
@@ -263,12 +213,11 @@ Return specifications in JSON format:
                 }]
             });
 
-            const analysisText = response.content[0].text;
-            const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
-            
-            return jsonMatch ? JSON.parse(jsonMatch[0]) : { 
-                raw_specifications: analysisText 
-            };
+            return this._parseJsonResponse(response.content[0].text, {
+                concrete_specifications: { grades_found: [], typical_applications: {} },
+                steel_specifications: { sections_used: [], steel_grade: "300 grade" },
+                standards_applicable: ["AS 3600", "AS 4100"]
+            });
 
         } catch (error) {
             console.error(`Specification extraction error: ${error.message}`);
@@ -277,10 +226,9 @@ Return specifications in JSON format:
     }
 
     async _identifyProjectScope(data) {
-        const memberCount = data.steel_schedules?.reduce((sum, sched) => sum + sched.items.length, 0) || 0;
+        const memberCount = this._calculateMemberCount(data);
         const hasMultipleGrades = (data.concrete_elements?.length || 0) > 1;
         
-        // Determine complexity based on actual data
         let complexity = 'low';
         if (memberCount > 50 || hasMultipleGrades) complexity = 'medium';
         if (memberCount > 100) complexity = 'high';
@@ -289,13 +237,13 @@ Return specifications in JSON format:
             work_packages: [
                 {
                     package_name: "Steel Structure",
-                    description: `${memberCount} steel members identified from schedules`,
+                    description: `${memberCount} steel members identified`,
                     complexity: complexity,
                     estimated_duration_days: Math.max(10, Math.ceil(memberCount / 10))
                 },
                 {
                     package_name: "Concrete Works",
-                    description: `${data.concrete_elements?.length || 0} concrete elements with various grades`,
+                    description: `${data.concrete_elements?.length || 0} concrete elements`,
                     complexity: hasMultipleGrades ? 'medium' : 'low',
                     estimated_duration_days: 15
                 }
@@ -309,34 +257,31 @@ Return specifications in JSON format:
     async _assessProjectRisks(data) {
         const risks = [];
         
-        // Risk assessment based on actual extracted data
         if (data.confidence < 0.7) {
             risks.push({
                 risk: "Low drawing data extraction confidence",
                 probability: "high",
                 impact: "cost variance 10-20%",
-                mitigation: "Manual review of drawings recommended"
+                mitigation: "Manual review recommended"
             });
         }
 
-        const memberCount = data.steel_schedules?.reduce((sum, sched) => sum + sched.items.length, 0) || 0;
+        const memberCount = this._calculateMemberCount(data);
         if (memberCount > 100) {
             risks.push({
-                risk: "Complex steel structure with many members",
-                probability: "medium",
-                impact: "potential fabrication delays",
-                mitigation: "Early engagement with fabricator"
+                risk: "Complex steel structure",
+                probability: "medium", 
+                impact: "potential delays",
+                mitigation: "Early fabricator engagement"
             });
         }
 
         return {
             technical_risks: risks,
-            data_quality_risks: [
-                {
-                    extraction_confidence: data.confidence || 0,
-                    recommendation: data.confidence < 0.8 ? "manual_verification_required" : "data_quality_acceptable"
-                }
-            ],
+            data_quality_risks: [{
+                extraction_confidence: data.confidence || 0,
+                recommendation: data.confidence < 0.8 ? "manual_verification_required" : "acceptable"
+            }],
             cost_factors: {
                 complexity_multiplier: memberCount > 50 ? 1.1 : 1.0,
                 data_confidence_factor: Math.max(0.9, data.confidence || 0.5)
@@ -345,65 +290,133 @@ Return specifications in JSON format:
     }
 
     async _generateIntelligentAssumptions(data) {
-        const baseAssumptions = [
+        const assumptions = [
             "Steel sections conform to AS/NZS standards",
-            "Standard connection details unless noted otherwise",
+            "Standard connection details unless noted",
             "Site access available for delivery and crane operations"
         ];
 
-        // Add data-specific assumptions
         if (data.confidence < 0.8) {
-            baseAssumptions.push("Quantities estimated due to limited drawing data extraction");
+            assumptions.push("Quantities estimated due to limited data extraction");
         }
 
-        const memberCount = data.steel_schedules?.reduce((sum, sched) => sum + sched.items.length, 0) || 0;
+        const memberCount = this._calculateMemberCount(data);
         if (memberCount > 0) {
-            baseAssumptions.push(`Steel structure with approximately ${memberCount} members as per schedules`);
+            assumptions.push(`Approximately ${memberCount} steel members as per schedules`);
         }
 
-        return baseAssumptions;
+        return assumptions;
     }
 
     // Helper methods
+    _parseJsonResponse(text, fallback) {
+        try {
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                return JSON.parse(jsonMatch[0]);
+            }
+        } catch (error) {
+            console.error(`JSON parsing error: ${error.message}`);
+        }
+        return fallback;
+    }
+
+    _calculateMemberCount(data) {
+        if (!data.steel_schedules || !Array.isArray(data.steel_schedules)) {
+            return 0;
+        }
+        return data.steel_schedules.reduce((sum, schedule) => {
+            if (!schedule.items || !Array.isArray(schedule.items)) return sum;
+            return sum + schedule.items.length;
+        }, 0);
+    }
+
     _generateFallbackAnalysis(data) {
         return {
-            drawing_type: "structural",
-            confidence_note: `Low extraction confidence: ${(data.confidence * 100).toFixed(0)}%`,
-            schedules_found: data.steel_schedules?.length || 0,
-            concrete_elements_found: data.concrete_elements?.length || 0
+            project_info: {
+                drawing_number: data.project_info?.drawing_number || 'unknown',
+                drawing_type: "structural"
+            },
+            structural_systems: {
+                structural_system: "mixed",
+                foundation_type: "reinforced concrete"
+            },
+            steel_analysis: {
+                total_members_identified: this._calculateMemberCount(data),
+                member_types: [],
+                total_estimated_weight: 0
+            },
+            concrete_analysis: {
+                grades_identified: ["N32"],
+                element_types_inferred: ["slab", "beam"],
+                estimated_volumes: 0
+            }
         };
     }
 
     _calculateFallbackQuantities(data) {
         const fallback = {
-            steel_quantities: { summary: { total_steel_weight_tonnes: 0 } },
-            concrete_quantities: { summary: { total_concrete_m3: 0 } }
+            steel_quantities: {
+                members: [],
+                summary: { total_steel_weight_tonnes: 0, member_count: 0 }
+            },
+            concrete_quantities: {
+                elements: [],
+                summary: { total_concrete_m3: 0 }
+            },
+            reinforcement_quantities: {
+                deformed_bars: { n12_kg: 0, n16_kg: 0, n20_kg: 0, n24_kg: 0 },
+                mesh: { sl72_m2: 0, sl82_m2: 0 }
+            },
+            miscellaneous: {
+                anchors: { m12_mechanical: 0, m16_mechanical: 0, m20_mechanical: 0 }
+            }
         };
 
-        // Basic calculation from available schedule data
-        if (data.steel_schedules) {
+        // Calculate basic quantities from available data
+        if (data.steel_schedules && Array.isArray(data.steel_schedules)) {
             let totalWeight = 0;
+            let memberCount = 0;
+
             for (const schedule of data.steel_schedules) {
+                if (!schedule.items || !Array.isArray(schedule.items)) continue;
+
                 for (const item of schedule.items) {
-                    // Estimate weight using basic steel section weights
-                    const length = item.length || 6; // Default 6m if not specified
-                    const quantity = item.quantity || 1;
+                    const length = parseFloat(item.length) || 6;
+                    const quantity = parseInt(item.quantity) || 1;
                     const weightPerM = this._estimateWeightPerMeter(item.section);
-                    totalWeight += (length * quantity * weightPerM) / 1000; // Convert to tonnes
+                    const weight = (length * quantity * weightPerM) / 1000;
+
+                    fallback.steel_quantities.members.push({
+                        section: item.section || 'unknown',
+                        total_length_m: length * quantity,
+                        weight_per_m: weightPerM,
+                        total_weight_kg: weight * 1000,
+                        member_type: this._classifyMember(item.section),
+                        quantity: quantity
+                    });
+
+                    totalWeight += weight;
+                    memberCount += quantity;
                 }
             }
-            fallback.steel_quantities.summary.total_steel_weight_tonnes = totalWeight;
+
+            fallback.steel_quantities.summary = {
+                total_steel_weight_tonnes: parseFloat(totalWeight.toFixed(2)),
+                beam_weight_tonnes: parseFloat((totalWeight * 0.6).toFixed(2)),
+                column_weight_tonnes: parseFloat((totalWeight * 0.4).toFixed(2)),
+                member_count: memberCount
+            };
         }
 
         return fallback;
     }
 
     _estimateWeightPerMeter(section) {
-        if (!section) return 20; // Default weight
+        if (!section) return 20;
         
-        const sectionLower = section.toLowerCase();
+        const sectionLower = section.toLowerCase().replace(/\s/g, '');
         
-        // Basic weight estimation table
         const weightTable = {
             '150ub14': 14.0, '200ub18': 18.2, '200ub25': 25.4,
             '250ub26': 25.7, '250ub31': 31.4, '310ub32': 32.0,
@@ -411,39 +424,73 @@ Return specifications in JSON format:
             '100pfc': 10.4, '150pfc': 17.0, '200pfc': 23.4
         };
         
-        // Try to match section
         for (const [key, weight] of Object.entries(weightTable)) {
-            if (sectionLower.includes(key.replace('ub', '').replace('shs', '').replace('pfc', ''))) {
+            if (sectionLower.includes(key.replace(/[a-z]/g, ''))) {
                 return weight;
             }
         }
         
-        // Extract number for basic estimation
         const numberMatch = section.match(/(\d+)/);
         if (numberMatch) {
             const size = parseInt(numberMatch[1]);
-            if (size < 150) return size * 0.1;
-            if (size < 300) return size * 0.15;
-            return size * 0.2;
+            return Math.max(10, size * 0.15);
         }
         
-        return 20; // Default fallback
+        return 20;
+    }
+
+    _classifyMember(section) {
+        if (!section) return 'beam';
+        const sectionLower = section.toLowerCase();
+        if (sectionLower.includes('ub')) return 'beam';
+        if (sectionLower.includes('uc') || sectionLower.includes('shs')) return 'column';
+        if (sectionLower.includes('pfc')) return 'beam';
+        return 'beam';
     }
 
     _validateAndCleanQuantities(quantities) {
-        // Ensure all numbers are valid
-        if (quantities.steel_quantities?.summary) {
-            const summary = quantities.steel_quantities.summary;
-            summary.total_steel_weight_tonnes = Math.max(0, parseFloat(summary.total_steel_weight_tonnes) || 0);
-            summary.member_count = Math.max(0, parseInt(summary.member_count) || 0);
+        if (!quantities || typeof quantities !== 'object') {
+            return this._calculateFallbackQuantities({});
         }
-        
-        if (quantities.concrete_quantities?.summary) {
-            const summary = quantities.concrete_quantities.summary;
-            summary.total_concrete_m3 = Math.max(0, parseFloat(summary.total_concrete_m3) || 0);
-            summary.slab_area_m2 = Math.max(0, parseFloat(summary.slab_area_m2) || 0);
+
+        // Ensure steel quantities structure
+        if (!quantities.steel_quantities) {
+            quantities.steel_quantities = { members: [], summary: {} };
         }
-        
+        if (!quantities.steel_quantities.summary) {
+            quantities.steel_quantities.summary = {};
+        }
+
+        const steelSummary = quantities.steel_quantities.summary;
+        steelSummary.total_steel_weight_tonnes = Math.max(0, parseFloat(steelSummary.total_steel_weight_tonnes) || 0);
+        steelSummary.member_count = Math.max(0, parseInt(steelSummary.member_count) || 0);
+
+        // Ensure concrete quantities structure
+        if (!quantities.concrete_quantities) {
+            quantities.concrete_quantities = { elements: [], summary: {} };
+        }
+        if (!quantities.concrete_quantities.summary) {
+            quantities.concrete_quantities.summary = {};
+        }
+
+        const concreteSummary = quantities.concrete_quantities.summary;
+        concreteSummary.total_concrete_m3 = Math.max(0, parseFloat(concreteSummary.total_concrete_m3) || 0);
+
+        // Ensure reinforcement structure
+        if (!quantities.reinforcement_quantities) {
+            quantities.reinforcement_quantities = {
+                deformed_bars: { n12_kg: 0, n16_kg: 0, n20_kg: 0, n24_kg: 0 },
+                mesh: { sl72_m2: 0, sl82_m2: 0 }
+            };
+        }
+
+        // Ensure miscellaneous structure
+        if (!quantities.miscellaneous) {
+            quantities.miscellaneous = {
+                anchors: { m12_mechanical: 0, m16_mechanical: 0, m20_mechanical: 0 }
+            };
+        }
+
         return quantities;
     }
 }

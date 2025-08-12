@@ -112,4 +112,8 @@ export const validateEstimationInput = [
         .withMessage('Estimation details must be at least 10 characters')
 ];
 
+<<<<<<< HEAD
 // 4. Removed the old 'module.exports' block
+=======
+// 4. Removed the old 'module.exports' block
+>>>>>>> baa85132158071c2ea5271e3639b88be69bd07de

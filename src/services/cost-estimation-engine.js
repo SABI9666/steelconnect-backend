@@ -1307,4 +1307,8 @@ export {
     EstimationItem,
     ReportGenerator,
     runEstimationExample
+<<<<<<< HEAD
 };
+=======
+};
+>>>>>>> baa85132158071c2ea5271e3639b88be69bd07de

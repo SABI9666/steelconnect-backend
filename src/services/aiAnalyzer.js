@@ -351,6 +351,8 @@ class AIAnalyzer {
         {
             "work_packages": [
                 {
+Use Control + Shift + m to toggle the tab key moving focus. Alternatively, use esc then tab to move to the next interactive element on the page.
+
                     "package_name": "Foundations",
                     "description": "Excavation, pad footings, strip footings",
                     "complexity": "medium",
@@ -539,4 +541,8 @@ class AIAnalyzer {
     }
 }
 
+<<<<<<< HEAD
 export { AIAnalyzer, StructuralElement };
+=======
+export { AIAnalyzer, StructuralElement };
+>>>>>>> baa85132158071c2ea5271e3639b88be69bd07de

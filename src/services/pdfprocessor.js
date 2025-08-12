@@ -1,13 +1,12 @@
-
-const fs = require('fs').promises;
-const path = require('path');
-const pdf2pic = require('pdf2pic');
-const pdfParse = require('pdf-parse');
+import fs from 'fs/promises';
+import path from 'path';
+import { fromPath } from 'pdf2pic';
+import * as pdfjsLib from 'pdfjs-dist';
 
 /**
  * Container for extracted PDF content
  */
-class ExtractedContent {
+export class ExtractedContent {
     constructor({
         filename = '',
         text = '',
@@ -28,13 +27,16 @@ class ExtractedContent {
 /**
  * Advanced PDF processing for structural drawings
  */
-class PDFProcessor {
+export class PDFProcessor {
     constructor() {
         this.supportedFormats = ['.pdf', '.dwg', '.dxf'];
         this.tableKeywords = [
             'schedule', 'legend', 'notes', 'specification',
             'material', 'steel', 'concrete', 'footing', 'beam'
         ];
+        // The worker is primarily for browser environments, but setting it is good practice.
+        // For Node.js, pdfjs-dist uses a different mechanism that doesn't rely on this worker.
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `pdfjs-dist/build/pdf.worker.mjs`;
     }
 
     /**
@@ -61,14 +63,14 @@ class PDFProcessor {
     }
 
     /**
-     * Extract comprehensive content from PDF
+     * Extract comprehensive content from PDF using pdfjs-dist
      * @param {string} filePath - Path to PDF file
      * @returns {Promise<Object>} Extracted content
      */
     async _extractPdfContent(filePath) {
         try {
             const dataBuffer = await fs.readFile(filePath);
-            const pdfData = await pdfParse(dataBuffer);
+            const doc = await pdfjsLib.getDocument(dataBuffer).promise;
 
             const extractedContent = {
                 filename: path.basename(filePath),
@@ -81,49 +83,49 @@ class PDFProcessor {
             };
 
             // Extract basic metadata
+            const metadata = await doc.getMetadata();
             extractedContent.metadata = {
-                pageCount: pdfData.numpages,
-                title: pdfData.info?.Title || '',
-                author: pdfData.info?.Author || '',
-                subject: pdfData.info?.Subject || '',
-                creator: pdfData.info?.Creator || '',
-                producer: pdfData.info?.Producer || '',
-                creationDate: pdfData.info?.CreationDate || '',
-                modificationDate: pdfData.info?.ModDate || ''
+                pageCount: doc.numPages,
+                title: metadata.info?.Title || '',
+                author: metadata.info?.Author || '',
+                subject: metadata.info?.Subject || '',
+                creator: metadata.info?.Creator || '',
+                producer: metadata.info?.Producer || '',
+                creationDate: metadata.info?.CreationDate || '',
+                modificationDate: metadata.info?.ModDate || ''
             };
 
-            // Extract text content
-            extractedContent.text = pdfData.text;
-
-            // Process text for tables and elements
-            const textLines = pdfData.text.split('\n').filter(line => line.trim());
-            
-            // Extract tables from text
-            const tables = await this._extractTablesFromText(textLines);
-            extractedContent.tables = tables;
-
-            // Extract images (basic implementation)
-            const images = await this._extractImages(filePath);
-            extractedContent.images = images;
-
-            // Extract drawing elements from text patterns
-            const elements = await this._extractDrawingElements(textLines);
-            extractedContent.drawingElements = elements;
-
-            // Create page information
-            for (let i = 0; i < pdfData.numpages; i++) {
+            // Extract text content from all pages
+            let fullText = '';
+            for (let i = 1; i <= doc.numPages; i++) {
+                const page = await doc.getPage(i);
+                const textContent = await page.getTextContent();
+                const pageText = textContent.items.map(item => item.str).join(' ');
+                fullText += pageText + '\n';
+                
                 extractedContent.pages.push({
-                    pageNumber: i + 1,
-                    text: '', // Would need more advanced PDF parsing for per-page text
-                    dimensions: null,
-                    rotation: 0
+                    pageNumber: i,
+                    text: pageText,
+                    dimensions: page.view,
+                    rotation: page.rotate
                 });
             }
+            extractedContent.text = fullText;
+
+            // Process text for tables and elements
+            const textLines = fullText.split('\n').filter(line => line.trim());
+            
+            // Extract tables from text
+            extractedContent.tables = await this._extractTablesFromText(textLines);
+
+            // Extract images (basic implementation)
+            extractedContent.images = await this._extractImages(filePath);
+
+            // Extract drawing elements from text patterns
+            extractedContent.drawingElements = await this._extractDrawingElements(textLines);
 
             // Post-process to identify structural elements
-            const processedContent = await this._postProcessContent(extractedContent);
-
-            return processedContent;
+            return await this._postProcessContent(extractedContent);
 
         } catch (error) {
             console.error(`PDF extraction error: ${error.message}`);
@@ -246,17 +248,15 @@ class PDFProcessor {
         const images = [];
         
         try {
-            // This is a simplified implementation
-            // In a real scenario, you'd use a more sophisticated PDF parsing library
-            
-            const convert = pdf2pic.fromPath(filePath, {
+            const options = {
                 density: 100,
                 saveFilename: "page",
                 savePath: "./temp/",
                 format: "png",
                 width: 600,
                 height: 600
-            });
+            };
+            const convert = fromPath(filePath, options);
 
             // Note: This would convert PDF pages to images
             // For actual image extraction from PDF, you'd need a different approach
@@ -316,20 +316,16 @@ class PDFProcessor {
     async _postProcessContent(content) {
         try {
             // Identify steel schedules
-            const steelElements = this._identifySteelSchedule(content.text);
-            content.steelSchedule = steelElements;
+            content.steelSchedule = this._identifySteelSchedule(content.text);
 
             // Identify concrete specifications
-            const concreteSpecs = this._identifyConcreteSpecs(content.text);
-            content.concreteSpecifications = concreteSpecs;
+            content.concreteSpecifications = this._identifyConcreteSpecs(content.text);
 
             // Identify dimensions and quantities
-            const dimensions = this._extractDimensions(content.text);
-            content.dimensions = dimensions;
+            content.dimensions = this._extractDimensions(content.text);
 
             // Identify drawing numbers and revisions
-            const drawingInfo = this._extractDrawingInfo(content.text);
-            content.drawingInfo = drawingInfo;
+            content.drawingInfo = this._extractDrawingInfo(content.text);
 
             // Clean and structure tables
             content.structuredTables = this._structureTables(content.tables);
@@ -349,8 +345,6 @@ class PDFProcessor {
      */
     _identifySteelSchedule(text) {
         const steelElements = [];
-
-        // Common steel section patterns
         const patterns = [
             /UB\s*\d+\s*x?\s*\d+\.?\d*/gi,  // Universal beams
             /UC\s*\d+\s*x?\s*\d+\.?\d*/gi,  // Universal columns
@@ -366,14 +360,10 @@ class PDFProcessor {
                 steelElements.push({
                     section: match[0],
                     position: [match.index, match.index + match[0].length],
-                    context: text.substring(
-                        Math.max(0, match.index - 50),
-                        match.index + match[0].length + 50
-                    )
+                    context: text.substring(Math.max(0, match.index - 50), match.index + match[0].length + 50)
                 });
             }
         });
-
         return steelElements;
     }
 
@@ -384,12 +374,7 @@ class PDFProcessor {
      */
     _identifyConcreteSpecs(text) {
         const concreteSpecs = [];
-
-        // Concrete grade patterns
-        const gradePatterns = [
-            /N\d{2,3}/gi,  // N20, N32, N40, etc.
-            /\d{2,3}\s*MPa/gi,  // 20 MPa, 32 MPa, etc.
-        ];
+        const gradePatterns = [ /N\d{2,3}/gi, /\d{2,3}\s*MPa/gi ];
 
         gradePatterns.forEach(pattern => {
             let match;
@@ -397,14 +382,10 @@ class PDFProcessor {
                 concreteSpecs.push({
                     grade: match[0],
                     position: [match.index, match.index + match[0].length],
-                    context: text.substring(
-                        Math.max(0, match.index - 30),
-                        match.index + match[0].length + 30
-                    )
+                    context: text.substring(Math.max(0, match.index - 30), match.index + match[0].length + 30)
                 });
             }
         });
-
         return concreteSpecs;
     }
 
@@ -415,13 +396,11 @@ class PDFProcessor {
      */
     _extractDimensions(text) {
         const dimensions = [];
-
-        // Dimension patterns
         const patterns = [
-            /\d+\s*x\s*\d+\s*x\s*\d+/g,  // 1200 x 1200 x 300
-            /\d+\s*mm\s*x\s*\d+\s*mm/g,  // 150mm x 200mm
-            /\d+\.\d+\s*m\s*x\s*\d+\.\d+\s*m/g,  // 2.5m x 3.0m
-            /Ø\s*\d+/g,  // Diameter
+            /\d+\s*x\s*\d+\s*x\s*\d+/g,
+            /\d+\s*mm\s*x\s*\d+\s*mm/g,
+            /\d+\.\d+\s*m\s*x\s*\d+\.\d+\s*m/g,
+            /Ø\s*\d+/g,
         ];
 
         patterns.forEach(pattern => {
@@ -430,14 +409,10 @@ class PDFProcessor {
                 dimensions.push({
                     dimension: match[0],
                     position: [match.index, match.index + match[0].length],
-                    context: text.substring(
-                        Math.max(0, match.index - 20),
-                        match.index + match[0].length + 20
-                    )
+                    context: text.substring(Math.max(0, match.index - 20), match.index + match[0].length + 20)
                 });
             }
         });
-
         return dimensions;
     }
 
@@ -448,50 +423,23 @@ class PDFProcessor {
      */
     _extractDrawingInfo(text) {
         const info = {};
-
-        // Drawing number patterns
-        const dwgPatterns = [
-            /DRG\s*No\.?\s*:?\s*([A-Z]?\d+\.?\d*)/i,
-            /Drawing\s*No\.?\s*:?\s*([A-Z]?\d+\.?\d*)/i,
-            /(\d+-\d+)/g,  // 24-194 format
-        ];
-
+        const dwgPatterns = [ /DRG\s*No\.?\s*:?\s*([A-Z]?\d+\.?\d*)/i, /Drawing\s*No\.?\s*:?\s*([A-Z]?\d+\.?\d*)/i, /(\d+-\d+)/g ];
         for (const pattern of dwgPatterns) {
             const match = text.match(pattern);
-            if (match) {
-                info.drawingNumber = match[1];
-                break;
-            }
+            if (match) { info.drawingNumber = match[1]; break; }
         }
 
-        // Revision patterns
-        const revPatterns = [
-            /REV\.?\s*:?\s*([A-Z0-9]+)/i,
-            /Revision\s*:?\s*([A-Z0-9]+)/i,
-        ];
-
+        const revPatterns = [ /REV\.?\s*:?\s*([A-Z0-9]+)/i, /Revision\s*:?\s*([A-Z0-9]+)/i ];
         for (const pattern of revPatterns) {
             const match = text.match(pattern);
-            if (match) {
-                info.revision = match[1];
-                break;
-            }
+            if (match) { info.revision = match[1]; break; }
         }
 
-        // Date patterns
-        const datePatterns = [
-            /\d{1,2}[/-]\d{1,2}[/-]\d{2,4}/g,
-            /\d{1,2}\s+\w{3,9}\s+\d{2,4}/g,  // 25 October 2024
-        ];
-
+        const datePatterns = [ /\d{1,2}[/-]\d{1,2}[/-]\d{2,4}/g, /\d{1,2}\s+\w{3,9}\s+\d{2,4}/g ];
         for (const pattern of datePatterns) {
             const matches = text.match(pattern);
-            if (matches) {
-                info.dates = matches;
-                break;
-            }
+            if (matches) { info.dates = matches; break; }
         }
-
         return info;
     }
 
@@ -502,42 +450,27 @@ class PDFProcessor {
      */
     _structureTables(tables) {
         const structured = [];
-
         for (const table of tables) {
-            if (!table.rows || table.rows.length === 0) {
-                continue;
-            }
-
-            // Try to identify table type
-            const tableType = this._classifyTable(table.rows);
-
+            if (!table.rows || table.rows.length === 0) continue;
             const structuredTable = {
                 tableId: table.tableId || '',
                 page: table.page || 0,
-                type: tableType,
+                type: this._classifyTable(table.rows),
                 headers: [],
                 data: [],
                 summary: {}
             };
-
-            // Extract headers (usually first row)
             if (table.rows.length > 0) {
                 structuredTable.headers = table.rows[0];
                 structuredTable.data = table.rows.slice(1);
             }
-
-            // Add summary statistics
             structuredTable.summary = {
                 rowCount: structuredTable.data.length,
                 columnCount: structuredTable.headers.length,
-                hasNumbers: structuredTable.data.some(row => 
-                    row.some(cell => /\d/.test(String(cell)))
-                )
+                hasNumbers: structuredTable.data.some(row => row.some(cell => /\d/.test(String(cell))))
             };
-
             structured.push(structuredTable);
         }
-
         return structured;
     }
 
@@ -547,29 +480,16 @@ class PDFProcessor {
      * @returns {string} Table type classification
      */
     _classifyTable(rows) {
-        if (!rows || rows.length === 0) {
-            return 'unknown';
-        }
-
-        // Convert all rows to text for analysis
+        if (!rows || rows.length === 0) return 'unknown';
         const allText = rows.flat().join(' ').toLowerCase();
 
-        // Classification rules
-        if (['steel', 'beam', 'ub', 'pfc', 'shs'].some(keyword => allText.includes(keyword))) {
-            return 'steel_schedule';
-        } else if (['concrete', 'n20', 'n32', 'n40', 'mpa'].some(keyword => allText.includes(keyword))) {
-            return 'concrete_schedule';
-        } else if (['footing', 'pf', 'pad'].some(keyword => allText.includes(keyword))) {
-            return 'footing_schedule';
-        } else if (['anchor', 'm12', 'm16', 'hilti'].some(keyword => allText.includes(keyword))) {
-            return 'anchor_schedule';
-        } else if (allText.includes('schedule')) {
-            return 'general_schedule';
-        } else if (['note', 'specification', 'requirement'].some(keyword => allText.includes(keyword))) {
-            return 'notes';
-        } else {
-            return 'data_table';
-        }
+        if (['steel', 'beam', 'ub', 'pfc', 'shs'].some(keyword => allText.includes(keyword))) return 'steel_schedule';
+        if (['concrete', 'n20', 'n32', 'n40', 'mpa'].some(keyword => allText.includes(keyword))) return 'concrete_schedule';
+        if (['footing', 'pf', 'pad'].some(keyword => allText.includes(keyword))) return 'footing_schedule';
+        if (['anchor', 'm12', 'm16', 'hilti'].some(keyword => allText.includes(keyword))) return 'anchor_schedule';
+        if (allText.includes('schedule')) return 'general_schedule';
+        if (['note', 'specification', 'requirement'].some(keyword => allText.includes(keyword))) return 'notes';
+        return 'data_table';
     }
 
     /**
@@ -578,9 +498,6 @@ class PDFProcessor {
      * @returns {Promise<Object>} CAD content (placeholder)
      */
     async _extractCadContent(filePath) {
-        // This would require additional libraries for DXF files
-        // For now, return basic file info
-
         return {
             filename: path.basename(filePath),
             text: `CAD file: ${path.basename(filePath)} (processing not yet implemented)`,
@@ -610,5 +527,3 @@ class PDFProcessor {
         };
     }
 }
-
-module.exports = { PDFProcessor, ExtractedContent };

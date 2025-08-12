@@ -7,7 +7,7 @@ import dotenv from 'dotenv';
 import multer from 'multer';
 import fs from 'fs/promises';
 import path from 'path';
-import authRoutes from '.src/routes/auth.js'; // --- ADDED --- (Ensure auth.js is in a 'routes' folder)
+import authRoutes from './src/routes/auth.js'; // CORRECTED PATH
 
 // Load environment variables
 dotenv.config();
@@ -17,7 +17,7 @@ const PORT = process.env.PORT || 3000;
 
 // Ensure required directories exist
 const ensureDirectories = async () => {
-  const dirs = ['src/services', 'uploads', 'temp', 'routes']; // Added 'routes' for structure
+  const dirs = ['src/services', 'uploads', 'temp', 'src/routes']; // Correctly specifies src/routes
   for (const dir of dirs) {
     try {
       await fs.mkdir(dir, { recursive: true });
@@ -156,8 +156,7 @@ const initializeApp = async () => {
     await ensureDirectories();
     await createPdfProcessor();
     console.log('🚀 SteelConnect Backend initialized successfully');
-  } catch (error) {
-    console.error('❌ Initialization failed:', error);
+  } catch (error)    console.error('❌ Initialization failed:', error);
   }
 };
 
@@ -184,7 +183,7 @@ app.get('/', (req, res) => {
   });
 });
 
-app.use('/api/auth', authRoutes); // --- ADDED ---
+app.use('/api/auth', authRoutes);
 
 app.get('/health', (req, res) => {
   res.json({
@@ -351,17 +350,3 @@ startServer().catch((error) => {
   console.error('❌ Failed to start server:', error);
   process.exit(1);
 });
-
-
-
-
-
-
-
-
-
-
-
-
-
-Gemini can

@@ -22,8 +22,9 @@ class StructuralElement {
 class AIAnalyzer {
     constructor(apiKey) {
         this.client = new Anthropic({ apiKey });
-        this.maxTokens = 4000;
-        this.model = "claude-3-sonnet-20240229";
+        this.maxTokens = 4096;
+        // UPDATED: Using the latest and most advanced Sonnet model.
+        this.model = "claude-3-5-sonnet-20240620";
     }
 
     /**
@@ -351,8 +352,6 @@ class AIAnalyzer {
         {
             "work_packages": [
                 {
-Use Control + Shift + m to toggle the tab key moving focus. Alternatively, use esc then tab to move to the next interactive element on the page.
-
                     "package_name": "Foundations",
                     "description": "Excavation, pad footings, strip footings",
                     "complexity": "medium",
@@ -541,4 +540,14 @@ Use Control + Shift + m to toggle the tab key moving focus. Alternatively, use e
     }
 }
 
-export { AIAnalyzer, StructuralElement };
+
+
+
+
+
+
+
+
+
+
+

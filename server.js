@@ -34,7 +34,7 @@ const createPdfProcessor = async () => {
     await fs.access(processorPath);
     console.log('✅ PDF processor already exists');
   } catch {
-    console.log('📝 Creating basic PDF processor...');
+    console.log('🔧 Creating basic PDF processor...');
     const basicProcessor = `// src/services/pdfProcessor.js
 export class PdfProcessor {
   constructor() {
@@ -156,7 +156,8 @@ const initializeApp = async () => {
     await ensureDirectories();
     await createPdfProcessor();
     console.log('🚀 SteelConnect Backend initialized successfully');
-  } catch (error)    console.error('❌ Initialization failed:', error);
+  } catch (error) {
+    console.error('❌ Initialization failed:', error);
   }
 };
 

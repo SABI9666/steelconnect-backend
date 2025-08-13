@@ -1,4 +1,4 @@
-/ src/services/pdfProcessor.js
+// src/services/pdfprocessor.js
 import * as pdfjsLib from 'pdfjs-dist';
 import fs from 'fs/promises';
 import sharp from 'sharp';

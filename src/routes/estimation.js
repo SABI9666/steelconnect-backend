@@ -8,6 +8,7 @@ import { PdfProcessor } from '../services/pdfprocessor.js'; // Corrected filenam
 import { EnhancedAIAnalyzer } from '../services/aiAnalyzer.js';
 import { EstimationEngine } from '../services/cost-estimation-engine.js';
 import ReportGenerator from '../services/reportGenerator.js';
+import Estimation from '../models/estimation.js';
 
 
 const router = express.Router();
@@ -46,10 +47,11 @@ const pdfProcessor = new PdfProcessor(); // Corrected class name
 const reportGenerator = new ReportGenerator();
 
 /**
- * POST /api/estimation/upload
+ * POST /api/estimation/generate-from-upload
  * Upload PDF and generate cost estimation
  */
-router.post('/upload', upload.single('pdf'), async (req, res) => {
+// --- ROUTE PATH CORRECTED HERE ---
+router.post('/generate-from-upload', upload.single('pdf'), async (req, res) => {
     try {
         console.log('🚀 Starting estimation process...');
 
@@ -586,7 +588,7 @@ router.get('/stats/summary', async (req, res) => {
 
         res.json({
             success: true,
-            stats
+            ...stats
         });
 
     } catch (error) {
@@ -619,13 +621,3 @@ router.use((error, req, res, next) => {
 });
 
 export default router;
-
-
-
-
-
-
-
-
-
-

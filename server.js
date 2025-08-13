@@ -61,13 +61,11 @@ const createBasicEstimationRoute = () => {
   console.log('📝 Creating basic estimation fallback route...');
   const estimationRouter = express.Router();
   const storage = multer.memoryStorage();
-  // --- FIX: Change from upload.single('pdf') to upload.any() ---
   // This makes the endpoint more flexible by accepting any file, regardless of the field name.
   const upload = multer({ storage: storage });
 
   // This handler now uses upload.any()
   estimationRouter.post('/generate-from-upload', upload.any(), (req, res) => {
-    // --- FIX: Check req.files instead of req.file ---
     // upload.any() populates req.files as an array.
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ success: false, error: 'No file uploaded', message: "The server expects a file but didn't receive one." });
@@ -154,20 +152,15 @@ const startServer = async () => {
 
   // Global Error Handler: This catches errors from any route.
   app.use((error, req, res, next) => {
-    // Specifically handle Multer's "Unexpected field" error
-    if (error instanceof multer.MulterError && error.code === 'UNEXPECTED_FIELD') {
-      return res.status(400).json({
-        success: false,
-        error: 'Unexpected field',
-        message: 'The file was uploaded with an incorrect field name. The server expects the field name to be "pdf".'
-      });
-    }
+    // --- FIX: Removed the specific MulterError check to avoid sending a misleading message. ---
+    // Now, any error (including Multer errors) will be logged to the console and a generic
+    // 500 error will be sent. This makes it easier to debug from the server logs.
     
     // Log any other unhandled errors
     console.error('❌ Unhandled Error:', error);
     
     // Send a generic 500 Internal Server Error response
-    res.status(500).json({ success: false, error: 'Internal Server Error' });
+    res.status(500).json({ success: false, error: 'Internal Server Error', message: 'An unexpected error occurred on the server.' });
   });
 
   app.listen(PORT, () => {

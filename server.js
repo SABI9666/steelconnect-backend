@@ -61,12 +61,16 @@ const createBasicEstimationRoute = () => {
   console.log('📝 Creating basic estimation fallback route...');
   const estimationRouter = express.Router();
   const storage = multer.memoryStorage();
+  // --- FIX: Change from upload.single('pdf') to upload.any() ---
+  // This makes the endpoint more flexible by accepting any file, regardless of the field name.
   const upload = multer({ storage: storage });
 
-  // This handler expects the file field name from the frontend to be 'pdf'
-  estimationRouter.post('/generate-from-upload', upload.single('pdf'), (req, res) => {
-    if (!req.file) {
-      return res.status(400).json({ success: false, error: 'No PDF file uploaded', message: "The server expects a file but didn't receive one." });
+  // This handler now uses upload.any()
+  estimationRouter.post('/generate-from-upload', upload.any(), (req, res) => {
+    // --- FIX: Check req.files instead of req.file ---
+    // upload.any() populates req.files as an array.
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ success: false, error: 'No file uploaded', message: "The server expects a file but didn't receive one." });
     }
     // Basic success response
     res.json({ success: true, message: 'Basic estimation fallback successful', projectId: `temp_${Date.now()}` });

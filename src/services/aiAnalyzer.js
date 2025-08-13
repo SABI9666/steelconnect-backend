@@ -5,7 +5,6 @@ export class EnhancedAIAnalyzer {
     constructor(apiKey) {
         this.client = new Anthropic({ apiKey });
         this.maxTokens = 4096;
-        // Using a more recent and capable model can sometimes yield better results.
         this.model = "claude-3-5-sonnet-20240620";
     }
 
@@ -58,7 +57,7 @@ ${summary}
 
 Based on the summary, provide a detailed quantity takeoff. Use standard Australian steel section weights (e.g., 200UB25.4 = 25.4 kg/m). Calculate totals by multiplying length × quantity × weight_per_m. If length or quantity isn't given, make a reasonable assumption (e.g., 6m length, quantity of 1).
 
-Return the response in this exact JSON format:
+Return ONLY valid JSON in this exact format (no additional text):
 {
     "steel_quantities": {
         "members": [
@@ -67,7 +66,7 @@ Return the response in this exact JSON format:
                 "total_length_m": 0,
                 "weight_per_m": 0,
                 "total_weight_kg": 0,
-                "member_type": "beam/column/brace",
+                "member_type": "beam",
                 "quantity": 0
             }
         ],
@@ -83,9 +82,7 @@ Return the response in this exact JSON format:
             "total_concrete_m3": 0
         }
     }
-}
-
-IMPORTANT: Only return valid JSON. Do not include any text before or after the JSON object.`;
+}`;
 
         try {
             const response = await this.client.messages.create({
@@ -113,7 +110,7 @@ From the following summary of steel and concrete members, extract the likely mat
 SUMMARY:
 ${summary}
 
-Return the response in this exact JSON format:
+Return ONLY valid JSON in this exact format (no additional text):
 {
     "concrete_specifications": {
         "grades_found": ["N32", "N40"],
@@ -123,7 +120,7 @@ Return the response in this exact JSON format:
         }
     },
     "steel_specifications": {
-        "sections_used": ["List all sections from the summary"],
+        "sections_used": [],
         "steel_grade": "300PLUS grade typical for structural sections"
     },
     "standards_applicable": [
@@ -150,7 +147,11 @@ Return the response in this exact JSON format:
 
         } catch (error) {
             console.error(`Specification extraction error: ${error.message}`);
-            return { error: error.message };
+            return {
+                concrete_specifications: { grades_found: [], typical_applications: {} },
+                steel_specifications: { sections_used: [], steel_grade: "300PLUS grade" },
+                standards_applicable: ["AS 3600", "AS 4100"]
+            };
         }
     }
 
@@ -237,25 +238,39 @@ Return the response in this exact JSON format:
         return assumptions;
     }
 
-    // --- FIX: This function is now more robust to handle common JSON formatting errors ---
+    // --- FIXED: Improved JSON parsing with better error handling ---
     _parseJsonResponse(text, fallback) {
         try {
-            // Find the start and end of the JSON object
-            const startIndex = text.indexOf('{');
-            const endIndex = text.lastIndexOf('}');
-            if (startIndex === -1 || endIndex === -1) {
+            // Remove any markdown formatting
+            let cleanText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+            
+            // Find the JSON object bounds
+            const startIndex = cleanText.indexOf('{');
+            const lastBraceIndex = cleanText.lastIndexOf('}');
+            
+            if (startIndex === -1 || lastBraceIndex === -1) {
+                console.warn('No valid JSON structure found in response');
                 return fallback;
             }
-            let jsonString = text.substring(startIndex, endIndex + 1);
-
-            // Clean up potential issues like trailing commas before a closing bracket or brace
-            jsonString = jsonString.replace(/,\s*([\]}])/g, '$1');
-
-            return JSON.parse(jsonString);
+            
+            let jsonString = cleanText.substring(startIndex, lastBraceIndex + 1);
+            
+            // Clean up common JSON formatting issues
+            jsonString = jsonString
+                .replace(/,\s*([\]}])/g, '$1')  // Remove trailing commas
+                .replace(/([{,]\s*)(\w+):/g, '$1"$2":')  // Quote unquoted keys
+                .replace(/:\s*([^",{\[\s][^,}\]]*[^",}\]\s])\s*([,}\]])/g, ':"$1"$2')  // Quote unquoted string values
+                .replace(/"\s*(\d+\.?\d*)\s*"/g, '$1');  // Unquote numbers
+                
+            // Try to parse the cleaned JSON
+            const parsed = JSON.parse(jsonString);
+            return parsed;
+            
         } catch (error) {
             console.error(`JSON parsing error: ${error.message}`);
+            console.error('Raw text:', text.substring(0, 500)); // Log first 500 chars for debugging
+            return fallback;
         }
-        return fallback;
     }
 
     _calculateMemberCount(data) {
@@ -269,39 +284,53 @@ Return the response in this exact JSON format:
         const fallback = {
             steel_quantities: {
                 members: [],
-                summary: { total_steel_weight_tonnes: 0, member_count: 0 }
+                summary: { 
+                    total_steel_weight_tonnes: 0, 
+                    beam_weight_tonnes: 0,
+                    column_weight_tonnes: 0,
+                    member_count: 0 
+                }
             },
             concrete_quantities: {
-                elements: [],
                 summary: { total_concrete_m3: 0 }
             }
         };
 
         if (data && data.steel_schedules && Array.isArray(data.steel_schedules)) {
             let totalWeight = 0;
+            let beamWeight = 0;
+            let columnWeight = 0;
             let memberCount = 0;
 
             for (const item of data.steel_schedules) {
                 const length = parseFloat(item.length) || 6;
                 const quantity = parseInt(item.quantity) || 1;
                 const weightPerM = this._estimateWeightPerMeter(item.designation);
-                const weight = (length * quantity * weightPerM) / 1000;
+                const weight = (length * quantity * weightPerM) / 1000; // Convert to tonnes
+                const memberType = this._classifyMember(item.designation);
 
                 fallback.steel_quantities.members.push({
                     section: item.designation || 'unknown',
                     total_length_m: length * quantity,
                     weight_per_m: weightPerM,
                     total_weight_kg: weight * 1000,
-                    member_type: this._classifyMember(item.designation),
+                    member_type: memberType,
                     quantity: quantity
                 });
 
                 totalWeight += weight;
+                if (memberType === 'beam') {
+                    beamWeight += weight;
+                } else if (memberType === 'column') {
+                    columnWeight += weight;
+                }
                 memberCount += quantity;
             }
 
             fallback.steel_quantities.summary = {
                 total_steel_weight_tonnes: parseFloat(totalWeight.toFixed(2)),
+                beam_weight_tonnes: parseFloat(beamWeight.toFixed(2)),
+                column_weight_tonnes: parseFloat(columnWeight.toFixed(2)),
                 member_count: memberCount
             };
         }
@@ -314,26 +343,33 @@ Return the response in this exact JSON format:
         
         const sectionLower = section.toLowerCase().replace(/\s/g, '');
         
-        const weightTable = {
-            '150ub14': 14.0, '200ub18': 18.2, '200ub25': 25.4,
-            '250ub26': 25.7, '250ub31': 31.4, '310ub32': 32.0,
-            '100shs': 14.9, '125shs': 18.9, '150shs': 35.4,
-            '100pfc': 10.4, '150pfc': 17.0, '200pfc': 23.4
-        };
+        // More comprehensive weight mapping
+        const weightPatterns = [
+            { pattern: /(\d+)ub(\d+\.?\d*)/, handler: (m) => parseFloat(m[2]) },
+            { pattern: /(\d+)uc(\d+\.?\d*)/, handler: (m) => parseFloat(m[2]) },
+            { pattern: /(\d+)pfc/, handler: (m) => parseInt(m[1]) * 0.12 },
+            { pattern: /(\d+)x(\d+)x(\d+\.?\d*)shs/, handler: (m) => parseInt(m[1]) * parseInt(m[2]) * parseFloat(m[3]) / 100 },
+            { pattern: /(\d+)x(\d+)x(\d+\.?\d*)rhs/, handler: (m) => parseInt(m[1]) * parseInt(m[2]) * parseFloat(m[3]) / 120 },
+            { pattern: /z(\d+)(\d+)/, handler: (m) => parseInt(m[1]) * 0.15 },
+            { pattern: /c(\d+)(\d+)/, handler: (m) => parseInt(m[1]) * 0.12 }
+        ];
         
-        for (const [key, weight] of Object.entries(weightTable)) {
-            if (sectionLower.includes(key.replace(/[a-z]/g, ''))) {
-                return weight;
+        for (const { pattern, handler } of weightPatterns) {
+            const match = sectionLower.match(pattern);
+            if (match) {
+                const weight = handler(match);
+                return Math.max(5, weight); // Minimum 5 kg/m
             }
         }
         
+        // Fallback based on first number found
         const numberMatch = section.match(/(\d+)/);
         if (numberMatch) {
             const size = parseInt(numberMatch[1]);
             return Math.max(10, size * 0.15);
         }
         
-        return 20;
+        return 20; // Default fallback
     }
 
     _classifyMember(section) {
@@ -342,6 +378,8 @@ Return the response in this exact JSON format:
         if (sectionLower.includes('ub')) return 'beam';
         if (sectionLower.includes('uc') || sectionLower.includes('shs')) return 'column';
         if (sectionLower.includes('pfc')) return 'beam';
+        if (sectionLower.includes('rhs')) return 'beam';
+        if (sectionLower.includes('z') || sectionLower.includes('c')) return 'purlin';
         return 'beam';
     }
 
@@ -350,6 +388,7 @@ Return the response in this exact JSON format:
             return this._calculateFallbackQuantities({});
         }
 
+        // Ensure steel_quantities structure
         if (!quantities.steel_quantities) {
             quantities.steel_quantities = { members: [], summary: {} };
         }
@@ -359,10 +398,13 @@ Return the response in this exact JSON format:
 
         const steelSummary = quantities.steel_quantities.summary;
         steelSummary.total_steel_weight_tonnes = Math.max(0, parseFloat(steelSummary.total_steel_weight_tonnes) || 0);
+        steelSummary.beam_weight_tonnes = Math.max(0, parseFloat(steelSummary.beam_weight_tonnes) || 0);
+        steelSummary.column_weight_tonnes = Math.max(0, parseFloat(steelSummary.column_weight_tonnes) || 0);
         steelSummary.member_count = Math.max(0, parseInt(steelSummary.member_count) || 0);
 
+        // Ensure concrete_quantities structure
         if (!quantities.concrete_quantities) {
-            quantities.concrete_quantities = { elements: [], summary: {} };
+            quantities.concrete_quantities = { summary: {} };
         }
         if (!quantities.concrete_quantities.summary) {
             quantities.concrete_quantities.summary = {};

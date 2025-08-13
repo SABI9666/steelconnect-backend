@@ -9,7 +9,7 @@ export class EnhancedAIAnalyzer {
         this.model = "claude-3-5-sonnet-20240620";
     }
 
-    // --- FIX: This new helper function creates a concise summary to reduce token usage ---
+    // --- This helper function creates a concise summary to reduce token usage ---
     _createSummaryForAI(data) {
         if (!data || !data.steel_schedules) {
             return "No structural data provided.";
@@ -29,18 +29,16 @@ export class EnhancedAIAnalyzer {
         try {
             console.log('Starting enhanced AI analysis...');
             
-            // --- FIX: Create a single, small summary of the data ---
             const summary = this._createSummaryForAI(structuredData);
 
             const analysisResults = {
                 projectId,
                 confidence: structuredData.confidence || 0,
-                // --- FIX: Pass the small summary instead of the full data object ---
                 quantityTakeoff: await this._performIntelligentQuantityTakeoff(summary, structuredData),
                 specifications: await this._extractDetailedSpecifications(summary),
-                scopeIdentification: await this._identifyProjectScope(structuredData), // This can remain as it works locally
-                riskAssessment: await this._assessProjectRisks(structuredData), // This can remain as it works locally
-                assumptions: await this._generateIntelligentAssumptions(structuredData) // This can remain as it works locally
+                scopeIdentification: await this._identifyProjectScope(structuredData),
+                riskAssessment: await this._assessProjectRisks(structuredData),
+                assumptions: await this._generateIntelligentAssumptions(structuredData)
             };
 
             return analysisResults;
@@ -50,12 +48,8 @@ export class EnhancedAIAnalyzer {
             throw error;
         }
     }
-    
-    // This private method is no longer needed as we combine analysis into fewer calls
-    // async _analyzeDrawingStructure(data) { ... }
 
     async _performIntelligentQuantityTakeoff(summary, originalData) {
-        // --- FIX: The prompt is now much shorter, using the summary ---
         const prompt = `
 As an expert quantity surveyor, calculate detailed quantities from this structural data summary:
 
@@ -108,13 +102,11 @@ IMPORTANT: Only return valid JSON. Do not include any text before or after the J
 
         } catch (error) {
             console.error(`Quantity takeoff error: ${error.message}`);
-            // If AI fails, use the local fallback calculation
             return this._calculateFallbackQuantities(originalData);
         }
     }
 
     async _extractDetailedSpecifications(summary) {
-        // --- FIX: The prompt is now much shorter, using the summary ---
         const prompt = `
 From the following summary of steel and concrete members, extract the likely material specifications and applicable Australian standards.
 
@@ -161,9 +153,6 @@ Return the response in this exact JSON format:
             return { error: error.message };
         }
     }
-
-    // The rest of the helper methods remain largely the same, as they perform local calculations
-    // that don't require expensive API calls.
 
     async _identifyProjectScope(data) {
         const memberCount = this._calculateMemberCount(data);
@@ -248,12 +237,21 @@ Return the response in this exact JSON format:
         return assumptions;
     }
 
+    // --- FIX: This function is now more robust to handle common JSON formatting errors ---
     _parseJsonResponse(text, fallback) {
         try {
-            const jsonMatch = text.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                return JSON.parse(jsonMatch[0]);
+            // Find the start and end of the JSON object
+            const startIndex = text.indexOf('{');
+            const endIndex = text.lastIndexOf('}');
+            if (startIndex === -1 || endIndex === -1) {
+                return fallback;
             }
+            let jsonString = text.substring(startIndex, endIndex + 1);
+
+            // Clean up potential issues like trailing commas
+            jsonString = jsonString.replace(/,\s*([\]}])/g, '$1');
+
+            return JSON.parse(jsonString);
         } catch (error) {
             console.error(`JSON parsing error: ${error.message}`);
         }
@@ -376,4 +374,3 @@ Return the response in this exact JSON format:
         return quantities;
     }
 }
-

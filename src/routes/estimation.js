@@ -7,7 +7,6 @@ import fs from 'fs/promises';
 // --- FIX: Use the 'legacy' build of pdfjs-dist for Node.js environments ---
 // This version is designed for server-side use and avoids issues with worker scripts.
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
-// --- End of fix ---
 
 import { PdfProcessor } from '../services/pdfprocessor.js';
 import { EnhancedAIAnalyzer } from '../services/aiAnalyzer.js';

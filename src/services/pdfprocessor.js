@@ -1,529 +1,724 @@
-import fs from 'fs/promises';
-import path from 'path';
-import { fromPath } from 'pdf2pic';
+// src/services/pdfprocessor.js
 import * as pdfjsLib from 'pdfjs-dist';
+import fs from 'fs/promises';
+import sharp from 'sharp';
 
-/**
- * Container for extracted PDF content
- */
-export class ExtractedContent {
-    constructor({
-        filename = '',
-        text = '',
-        tables = [],
-        images = [],
-        metadata = {},
-        drawingElements = []
-    } = {}) {
-        this.filename = filename;
-        this.text = text;
-        this.tables = tables;
-        this.images = images;
-        this.metadata = metadata;
-        this.drawingElements = drawingElements;
+export class PdfProcessor {
+  constructor() {
+    this.setupPdfJs();
+    this.steelPatterns = this.initializeSteelPatterns();
+    this.unitConversions = this.initializeUnitConversions();
+  }
+
+  setupPdfJs() {
+    // Configure PDF.js for Node.js environment
+    if (typeof globalThis === 'undefined') {
+      global.globalThis = global;
     }
-}
+    
+    // Set worker path for PDF.js
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdfjs-dist/build/pdf.worker.js';
+  }
 
-/**
- * Advanced PDF processing for structural drawings
- */
-export class PDFProcessor {
-    constructor() {
-        this.supportedFormats = ['.pdf', '.dwg', '.dxf'];
-        this.tableKeywords = [
-            'schedule', 'legend', 'notes', 'specification',
-            'material', 'steel', 'concrete', 'footing', 'beam'
-        ];
-        // The worker is primarily for browser environments, but setting it is good practice.
-        // For Node.js, pdfjs-dist uses a different mechanism that doesn't rely on this worker.
-        pdfjsLib.GlobalWorkerOptions.workerSrc = `pdfjs-dist/build/pdf.worker.mjs`;
-    }
+  initializeSteelPatterns() {
+    return {
+      // Wide Flange Beams
+      wideFlange: {
+        pattern: /W(\d{1,2})X(\d{1,3}(?:\.\d+)?)/gi,
+        type: 'Wide Flange Beam',
+        category: 'structural_beam'
+      },
+      
+      // Standard Beams
+      standardBeam: {
+        pattern: /S(\d{1,2})X(\d{1,3}(?:\.\d+)?)/gi,
+        type: 'Standard Beam',
+        category: 'structural_beam'
+      },
+      
+      // HP Sections
+      hpSection: {
+        pattern: /HP(\d{1,2})X(\d{1,3}(?:\.\d+)?)/gi,
+        type: 'HP Section',
+        category: 'pile_foundation'
+      },
+      
+      // Channels
+      channel: {
+        pattern: /C(\d{1,2})X(\d{1,3}(?:\.\d+)?)/gi,
+        type: 'Channel',
+        category: 'structural_channel'
+      },
+      
+      // Angles
+      angle: {
+        pattern: /L(\d{1,2})X(\d{1,2})X(\d+\/\d+|\d+(?:\.\d+)?)/gi,
+        type: 'Angle',
+        category: 'structural_angle'
+      },
+      
+      // HSS (Hollow Structural Sections)
+      hssRectangular: {
+        pattern: /HSS(\d{1,2})X(\d{1,2})X(\d+\/\d+|\d+(?:\.\d+)?)/gi,
+        type: 'HSS Rectangular',
+        category: 'hollow_structural'
+      },
+      
+      hssRound: {
+        pattern: /HSS(\d{1,2}(?:\.\d+)?)X(\d+\/\d+|\d+(?:\.\d+)?)/gi,
+        type: 'HSS Round',
+        category: 'hollow_structural'
+      },
+      
+      // Plates
+      plate: {
+        pattern: /PL\s*(\d+\/\d+|\d+(?:\.\d+)?)\s*[X×]\s*(\d+(?:\.\d+)?)\s*[X×]\s*(\d+(?:\.\d+)?)/gi,
+        type: 'Steel Plate',
+        category: 'plate'
+      },
+      
+      plateSimple: {
+        pattern: /PLATE\s*(\d+\/\d+|\d+(?:\.\d+)?)\s*[X×]\s*(\d+(?:\.\d+)?)/gi,
+        type: 'Steel Plate',
+        category: 'plate'
+      },
+      
+      // Rebar
+      rebar: {
+        pattern: /#(\d+)\s*@\s*(\d+(?:\.\d+)?)\s*(O\.?C\.?|ON\s*CENTER)/gi,
+        type: 'Reinforcing Bar',
+        category: 'reinforcement'
+      },
+      
+      // Mesh
+      mesh: {
+        pattern: /(\d+X\d+\s*-?\s*W\d+\.\d+X\d+\.\d+)/gi,
+        type: 'Welded Wire Mesh',
+        category: 'reinforcement'
+      },
+      
+      // Quantities and Units
+      quantities: {
+        linearFeet: /(\d+(?:\.\d+)?)\s*(LF|L\.F\.|LINEAR\s*FEET?)/gi,
+        squareFeet: /(\d+(?:\.\d+)?)\s*(SF|S\.F\.|SQUARE\s*FEET?)/gi,
+        each: /(\d+(?:\.\d+)?)\s*(EA|EACH)/gi,
+        tons: /(\d+(?:\.\d+)?)\s*(TON|TONS)/gi,
+        pounds: /(\d+(?:\.\d+)?)\s*(LBS?|POUNDS?)/gi,
+        cubicYards: /(\d+(?:\.\d+)?)\s*(CY|C\.Y\.|CUBIC\s*YARDS?)/gi
+      },
+      
+      // Dimensions
+      dimensions: {
+        feetInches: /(\d+)'-(\d+)"/gi,
+        feetOnly: /(\d+)'/gi,
+        decimal: /(\d+\.\d+)'/gi,
+        metric: /(\d+(?:\.\d+)?)\s*(MM|CM|M)/gi
+      },
+      
+      // Connection Details
+      connections: {
+        bolts: /((\d+\/\d+|\d+)\s*[Ø∅]\s*(BOLT|A325|A490))/gi,
+        welds: /(\d+\/\d+|\d+)\s*(FILLET\s*WELD|FW)/gi,
+        studs: /(\d+\/\d+|\d+)\s*[Ø∅]\s*STUD/gi
+      }
+    };
+  }
 
-    /**
-     * Main extraction method for PDF files
-     * @param {string} filePath - Path to the file
-     * @returns {Promise<Object>} Extracted content
-     */
-    async extractContent(filePath) {
+  initializeUnitConversions() {
+    return {
+      feetToInches: (feet) => feet * 12,
+      inchesToFeet: (inches) => inches / 12,
+      poundsToTons: (pounds) => pounds / 2000,
+      tonsToKilograms: (tons) => tons * 907.185,
+      feetToMeters: (feet) => feet * 0.3048,
+      squareFeetToSquareMeters: (sqft) => sqft * 0.092903,
+      fractionToDecimal: (fraction) => {
+        const [numerator, denominator] = fraction.split('/').map(Number);
+        return numerator / denominator;
+      }
+    };
+  }
+
+  async extractTextFromPdf(pdfBuffer) {
+    try {
+      console.log('Starting PDF text extraction...');
+      
+      const pdf = await pdfjsLib.getDocument({
+        data: pdfBuffer,
+        useSystemFonts: true,
+        verbosity: 0
+      }).promise;
+
+      let fullText = '';
+      let pageTexts = [];
+      const numPages = pdf.numPages;
+      console.log(`Processing ${numPages} pages...`);
+
+      for (let pageNum = 1; pageNum <= numPages; pageNum++) {
         try {
-            const filename = path.basename(filePath);
-            const fileExt = path.extname(filename).toLowerCase();
+          const page = await pdf.getPage(pageNum);
+          const textContent = await page.getTextContent();
+          
+          // Extract text with positioning information
+          const pageItems = textContent.items.map(item => ({
+            text: item.str,
+            x: Math.round(item.transform[4]),
+            y: Math.round(item.transform[5]),
+            width: Math.round(item.width),
+            height: Math.round(item.height),
+            fontName: item.fontName
+          }));
 
-            if (fileExt === '.pdf') {
-                return await this._extractPdfContent(filePath);
-            } else if (['.dwg', '.dxf'].includes(fileExt)) {
-                return await this._extractCadContent(filePath);
-            } else {
-                throw new Error(`Unsupported file format: ${fileExt}`);
+          // Sort by Y position (top to bottom) then X position (left to right)
+          pageItems.sort((a, b) => {
+            if (Math.abs(a.y - b.y) < 5) { // Same line
+              return a.x - b.x;
             }
-        } catch (error) {
-            console.error(`Content extraction error for ${filePath}: ${error.message}`);
-            throw error;
+            return b.y - a.y; // Top to bottom
+          });
+
+          const pageText = pageItems
+            .map(item => item.text)
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          
+          pageTexts.push({
+            pageNumber: pageNum,
+            text: pageText,
+            items: pageItems
+          });
+          
+          fullText += pageText + '\n';
+          console.log(`✓ Page ${pageNum} processed (${pageText.length} characters)`);
+          
+        } catch (pageError) {
+          console.error(`Error processing page ${pageNum}:`, pageError.message);
+          pageTexts.push({
+            pageNumber: pageNum,
+            text: '',
+            items: [],
+            error: pageError.message
+          });
         }
-    }
+      }
 
-    /**
-     * Extract comprehensive content from PDF using pdfjs-dist
-     * @param {string} filePath - Path to PDF file
-     * @returns {Promise<Object>} Extracted content
-     */
-    async _extractPdfContent(filePath) {
-        try {
-            const dataBuffer = await fs.readFile(filePath);
-            const doc = await pdfjsLib.getDocument(dataBuffer).promise;
-
-            const extractedContent = {
-                filename: path.basename(filePath),
-                text: '',
-                tables: [],
-                images: [],
-                metadata: {},
-                drawingElements: [],
-                pages: []
-            };
-
-            // Extract basic metadata
-            const metadata = await doc.getMetadata();
-            extractedContent.metadata = {
-                pageCount: doc.numPages,
-                title: metadata.info?.Title || '',
-                author: metadata.info?.Author || '',
-                subject: metadata.info?.Subject || '',
-                creator: metadata.info?.Creator || '',
-                producer: metadata.info?.Producer || '',
-                creationDate: metadata.info?.CreationDate || '',
-                modificationDate: metadata.info?.ModDate || ''
-            };
-
-            // Extract text content from all pages
-            let fullText = '';
-            for (let i = 1; i <= doc.numPages; i++) {
-                const page = await doc.getPage(i);
-                const textContent = await page.getTextContent();
-                const pageText = textContent.items.map(item => item.str).join(' ');
-                fullText += pageText + '\n';
-                
-                extractedContent.pages.push({
-                    pageNumber: i,
-                    text: pageText,
-                    dimensions: page.view,
-                    rotation: page.rotate
-                });
-            }
-            extractedContent.text = fullText;
-
-            // Process text for tables and elements
-            const textLines = fullText.split('\n').filter(line => line.trim());
-            
-            // Extract tables from text
-            extractedContent.tables = await this._extractTablesFromText(textLines);
-
-            // Extract images (basic implementation)
-            extractedContent.images = await this._extractImages(filePath);
-
-            // Extract drawing elements from text patterns
-            extractedContent.drawingElements = await this._extractDrawingElements(textLines);
-
-            // Post-process to identify structural elements
-            return await this._postProcessContent(extractedContent);
-
-        } catch (error) {
-            console.error(`PDF extraction error: ${error.message}`);
-            throw error;
+      console.log('✅ PDF text extraction completed');
+      
+      return {
+        text: fullText.trim(),
+        pages: numPages,
+        pageTexts,
+        success: true,
+        metadata: {
+          totalCharacters: fullText.length,
+          extractedAt: new Date().toISOString()
         }
-    }
-
-    /**
-     * Extract tables from text lines
-     * @param {string[]} textLines - Array of text lines
-     * @returns {Promise<Array>} Extracted tables
-     */
-    async _extractTablesFromText(textLines) {
-        const tables = [];
-        let currentTable = [];
-        let tableIndex = 0;
-
-        for (let i = 0; i < textLines.length; i++) {
-            const line = textLines[i];
-
-            if (this._isTableLine(line)) {
-                currentTable.push({
-                    text: line.trim(),
-                    lineNumber: i,
-                    page: Math.floor(i / 50) // Rough page estimation
-                });
-            } else if (currentTable.length > 0) {
-                // End of current table
-                if (currentTable.length > 2) { // Minimum rows for a table
-                    const tableDict = {
-                        tableId: `table_${tableIndex}`,
-                        page: currentTable[0].page,
-                        rows: [],
-                        type: 'extracted',
-                        bbox: null
-                    };
-
-                    // Convert table data to structured format
-                    for (const row of currentTable) {
-                        const columns = this._splitTableRow(row.text);
-                        tableDict.rows.push(columns);
-                    }
-
-                    if (tableDict.rows.length > 0) {
-                        tables.push(tableDict);
-                        tableIndex++;
-                    }
-                }
-                currentTable = [];
-            }
+      };
+      
+    } catch (error) {
+      console.error('❌ PDF processing error:', error);
+      return {
+        text: '',
+        pages: 0,
+        pageTexts: [],
+        success: false,
+        error: error.message,
+        metadata: {
+          extractedAt: new Date().toISOString(),
+          failureReason: error.message
         }
-
-        // Add final table if exists
-        if (currentTable.length > 2) {
-            const tableDict = {
-                tableId: `table_${tableIndex}`,
-                page: currentTable[0].page,
-                rows: [],
-                type: 'extracted',
-                bbox: null
-            };
-
-            for (const row of currentTable) {
-                const columns = this._splitTableRow(row.text);
-                tableDict.rows.push(columns);
-            }
-
-            if (tableDict.rows.length > 0) {
-                tables.push(tableDict);
-            }
-        }
-
-        return tables;
+      };
     }
+  }
 
-    /**
-     * Check if a line of text appears to be part of a table
-     * @param {string} text - Text line to check
-     * @returns {boolean} True if appears to be table content
-     */
-    _isTableLine(text) {
-        const indicators = [
-            /\s+\d+\s+/.test(text), // Numbers with spaces
-            /\|\s*\w+\s*\|/.test(text), // Pipe-separated
-            /\t/.test(text), // Tab-separated
-            this.tableKeywords.some(keyword => text.toLowerCase().includes(keyword)),
-            /^\s*\w+\s+\d+/.test(text), // Text followed by numbers
-            /^\s*[A-Z]\d+/.test(text), // Reference codes like N12, M16
-        ];
+  extractSteelInformation(text) {
+    console.log('🔍 Extracting steel information...');
+    
+    const steelData = {
+      structuralMembers: [],
+      plates: [],
+      connections: [],
+      reinforcement: [],
+      quantities: [],
+      dimensions: [],
+      materials: [],
+      summary: {
+        totalMembers: 0,
+        totalWeight: 0,
+        categories: {}
+      }
+    };
 
-        return indicators.some(indicator => indicator);
-    }
-
-    /**
-     * Split table row into columns
-     * @param {string} text - Table row text
-     * @returns {string[]} Array of column values
-     */
-    _splitTableRow(text) {
-        // Try different splitting methods
-        if (text.includes('|')) {
-            return text.split('|').map(col => col.trim());
-        } else if (text.includes('\t')) {
-            return text.split('\t').map(col => col.trim());
-        } else if (/\s{3,}/.test(text)) { // Multiple spaces
-            return text.split(/\s{3,}/).map(col => col.trim());
-        } else {
-            // Try to split on spaces while preserving meaningful groups
-            const parts = text.split(/\s+/);
-            return parts.length > 1 ? parts : [text.trim()];
-        }
-    }
-
-    /**
-     * Extract images from PDF (basic implementation)
-     * @param {string} filePath - Path to PDF file
-     * @returns {Promise<Array>} Array of image information
-     */
-    async _extractImages(filePath) {
-        const images = [];
+    try {
+      // Extract structural members
+      Object.entries(this.steelPatterns).forEach(([key, config]) => {
+        if (key === 'quantities' || key === 'dimensions' || key === 'connections') return;
         
-        try {
-            const options = {
-                density: 100,
-                saveFilename: "page",
-                savePath: "./temp/",
-                format: "png",
-                width: 600,
-                height: 600
-            };
-            const convert = fromPath(filePath, options);
+        const matches = [...text.matchAll(config.pattern)];
+        
+        matches.forEach(match => {
+          const member = {
+            type: config.type,
+            category: config.category,
+            designation: match[0],
+            rawMatch: match,
+            context: this.getContextAroundMatch(text, match.index, 100)
+          };
 
-            // Note: This would convert PDF pages to images
-            // For actual image extraction from PDF, you'd need a different approach
-            
-            images.push({
-                imageId: 'pdf_conversion',
-                page: 1,
-                size: 0,
-                width: 600,
-                height: 600,
-                colorspace: 'RGB',
-                hasAlpha: false,
-                data: null // Would contain actual image data
-            });
+          // Parse specific member details
+          switch (config.category) {
+            case 'structural_beam':
+            case 'structural_channel':
+              member.depth = parseInt(match[1]);
+              member.weight = parseFloat(match[2]);
+              break;
+            case 'structural_angle':
+              member.leg1 = parseInt(match[1]);
+              member.leg2 = parseInt(match[2]);
+              member.thickness = this.parseFractionOrDecimal(match[3]);
+              break;
+            case 'hollow_structural':
+              member.dimension1 = parseInt(match[1]);
+              member.dimension2 = match[2] ? parseFloat(match[2]) : null;
+              break;
+            case 'plate':
+              member.thickness = this.parseFractionOrDecimal(match[1]);
+              member.width = match[2] ? parseFloat(match[2]) : null;
+              member.length = match[3] ? parseFloat(match[3]) : null;
+              break;
+          }
 
-        } catch (error) {
-            console.error(`Image extraction error: ${error.message}`);
-        }
-
-        return images;
-    }
-
-    /**
-     * Extract drawing elements from text lines
-     * @param {string[]} textLines - Array of text lines
-     * @returns {Promise<Array>} Array of drawing elements
-     */
-    async _extractDrawingElements(textLines) {
-        const elements = [];
-
-        try {
-            textLines.forEach((line, index) => {
-                if (line.trim()) {
-                    const element = {
-                        page: Math.floor(index / 50), // Rough page estimation
-                        type: 'text',
-                        text: line.trim(),
-                        lineNumber: index,
-                        fontInfo: {} // Would need more advanced parsing
-                    };
-                    elements.push(element);
-                }
-            });
-
-        } catch (error) {
-            console.error(`Drawing elements extraction error: ${error.message}`);
-        }
-
-        return elements;
-    }
-
-    /**
-     * Post-process extracted content to identify structural elements
-     * @param {Object} content - Extracted content object
-     * @returns {Promise<Object>} Post-processed content
-     */
-    async _postProcessContent(content) {
-        try {
-            // Identify steel schedules
-            content.steelSchedule = this._identifySteelSchedule(content.text);
-
-            // Identify concrete specifications
-            content.concreteSpecifications = this._identifyConcreteSpecs(content.text);
-
-            // Identify dimensions and quantities
-            content.dimensions = this._extractDimensions(content.text);
-
-            // Identify drawing numbers and revisions
-            content.drawingInfo = this._extractDrawingInfo(content.text);
-
-            // Clean and structure tables
-            content.structuredTables = this._structureTables(content.tables);
-
-            return content;
-
-        } catch (error) {
-            console.error(`Post-processing error: ${error.message}`);
-            return content;
-        }
-    }
-
-    /**
-     * Identify steel member schedules in text
-     * @param {string} text - Text to analyze
-     * @returns {Array} Array of steel elements found
-     */
-    _identifySteelSchedule(text) {
-        const steelElements = [];
-        const patterns = [
-            /UB\s*\d+\s*x?\s*\d+\.?\d*/gi,  // Universal beams
-            /UC\s*\d+\s*x?\s*\d+\.?\d*/gi,  // Universal columns
-            /PFC\s*\d+/gi,  // Parallel flange channels
-            /SHS\s*\d+\s*x?\s*\d+\s*x?\s*\d+\.?\d*/gi,  // Square hollow sections
-            /RHS\s*\d+\s*x?\s*\d+\s*x?\s*\d+\.?\d*/gi,  // Rectangular hollow sections
-            /CEE?\s*\d+/gi,  // C sections
-        ];
-
-        patterns.forEach(pattern => {
-            let match;
-            while ((match = pattern.exec(text)) !== null) {
-                steelElements.push({
-                    section: match[0],
-                    position: [match.index, match.index + match[0].length],
-                    context: text.substring(Math.max(0, match.index - 50), match.index + match[0].length + 50)
-                });
-            }
+          steelData.structuralMembers.push(member);
         });
-        return steelElements;
-    }
+      });
 
-    /**
-     * Identify concrete specifications
-     * @param {string} text - Text to analyze
-     * @returns {Array} Array of concrete specifications found
-     */
-    _identifyConcreteSpecs(text) {
-        const concreteSpecs = [];
-        const gradePatterns = [ /N\d{2,3}/gi, /\d{2,3}\s*MPa/gi ];
-
-        gradePatterns.forEach(pattern => {
-            let match;
-            while ((match = pattern.exec(text)) !== null) {
-                concreteSpecs.push({
-                    grade: match[0],
-                    position: [match.index, match.index + match[0].length],
-                    context: text.substring(Math.max(0, match.index - 30), match.index + match[0].length + 30)
-                });
-            }
+      // Extract quantities
+      Object.entries(this.steelPatterns.quantities).forEach(([unit, pattern]) => {
+        const matches = [...text.matchAll(pattern)];
+        matches.forEach(match => {
+          steelData.quantities.push({
+            value: parseFloat(match[1]),
+            unit: unit,
+            rawText: match[0],
+            context: this.getContextAroundMatch(text, match.index, 50)
+          });
         });
-        return concreteSpecs;
-    }
+      });
 
-    /**
-     * Extract dimensions from text
-     * @param {string} text - Text to analyze
-     * @returns {Array} Array of dimensions found
-     */
-    _extractDimensions(text) {
-        const dimensions = [];
-        const patterns = [
-            /\d+\s*x\s*\d+\s*x\s*\d+/g,
-            /\d+\s*mm\s*x\s*\d+\s*mm/g,
-            /\d+\.\d+\s*m\s*x\s*\d+\.\d+\s*m/g,
-            /Ø\s*\d+/g,
-        ];
+      // Extract dimensions
+      Object.entries(this.steelPatterns.dimensions).forEach(([type, pattern]) => {
+        const matches = [...text.matchAll(pattern)];
+        matches.forEach(match => {
+          let dimension = {
+            type: type,
+            rawText: match[0],
+            context: this.getContextAroundMatch(text, match.index, 50)
+          };
 
-        patterns.forEach(pattern => {
-            let match;
-            while ((match = pattern.exec(text)) !== null) {
-                dimensions.push({
-                    dimension: match[0],
-                    position: [match.index, match.index + match[0].length],
-                    context: text.substring(Math.max(0, match.index - 20), match.index + match[0].length + 20)
-                });
-            }
+          switch (type) {
+            case 'feetInches':
+              dimension.feet = parseInt(match[1]);
+              dimension.inches = parseInt(match[2]);
+              dimension.totalInches = dimension.feet * 12 + dimension.inches;
+              break;
+            case 'feetOnly':
+              dimension.feet = parseInt(match[1]);
+              dimension.totalInches = dimension.feet * 12;
+              break;
+            case 'decimal':
+              dimension.feet = parseFloat(match[1]);
+              dimension.totalInches = dimension.feet * 12;
+              break;
+            case 'metric':
+              dimension.value = parseFloat(match[1]);
+              dimension.unit = match[2];
+              break;
+          }
+
+          steelData.dimensions.push(dimension);
         });
-        return dimensions;
-    }
+      });
 
-    /**
-     * Extract drawing numbers, revisions, dates
-     * @param {string} text - Text to analyze
-     * @returns {Object} Drawing information
-     */
-    _extractDrawingInfo(text) {
-        const info = {};
-        const dwgPatterns = [ /DRG\s*No\.?\s*:?\s*([A-Z]?\d+\.?\d*)/i, /Drawing\s*No\.?\s*:?\s*([A-Z]?\d+\.?\d*)/i, /(\d+-\d+)/g ];
-        for (const pattern of dwgPatterns) {
-            const match = text.match(pattern);
-            if (match) { info.drawingNumber = match[1]; break; }
+      // Extract connection details
+      Object.entries(this.steelPatterns.connections).forEach(([type, pattern]) => {
+        const matches = [...text.matchAll(pattern)];
+        matches.forEach(match => {
+          steelData.connections.push({
+            type: type,
+            size: this.parseFractionOrDecimal(match[1]),
+            rawText: match[0],
+            context: this.getContextAroundMatch(text, match.index, 50)
+          });
+        });
+      });
+
+      // Generate summary
+      steelData.summary.totalMembers = steelData.structuralMembers.length;
+      
+      // Group by category
+      steelData.structuralMembers.forEach(member => {
+        if (!steelData.summary.categories[member.category]) {
+          steelData.summary.categories[member.category] = {
+            count: 0,
+            members: []
+          };
         }
+        steelData.summary.categories[member.category].count++;
+        steelData.summary.categories[member.category].members.push(member.designation);
+      });
 
-        const revPatterns = [ /REV\.?\s*:?\s*([A-Z0-9]+)/i, /Revision\s*:?\s*([A-Z0-9]+)/i ];
-        for (const pattern of revPatterns) {
-            const match = text.match(pattern);
-            if (match) { info.revision = match[1]; break; }
+      // Estimate total weight (basic estimation)
+      steelData.summary.estimatedWeight = this.estimateTotalWeight(steelData);
+
+      console.log(`✅ Extracted ${steelData.structuralMembers.length} structural members`);
+      console.log(`📊 Categories: ${Object.keys(steelData.summary.categories).join(', ')}`);
+      
+      return steelData;
+      
+    } catch (error) {
+      console.error('❌ Error extracting steel information:', error);
+      return steelData;
+    }
+  }
+
+  getContextAroundMatch(text, index, contextLength = 100) {
+    const start = Math.max(0, index - contextLength);
+    const end = Math.min(text.length, index + contextLength);
+    return text.substring(start, end).trim();
+  }
+
+  parseFractionOrDecimal(value) {
+    if (typeof value !== 'string') return parseFloat(value) || 0;
+    
+    if (value.includes('/')) {
+      return this.unitConversions.fractionToDecimal(value);
+    }
+    return parseFloat(value) || 0;
+  }
+
+  estimateTotalWeight(steelData) {
+    // Basic weight estimation based on typical steel densities
+    let totalWeight = 0;
+    
+    steelData.structuralMembers.forEach(member => {
+      switch (member.category) {
+        case 'structural_beam':
+        case 'structural_channel':
+          totalWeight += member.weight || 0; // Weight per foot
+          break;
+        case 'plate':
+          if (member.thickness && member.width && member.length) {
+            // Steel density: ~490 lbs/ft³
+            const volume = member.thickness * member.width * member.length / 1728; // cubic feet
+            totalWeight += volume * 490;
+          }
+          break;
+        // Add more categories as needed
+      }
+    });
+    
+    return Math.round(totalWeight * 100) / 100; // Round to 2 decimal places
+  }
+
+  async processForEstimation(pdfBuffer, options = {}) {
+    console.log('🚀 Starting PDF processing for estimation...');
+    
+    try {
+      // Extract text from PDF
+      const extractedData = await this.extractTextFromPdf(pdfBuffer);
+      
+      if (!extractedData.success) {
+        throw new Error(`PDF text extraction failed: ${extractedData.error}`);
+      }
+
+      console.log(`📄 Extracted ${extractedData.text.length} characters from ${extractedData.pages} pages`);
+
+      // Extract structural steel information
+      const steelData = this.extractSteelInformation(extractedData.text);
+      
+      // Advanced analysis
+      const analysis = await this.performAdvancedAnalysis(extractedData.text, steelData, options);
+      
+      // Generate estimation data
+      const estimation = this.generateEstimation(steelData, analysis, options);
+      
+      const result = {
+        ...extractedData,
+        steelData,
+        analysis,
+        estimation,
+        processedAt: new Date().toISOString(),
+        processingOptions: options
+      };
+
+      console.log('✅ PDF processing completed successfully');
+      
+      return result;
+      
+    } catch (error) {
+      console.error('❌ PDF processing failed:', error);
+      throw new Error(`PDF processing failed: ${error.message}`);
+    }
+  }
+
+  async performAdvancedAnalysis(text, steelData, options) {
+    console.log('🔬 Performing advanced analysis...');
+    
+    const analysis = {
+      projectInfo: this.extractProjectInfo(text),
+      structuralSystem: this.analyzeStructuralSystem(steelData),
+      complexity: this.assessComplexity(steelData),
+      recommendations: [],
+      warnings: [],
+      confidence: 0
+    };
+
+    // Assess confidence level
+    analysis.confidence = this.calculateConfidence(steelData, text);
+    
+    // Generate recommendations
+    analysis.recommendations = this.generateRecommendations(steelData, analysis);
+    
+    // Check for potential issues
+    analysis.warnings = this.identifyWarnings(steelData, text);
+    
+    return analysis;
+  }
+
+  extractProjectInfo(text) {
+    const info = {
+      projectName: null,
+      drawing: null,
+      date: null,
+      scale: null,
+      architect: null,
+      engineer: null
+    };
+
+    // Common patterns for project information
+    const patterns = {
+      projectName: /PROJECT\s*:?\s*([^\n\r]{1,100})/i,
+      drawing: /DRAWING\s*(?:NO\.?)?\s*:?\s*([A-Z0-9\-\.]{1,20})/i,
+      date: /DATE\s*:?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
+      scale: /SCALE\s*:?\s*([\d\/\\"=\s]{1,20})/i
+    };
+
+    Object.entries(patterns).forEach(([key, pattern]) => {
+      const match = text.match(pattern);
+      if (match) {
+        info[key] = match[1].trim();
+      }
+    });
+
+    return info;
+  }
+
+  analyzeStructuralSystem(steelData) {
+    const system = {
+      type: 'unknown',
+      primaryMembers: [],
+      secondaryMembers: [],
+      connections: [],
+      foundation: []
+    };
+
+    // Categorize members by structural function
+    steelData.structuralMembers.forEach(member => {
+      if (member.category === 'structural_beam') {
+        if (member.depth >= 12) {
+          system.primaryMembers.push(member);
+        } else {
+          system.secondaryMembers.push(member);
         }
+      } else if (member.category === 'pile_foundation') {
+        system.foundation.push(member);
+      }
+    });
 
-        const datePatterns = [ /\d{1,2}[/-]\d{1,2}[/-]\d{2,4}/g, /\d{1,2}\s+\w{3,9}\s+\d{2,4}/g ];
-        for (const pattern of datePatterns) {
-            const matches = text.match(pattern);
-            if (matches) { info.dates = matches; break; }
-        }
-        return info;
+    // Determine structural system type
+    if (system.primaryMembers.length > 0) {
+      system.type = 'steel_frame';
     }
 
-    /**
-     * Structure and clean up extracted tables
-     * @param {Array} tables - Array of extracted tables
-     * @returns {Array} Array of structured tables
-     */
-    _structureTables(tables) {
-        const structured = [];
-        for (const table of tables) {
-            if (!table.rows || table.rows.length === 0) continue;
-            const structuredTable = {
-                tableId: table.tableId || '',
-                page: table.page || 0,
-                type: this._classifyTable(table.rows),
-                headers: [],
-                data: [],
-                summary: {}
-            };
-            if (table.rows.length > 0) {
-                structuredTable.headers = table.rows[0];
-                structuredTable.data = table.rows.slice(1);
-            }
-            structuredTable.summary = {
-                rowCount: structuredTable.data.length,
-                columnCount: structuredTable.headers.length,
-                hasNumbers: structuredTable.data.some(row => row.some(cell => /\d/.test(String(cell))))
-            };
-            structured.push(structuredTable);
-        }
-        return structured;
+    return system;
+  }
+
+  assessComplexity(steelData) {
+    let complexity = 'simple';
+    let score = 0;
+
+    // Factors that increase complexity
+    const uniqueMembers = new Set(steelData.structuralMembers.map(m => m.designation)).size;
+    const totalMembers = steelData.structuralMembers.length;
+    const categories = Object.keys(steelData.summary.categories).length;
+
+    score += uniqueMembers * 2;
+    score += totalMembers;
+    score += categories * 5;
+    score += steelData.connections.length;
+
+    if (score < 20) complexity = 'simple';
+    else if (score < 50) complexity = 'moderate';
+    else if (score < 100) complexity = 'complex';
+    else complexity = 'very_complex';
+
+    return {
+      level: complexity,
+      score,
+      factors: {
+        uniqueMembers,
+        totalMembers,
+        categories,
+        connections: steelData.connections.length
+      }
+    };
+  }
+
+  calculateConfidence(steelData, text) {
+    let confidence = 0;
+    
+    // Base confidence from extracted data
+    if (steelData.structuralMembers.length > 0) confidence += 30;
+    if (steelData.quantities.length > 0) confidence += 20;
+    if (steelData.dimensions.length > 0) confidence += 15;
+    if (steelData.connections.length > 0) confidence += 15;
+    
+    // Bonus for clear patterns
+    const clearPatterns = text.match(/W\d+X\d+|PL\s*\d+|#\d+/g) || [];
+    confidence += Math.min(clearPatterns.length * 2, 20);
+    
+    return Math.min(confidence, 100);
+  }
+
+  generateRecommendations(steelData, analysis) {
+    const recommendations = [];
+
+    if (analysis.complexity.level === 'simple') {
+      recommendations.push('Consider standard connection details for cost efficiency');
     }
 
-    /**
-     * Classify table type based on content
-     * @param {Array} rows - Table rows
-     * @returns {string} Table type classification
-     */
-    _classifyTable(rows) {
-        if (!rows || rows.length === 0) return 'unknown';
-        const allText = rows.flat().join(' ').toLowerCase();
-
-        if (['steel', 'beam', 'ub', 'pfc', 'shs'].some(keyword => allText.includes(keyword))) return 'steel_schedule';
-        if (['concrete', 'n20', 'n32', 'n40', 'mpa'].some(keyword => allText.includes(keyword))) return 'concrete_schedule';
-        if (['footing', 'pf', 'pad'].some(keyword => allText.includes(keyword))) return 'footing_schedule';
-        if (['anchor', 'm12', 'm16', 'hilti'].some(keyword => allText.includes(keyword))) return 'anchor_schedule';
-        if (allText.includes('schedule')) return 'general_schedule';
-        if (['note', 'specification', 'requirement'].some(keyword => allText.includes(keyword))) return 'notes';
-        return 'data_table';
+    if (steelData.structuralMembers.length > 20) {
+      recommendations.push('Large project - consider modular fabrication approach');
     }
 
-    /**
-     * Extract content from CAD files (placeholder)
-     * @param {string} filePath - Path to CAD file
-     * @returns {Promise<Object>} CAD content (placeholder)
-     */
-    async _extractCadContent(filePath) {
-        return {
-            filename: path.basename(filePath),
-            text: `CAD file: ${path.basename(filePath)} (processing not yet implemented)`,
-            tables: [],
-            images: [],
-            metadata: { fileType: 'CAD', status: 'not_processed' },
-            drawingElements: []
-        };
+    if (analysis.confidence < 70) {
+      recommendations.push('Low confidence - manual review recommended');
     }
 
-    /**
-     * Generate summary of extracted content
-     * @param {Object} content - Extracted content object
-     * @returns {Object} Content summary
-     */
-    getContentSummary(content) {
-        return {
-            filename: content.filename || '',
-            pages: content.pages ? content.pages.length : 0,
-            textLength: content.text ? content.text.length : 0,
-            tableCount: content.tables ? content.tables.length : 0,
-            imageCount: content.images ? content.images.length : 0,
-            steelElementsFound: content.steelSchedule ? content.steelSchedule.length : 0,
-            concreteSpecsFound: content.concreteSpecifications ? content.concreteSpecifications.length : 0,
-            dimensionsFound: content.dimensions ? content.dimensions.length : 0,
-            drawingInfo: content.drawingInfo || {},
-        };
+    return recommendations;
+  }
+
+  identifyWarnings(steelData, text) {
+    const warnings = [];
+
+    if (steelData.structuralMembers.length === 0) {
+      warnings.push('No structural members detected - check PDF quality');
     }
+
+    if (steelData.quantities.length === 0) {
+      warnings.push('No quantities found - estimation may be incomplete');
+    }
+
+    return warnings;
+  }
+
+  generateEstimation(steelData, analysis, options = {}) {
+    console.log('💰 Generating cost estimation...');
+    
+    const estimation = {
+      materials: [],
+      labor: [],
+      equipment: [],
+      totals: {
+        materials: 0,
+        labor: 0,
+        equipment: 0,
+        total: 0
+      },
+      breakdown: {},
+      assumptions: [],
+      methodology: 'basic_estimation'
+    };
+
+    // Basic material cost estimation
+    steelData.structuralMembers.forEach(member => {
+      const materialCost = this.estimateMaterialCost(member, options);
+      if (materialCost > 0) {
+        estimation.materials.push({
+          description: member.designation,
+          category: member.category,
+          quantity: 1, // Default quantity
+          unitCost: materialCost,
+          totalCost: materialCost
+        });
+        estimation.totals.materials += materialCost;
+      }
+    });
+
+    // Basic labor estimation (typically 40-60% of material cost)
+    estimation.totals.labor = estimation.totals.materials * 0.5;
+
+    // Basic equipment estimation (typically 10-15% of material cost)
+    estimation.totals.equipment = estimation.totals.materials * 0.125;
+
+    // Calculate total
+    estimation.totals.total = estimation.totals.materials + estimation.totals.labor + estimation.totals.equipment;
+
+    // Add assumptions
+    estimation.assumptions = [
+      'Material costs based on current market averages',
+      'Labor costs estimated at 50% of material costs',
+      'Equipment costs estimated at 12.5% of material costs',
+      'Does not include overhead, profit, or contingency',
+      'Quantities assumed as 1 unit where not specified'
+    ];
+
+    console.log(`💲 Total estimated cost: $${estimation.totals.total.toFixed(2)}`);
+
+    return estimation;
+  }
+
+  estimateMaterialCost(member, options = {}) {
+    // Basic cost per unit for different steel types (in USD)
+    const baseCosts = {
+      'Wide Flange Beam': 2.5,    // per lb
+      'Standard Beam': 2.3,      // per lb
+      'HP Section': 2.8,         // per lb
+      'Channel': 2.4,            // per lb
+      'Angle': 2.6,              // per lb
+      'HSS Rectangular': 3.0,    // per lb
+      'HSS Round': 3.2,          // per lb
+      'Steel Plate': 2.2         // per lb
+    };
+
+    const baseCost = baseCosts[member.type] || 2.5;
+    
+    // Estimate weight based on member type
+    let estimatedWeight = 10; // Default weight in lbs
+    
+    if (member.weight) {
+      estimatedWeight = member.weight;
+    } else if (member.category === 'plate' && member.thickness && member.width && member.length) {
+      const volume = member.thickness * member.width * member.length / 1728; // cubic feet
+      estimatedWeight = volume * 490; // steel density ~490 lbs/ft³
+    }
+
+    return baseCost * estimatedWeight;
+  }
+
+  // Utility method for saving processed results
+  async saveProcessedResults(results, outputPath) {
+    try {
+      const data = JSON.stringify(results, null, 2);
+      await fs.writeFile(outputPath, data);
+      console.log(`✅ Results saved to ${outputPath}`);
+      return true;
+    } catch (error) {
+      console.error('❌ Failed to save results:', error);
+      return false;
+    }
+  }
 }
+
+export default PdfProcessor;

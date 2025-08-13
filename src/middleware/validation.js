@@ -109,7 +109,7 @@ export const validateEstimationInput = [
     body('details')
         .trim()
         .isLength({ min: 10 })
-        .withMessage('Estimation details must be at least 10 characters')
+        .withMessage('Estimation details must be at least 10 characters
 ];
 
 <<<<<<< HEAD

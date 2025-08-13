@@ -1,31 +1,34 @@
 // src/services/pdfprocessor.js
-// --- FIX: Use the 'legacy' build of pdfjs-dist for Node.js environments ---
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import fs from 'fs/promises';
 import sharp from 'sharp';
 
 export class PdfProcessor {
   constructor() {
-    // --- FIX: The setupPdfJs() call is no longer needed and has been removed ---
     this.steelPatterns = this.initializeSteelPatterns();
     this.unitConversions = this.initializeUnitConversions();
   }
 
-  // --- FIX: This entire function is removed as it's the source of the error ---
-  /*
-  setupPdfJs() {
-    // Configure PDF.js for Node.js environment
-    if (typeof globalThis === 'undefined') {
-      global.globalThis = global;
-    }
-    
-    // Set worker path for PDF.js - THIS IS THE PROBLEMATIC LINE
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdfjs-dist/build/pdf.worker.js';
-  }
-  */
-
   initializeSteelPatterns() {
     return {
+      // --- NEW: Added pattern for SHS (Square Hollow Section) ---
+      shs: {
+        pattern: /(\d{2,3})x(\d{2,3})x(\d{1,2}(?:\.\d+)?)\s*SHS/gi,
+        type: 'Square Hollow Section',
+        category: 'hollow_structural'
+      },
+      // --- NEW: Added pattern for Z-Purlins/Z-Sections ---
+      zPurlin: {
+        pattern: /Z(\d{3})-?(\d{2}(?:\.\d+)?)/gi,
+        type: 'Z-Purlin',
+        category: 'purlin'
+      },
+      // --- NEW: Added pattern for C-Purlins/C-Sections ---
+      cPurlin: {
+        pattern: /C(\d{3})-?(\d{2}(?:\.\d+)?)/gi,
+        type: 'C-Purlin',
+        category: 'purlin'
+      },
       // Wide Flange Beams
       wideFlange: {
         pattern: /W(\d{1,2})X(\d{1,3}(?:\.\d+)?)/gi,
@@ -143,12 +146,12 @@ export class PdfProcessor {
     };
   }
 
-  async extractTextFromPdf(pdfBuffer) {
+  async extractTextFromPdf(pdfData) {
     try {
       console.log('Starting PDF text extraction...');
       
       const pdf = await pdfjsLib.getDocument({
-        data: pdfBuffer,
+        data: pdfData,
         useSystemFonts: true,
         verbosity: 0
       }).promise;
@@ -277,14 +280,24 @@ export class PdfProcessor {
               member.depth = parseInt(match[1]);
               member.weight = parseFloat(match[2]);
               break;
+            case 'purlin':
+              member.depth = parseInt(match[1]);
+              member.gauge = parseFloat(match[2]);
+              break;
+            case 'hollow_structural':
+               if (config.type === 'Square Hollow Section') {
+                    member.dimension1 = parseInt(match[1]);
+                    member.dimension2 = parseInt(match[2]);
+                    member.thickness = parseFloat(match[3]);
+                } else {
+                    member.dimension1 = parseInt(match[1]);
+                    member.dimension2 = match[2] ? parseFloat(match[2]) : null;
+                }
+              break;
             case 'structural_angle':
               member.leg1 = parseInt(match[1]);
               member.leg2 = parseInt(match[2]);
               member.thickness = this.parseFractionOrDecimal(match[3]);
-              break;
-            case 'hollow_structural':
-              member.dimension1 = parseInt(match[1]);
-              member.dimension2 = match[2] ? parseFloat(match[2]) : null;
               break;
             case 'plate':
               member.thickness = this.parseFractionOrDecimal(match[1]);

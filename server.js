@@ -7,6 +7,7 @@ import { upload } from '../../server.js';
 
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 // --- FIX: Corrected all import paths to go up one directory ---
 import Estimation from '../models/Estimation.js';
 import { PDFProcessor } from '../services/pdfprocessor.js';
@@ -29,6 +30,14 @@ import cors from 'cors';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+=======
+// --- FIX: All import paths must start with './src/' ---
+import auth from './src/routes/auth.js';
+import jobs from './src/routes/jobs.js';
+import quotes from './src/routes/quotes.js';
+import messages from './src/routes/messages.js';
+import estimation from './src/routes/estimation.js';
+>>>>>>> 3f6750a (feat: Update server.js)
 
 // --- Route Imports ---
 // Assumes server.js is in the project's root directory
@@ -63,6 +72,7 @@ const allowedOrigins = [
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+<<<<<<< HEAD
 // --- CORS Configuration ---
 const allowedOrigins = [
   process.env.FRONTEND_URL,
@@ -78,6 +88,10 @@ const allowedOrigins = [ process.env.FRONTEND_URL, 'http://localhost:3000', 'htt
 >>>>>>> faf2f2fb81c0217be00755bf017289225e6c1374
 =======
 >>>>>>> baa85132158071c2ea5271e3639b88be69bd07de
+=======
+// CORS, Express middleware, etc. remains the same...
+const allowedOrigins = [ process.env.FRONTEND_URL, 'http://localhost:3000', 'http://localhost:5173' ];
+>>>>>>> 3f6750a (feat: Update server.js)
 const corsOptions = {
   origin: function (origin, callback) {
     const vercelPreviewRegex = /^https:\/\/steelconnect-frontend-.*-sabins-projects-02d8db3a\.vercel\.app$/;
@@ -172,24 +186,19 @@ export default router;
   },
   optionsSuccessStatus: 200
 };
-
 app.use(cors(corsOptions));
 app.use(express.json()); // Middleware to parse JSON request bodies
 
-// --- File Upload & Static Serving Configuration ---
-const uploadsDir = 'uploads';
+// File Upload Configuration remains the same...
+const uploadsDir = 'uploads'; 
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
 }
-
 const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadsDir + '/');
-  },
-  filename: function (req, file, cb) {
-    cb(null, Date.now() + path.extname(file.originalname));
-  }
+  destination: function (req, file, cb) { cb(null, uploadsDir + '/'); },
+  filename: function (req, file, cb) { cb(null, Date.now() + path.extname(file.originalname)); }
 });
+<<<<<<< HEAD
 
 // The 'upload' constant is exported so it can be used in your route files
 export const upload = multer({ storage: storage });
@@ -202,6 +211,12 @@ export const upload = multer({ storage: storage });
 app.use('/uploads', express.static(uploadsDir));
 
 // --- API Routes ---
+=======
+export const upload = multer({ storage: storage });
+app.use('/uploads', express.static(uploadsDir));
+
+// --- Routes ---
+>>>>>>> 3f6750a (feat: Update server.js)
 app.get('/', (req, res) => res.json({ message: 'SteelConnect Backend API is running' }));
 app.use('/api/auth', auth);
 app.use('/api/jobs', jobs);
@@ -209,11 +224,16 @@ app.use('/api/quotes', quotes);
 app.use('/api/messages', messages);
 app.use('/api/estimation', estimation);
 
+<<<<<<< HEAD
 // --- Error Handling Middleware ---
 // Catches requests to routes that don't exist
 app.use('*', (req, res) => res.status(404).json({ error: 'Route not found' }));
 
 // Global error handler to catch all other errors
+=======
+// Error Handling remains the same...
+app.use('*', (req, res) => res.status(404).json({ error: 'Route not found' }));
+>>>>>>> 3f6750a (feat: Update server.js)
 app.use((error, req, res, next) => {
   console.error('Global error handler:', error);
   if (error instanceof multer.MulterError) {
@@ -222,7 +242,11 @@ app.use((error, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
+<<<<<<< HEAD
 // --- Server Start ---
+=======
+// Server Start remains the same...
+>>>>>>> 3f6750a (feat: Update server.js)
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
 
 export default app;

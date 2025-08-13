@@ -3,6 +3,15 @@ import express from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs/promises';
+
+// --- FIX: Add imports for pdfjs-dist and configure the worker ---
+// This explicitly tells the pdf.js library where to find its worker script,
+// which is necessary for it to function correctly in a Node.js server environment like Render.
+import * as pdfjsLib from 'pdfjs-dist/build/pdf.mjs';
+import * as pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs';
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+// --- End of fix ---
+
 import { PdfProcessor } from '../services/pdfprocessor.js';
 import { EnhancedAIAnalyzer } from '../services/aiAnalyzer.js';
 import { EstimationEngine } from '../services/cost-estimation-engine.js';
@@ -49,13 +58,10 @@ const reportGenerator = new ReportGenerator();
  * POST /api/estimation/generate-from-upload
  * Upload PDF and generate cost estimation
  */
-// --- FIX: Changed upload.single('pdf') to upload.any() to accept any file field name ---
 router.post('/generate-from-upload', upload.any(), async (req, res) => {
     try {
         console.log('🚀 Starting estimation process...');
 
-        // --- FIX: Changed req.file to req.files to work with upload.any() ---
-        // Also assigned the first file to a variable for easier access later.
         if (!req.files || req.files.length === 0) {
             return res.status(400).json({
                 success: false,
@@ -621,4 +627,3 @@ router.use((error, req, res, next) => {
 });
 
 export default router;
-

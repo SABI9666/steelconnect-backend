@@ -22,7 +22,6 @@ try {
     if (!admin.apps.length) {
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
-        // --- FIX: Explicitly set the correct bucket name ---
         storageBucket: 'steelconnect-backend-3f684.firebasestorage.app'
       });
     }
@@ -72,33 +71,35 @@ try {
             size: results.length
           };
         },
-        limit: (num) => ({
-          get: async () => {
-            const results = [];
-            let count = 0;
-            for (const [id, doc] of this.data.entries()) {
-              if (count >= num) break;
-              if (operator === '==' && doc[field] === value) {
-                results.push({
-                  id,
-                  data: () => doc,
-                  exists: true,
-                  ref: {
-                    update: async (updateData) => {
-                      this.data.set(id, { ...doc, ...updateData });
+        limit: (num) => {
+          return {
+            get: async () => {
+              const results = [];
+              let count = 0;
+              for (const [id, doc] of this.data.entries()) {
+                if (count >= num) break;
+                if (operator === '==' && doc[field] === value) {
+                  results.push({
+                    id,
+                    data: () => doc,
+                    exists: true,
+                    ref: {
+                      update: async (updateData) => {
+                        this.data.set(id, { ...doc, ...updateData });
+                      }
                     }
-                  }
-                });
-                count++;
+                  });
+                  count++;
+                }
               }
+              return { 
+                empty: results.length === 0,
+                docs: results,
+                size: results.length
+              };
             }
-            return { 
-              empty: results.length === 0,
-              docs: results,
-              size: results.length
-            };
-          })
-        })
+          };
+        }
       };
     }
     

@@ -248,7 +248,7 @@ Return the response in this exact JSON format:
             }
             let jsonString = text.substring(startIndex, endIndex + 1);
 
-            // Clean up potential issues like trailing commas
+            // Clean up potential issues like trailing commas before a closing bracket or brace
             jsonString = jsonString.replace(/,\s*([\]}])/g, '$1');
 
             return JSON.parse(jsonString);

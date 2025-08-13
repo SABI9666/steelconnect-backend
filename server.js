@@ -152,14 +152,24 @@ const startServer = async () => {
 
   // Global Error Handler: This catches errors from any route.
   app.use((error, req, res, next) => {
-    // --- FIX: Removed the specific MulterError check to avoid sending a misleading message. ---
-    // Now, any error (including Multer errors) will be logged to the console and a generic
-    // 500 error will be sent. This makes it easier to debug from the server logs.
+    // --- FIX: Re-introduced a specific handler for MulterErrors to provide a better client response. ---
+    if (error instanceof multer.MulterError) {
+      if (error.code === 'LIMIT_UNEXPECTED_FILE') {
+        // This error means the field name in the form data (e.g., 'drawing') doesn't match what the server expects.
+        return res.status(400).json({
+          success: false,
+          error: 'Unexpected field',
+          message: `The file was sent with an incorrect field name: "${error.field}". Please check your frontend code.`
+        });
+      }
+      // You can add more specific Multer error checks here if needed
+      return res.status(400).json({ success: false, error: 'File Upload Error', message: error.message });
+    }
     
     // Log any other unhandled errors
     console.error('❌ Unhandled Error:', error);
     
-    // Send a generic 500 Internal Server Error response
+    // Send a generic 500 Internal Server Error response for all other errors
     res.status(500).json({ success: false, error: 'Internal Server Error', message: 'An unexpected error occurred on the server.' });
   });
 

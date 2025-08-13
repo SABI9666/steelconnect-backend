@@ -84,9 +84,14 @@ router.post('/generate-from-upload', upload.any(), async (req, res) => {
         const startTime = Date.now();
         const filePath = uploadedFile.path;
 
-        // Step 1: Extract PDF content
+        // --- FIX: Read the file content into a buffer before processing ---
+        // The pdfProcessor expects the raw file data (a buffer), not the path to the file.
+        console.log(`📄 Reading file from path: ${filePath}`);
+        const fileBuffer = await fs.readFile(filePath);
+
+        // Step 1: Extract PDF content from the buffer
         console.log('📄 Extracting PDF content...');
-        const extractedContent = await pdfProcessor.extractTextFromPdf(filePath);
+        const extractedContent = await pdfProcessor.extractTextFromPdf(fileBuffer);
         const structuredData = pdfProcessor.extractSteelInformation(extractedContent.text);
 
 
@@ -577,7 +582,7 @@ router.get('/stats/summary', async (req, res) => {
                     .select('projectName status updatedAt')
             };
         } catch (dbError) {
-            console.warn('Database stats query failed:', dbError.message);
+            console.warn('Database query failed:', dbError.message);
             stats = {
                 totalEstimations: 0,
                 draftEstimations: 0,

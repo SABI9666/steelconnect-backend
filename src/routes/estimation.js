@@ -84,14 +84,17 @@ router.post('/generate-from-upload', upload.any(), async (req, res) => {
         const startTime = Date.now();
         const filePath = uploadedFile.path;
 
-        // --- FIX: Read the file content into a buffer before processing ---
-        // The pdfProcessor expects the raw file data (a buffer), not the path to the file.
+        // The pdfProcessor expects the raw file data, not the path to the file.
         console.log(`📄 Reading file from path: ${filePath}`);
         const fileBuffer = await fs.readFile(filePath);
 
-        // Step 1: Extract PDF content from the buffer
+        // --- FIX: Convert the Node.js Buffer to a Uint8Array for pdf.js ---
+        // The pdf.js library expects this specific format for binary data.
+        const uint8Array = new Uint8Array(fileBuffer);
+
+        // Step 1: Extract PDF content from the Uint8Array
         console.log('📄 Extracting PDF content...');
-        const extractedContent = await pdfProcessor.extractTextFromPdf(fileBuffer);
+        const extractedContent = await pdfProcessor.extractTextFromPdf(uint8Array);
         const structuredData = pdfProcessor.extractSteelInformation(extractedContent.text);
 
 

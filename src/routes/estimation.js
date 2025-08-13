@@ -3,8 +3,7 @@ import express from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs/promises';
-// --- CORRECTED IMPORT ---
-import { PdfProcessor } from '../services/pdfprocessor.js'; // Corrected filename and class name
+import { PdfProcessor } from '../services/pdfprocessor.js';
 import { EnhancedAIAnalyzer } from '../services/aiAnalyzer.js';
 import { EstimationEngine } from '../services/cost-estimation-engine.js';
 import ReportGenerator from '../services/reportGenerator.js';
@@ -43,25 +42,28 @@ const upload = multer({
 });
 
 // Initialize services
-const pdfProcessor = new PdfProcessor(); // Corrected class name
+const pdfProcessor = new PdfProcessor();
 const reportGenerator = new ReportGenerator();
 
 /**
  * POST /api/estimation/generate-from-upload
  * Upload PDF and generate cost estimation
  */
-// --- ROUTE PATH CORRECTED HERE ---
-router.post('/generate-from-upload', upload.single('pdf'), async (req, res) => {
+// --- FIX: Changed upload.single('pdf') to upload.any() to accept any file field name ---
+router.post('/generate-from-upload', upload.any(), async (req, res) => {
     try {
         console.log('🚀 Starting estimation process...');
 
-        // Validate request
-        if (!req.file) {
+        // --- FIX: Changed req.file to req.files to work with upload.any() ---
+        // Also assigned the first file to a variable for easier access later.
+        if (!req.files || req.files.length === 0) {
             return res.status(400).json({
                 success: false,
                 error: 'No PDF file uploaded'
             });
         }
+        const uploadedFile = req.files[0];
+
 
         const {
             projectName = 'Unnamed Project',
@@ -78,10 +80,8 @@ router.post('/generate-from-upload', upload.single('pdf'), async (req, res) => {
         }
 
         const startTime = Date.now();
-        const filePath = req.file.path;
+        const filePath = uploadedFile.path;
 
-        // This section uses your original logic which called methods not present in your PdfProcessor.
-        // It's preserved as requested but may cause future errors.
         // Step 1: Extract PDF content
         console.log('📄 Extracting PDF content...');
         const extractedContent = await pdfProcessor.extractTextFromPdf(filePath);
@@ -131,8 +131,8 @@ router.post('/generate-from-upload', upload.single('pdf'), async (req, res) => {
                 projectName,
                 projectLocation: location,
                 clientName,
-                originalFilename: req.file.originalname,
-                fileSize: req.file.size,
+                originalFilename: uploadedFile.originalname,
+                fileSize: uploadedFile.size,
                 extractionConfidence: extractedContent.success ? 1 : 0,
                 structuredData: {
                     schedules: structuredData.structuralMembers || [],
@@ -205,9 +205,9 @@ router.post('/generate-from-upload', upload.single('pdf'), async (req, res) => {
         console.error('❌ Estimation error:', error);
 
         // Clean up file if it exists
-        if (req.file?.path) {
+        if (req.files && req.files.length > 0) {
             try {
-                await fs.unlink(req.file.path);
+                await fs.unlink(req.files[0].path);
             } catch (cleanupError) {
                 console.warn('⚠️ Error cleanup failed:', cleanupError.message);
             }
@@ -621,3 +621,4 @@ router.use((error, req, res, next) => {
 });
 
 export default router;
+

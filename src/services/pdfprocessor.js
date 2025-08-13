@@ -11,123 +11,72 @@ export class PdfProcessor {
 
   initializeSteelPatterns() {
     return {
-      // --- NEW: Added pattern for SHS (Square Hollow Section) ---
+      // --- NEW: More comprehensive patterns for common steel sections ---
+      universalBeam: {
+        pattern: /(\d+)\s*UB\s*(\d+\.?\d*)/gi,
+        type: 'Universal Beam',
+        category: 'structural_beam'
+      },
+      universalColumn: {
+        pattern: /(\d+)\s*UC\s*(\d+\.?\d*)/gi,
+        type: 'Universal Column',
+        category: 'structural_column'
+      },
+      parallelFlangeChannel: {
+        pattern: /(\d+)\s*PFC/gi,
+        type: 'Parallel Flange Channel',
+        category: 'structural_channel'
+      },
       shs: {
-        pattern: /(\d{2,3})x(\d{2,3})x(\d{1,2}(?:\.\d+)?)\s*SHS/gi,
+        pattern: /(\d{2,3})\s*[xX]\s*(\d{2,3})\s*[xX]\s*(\d{1,2}(?:\.\d+)?)\s*SHS/gi,
         type: 'Square Hollow Section',
         category: 'hollow_structural'
       },
-      // --- NEW: Added pattern for Z-Purlins/Z-Sections ---
+      rhs: {
+        pattern: /(\d{2,3})\s*[xX]\s*(\d{2,3})\s*[xX]\s*(\d{1,2}(?:\.\d+)?)\s*RHS/gi,
+        type: 'Rectangular Hollow Section',
+        category: 'hollow_structural'
+      },
       zPurlin: {
-        pattern: /Z(\d{3})-?(\d{2}(?:\.\d+)?)/gi,
+        pattern: /Z(\d{3})\s*(\d{2}(?:\.\d+)?)/gi,
         type: 'Z-Purlin',
         category: 'purlin'
       },
-      // --- NEW: Added pattern for C-Purlins/C-Sections ---
       cPurlin: {
-        pattern: /C(\d{3})-?(\d{2}(?:\.\d+)?)/gi,
+        pattern: /C(\d{3})\s*(\d{2}(?:\.\d+)?)/gi,
         type: 'C-Purlin',
         category: 'purlin'
       },
-      // Wide Flange Beams
+      // Wide Flange Beams (US Standard)
       wideFlange: {
         pattern: /W(\d{1,2})X(\d{1,3}(?:\.\d+)?)/gi,
         type: 'Wide Flange Beam',
         category: 'structural_beam'
       },
-      
-      // Standard Beams
+      // Standard Beams (US Standard)
       standardBeam: {
         pattern: /S(\d{1,2})X(\d{1,3}(?:\.\d+)?)/gi,
         type: 'Standard Beam',
         category: 'structural_beam'
       },
-      
-      // HP Sections
-      hpSection: {
-        pattern: /HP(\d{1,2})X(\d{1,3}(?:\.\d+)?)/gi,
-        type: 'HP Section',
-        category: 'pile_foundation'
-      },
-      
-      // Channels
-      channel: {
-        pattern: /C(\d{1,2})X(\d{1,3}(?:\.\d+)?)/gi,
-        type: 'Channel',
-        category: 'structural_channel'
-      },
-      
       // Angles
       angle: {
         pattern: /L(\d{1,2})X(\d{1,2})X(\d+\/\d+|\d+(?:\.\d+)?)/gi,
         type: 'Angle',
         category: 'structural_angle'
       },
-      
-      // HSS (Hollow Structural Sections)
-      hssRectangular: {
-        pattern: /HSS(\d{1,2})X(\d{1,2})X(\d+\/\d+|\d+(?:\.\d+)?)/gi,
-        type: 'HSS Rectangular',
-        category: 'hollow_structural'
-      },
-      
-      hssRound: {
-        pattern: /HSS(\d{1,2}(?:\.\d+)?)X(\d+\/\d+|\d+(?:\.\d+)?)/gi,
-        type: 'HSS Round',
-        category: 'hollow_structural'
-      },
-      
       // Plates
       plate: {
         pattern: /PL\s*(\d+\/\d+|\d+(?:\.\d+)?)\s*[X×]\s*(\d+(?:\.\d+)?)\s*[X×]\s*(\d+(?:\.\d+)?)/gi,
         type: 'Steel Plate',
         category: 'plate'
       },
-      
-      plateSimple: {
-        pattern: /PLATE\s*(\d+\/\d+|\d+(?:\.\d+)?)\s*[X×]\s*(\d+(?:\.\d+)?)/gi,
-        type: 'Steel Plate',
-        category: 'plate'
-      },
-      
       // Rebar
       rebar: {
         pattern: /#(\d+)\s*@\s*(\d+(?:\.\d+)?)\s*(O\.?C\.?|ON\s*CENTER)/gi,
         type: 'Reinforcing Bar',
         category: 'reinforcement'
       },
-      
-      // Mesh
-      mesh: {
-        pattern: /(\d+X\d+\s*-?\s*W\d+\.\d+X\d+\.\d+)/gi,
-        type: 'Welded Wire Mesh',
-        category: 'reinforcement'
-      },
-      
-      // Quantities and Units
-      quantities: {
-        linearFeet: /(\d+(?:\.\d+)?)\s*(LF|L\.F\.|LINEAR\s*FEET?)/gi,
-        squareFeet: /(\d+(?:\.\d+)?)\s*(SF|S\.F\.|SQUARE\s*FEET?)/gi,
-        each: /(\d+(?:\.\d+)?)\s*(EA|EACH)/gi,
-        tons: /(\d+(?:\.\d+)?)\s*(TON|TONS)/gi,
-        pounds: /(\d+(?:\.\d+)?)\s*(LBS?|POUNDS?)/gi,
-        cubicYards: /(\d+(?:\.\d+)?)\s*(CY|C\.Y\.|CUBIC\s*YARDS?)/gi
-      },
-      
-      // Dimensions
-      dimensions: {
-        feetInches: /(\d+)'-(\d+)"/gi,
-        feetOnly: /(\d+)'/gi,
-        decimal: /(\d+\.\d+)'/gi,
-        metric: /(\d+(?:\.\d+)?)\s*(MM|CM|M)/gi
-      },
-      
-      // Connection Details
-      connections: {
-        bolts: /((\d+\/\d+|\d+)\s*[Ø∅]\s*(BOLT|A325|A490))/gi,
-        welds: /(\d+\/\d+|\d+)\s*(FILLET\s*WELD|FW)/gi,
-        studs: /(\d+\/\d+|\d+)\s*[Ø∅]\s*STUD/gi
-      }
     };
   }
 
@@ -166,7 +115,6 @@ export class PdfProcessor {
           const page = await pdf.getPage(pageNum);
           const textContent = await page.getTextContent();
           
-          // Extract text with positioning information
           const pageItems = textContent.items.map(item => ({
             text: item.str,
             x: Math.round(item.transform[4]),
@@ -176,12 +124,11 @@ export class PdfProcessor {
             fontName: item.fontName
           }));
 
-          // Sort by Y position (top to bottom) then X position (left to right)
           pageItems.sort((a, b) => {
-            if (Math.abs(a.y - b.y) < 5) { // Same line
+            if (Math.abs(a.y - b.y) < 5) {
               return a.x - b.x;
             }
-            return b.y - a.y; // Top to bottom
+            return b.y - a.y;
           });
 
           const pageText = pageItems
@@ -258,9 +205,8 @@ export class PdfProcessor {
     };
 
     try {
-      // Extract structural members
       Object.entries(this.steelPatterns).forEach(([key, config]) => {
-        if (key === 'quantities' || key === 'dimensions' || key === 'connections') return;
+        if (config.category === 'quantities' || config.category === 'dimensions' || config.category === 'connections') return;
         
         const matches = [...text.matchAll(config.pattern)];
         
@@ -273,26 +219,21 @@ export class PdfProcessor {
             context: this.getContextAroundMatch(text, match.index, 100)
           };
 
-          // Parse specific member details
           switch (config.category) {
             case 'structural_beam':
+            case 'structural_column':
             case 'structural_channel':
               member.depth = parseInt(match[1]);
-              member.weight = parseFloat(match[2]);
+              member.weight = parseFloat(match[2] || 0);
               break;
             case 'purlin':
               member.depth = parseInt(match[1]);
               member.gauge = parseFloat(match[2]);
               break;
             case 'hollow_structural':
-               if (config.type === 'Square Hollow Section') {
-                    member.dimension1 = parseInt(match[1]);
-                    member.dimension2 = parseInt(match[2]);
-                    member.thickness = parseFloat(match[3]);
-                } else {
-                    member.dimension1 = parseInt(match[1]);
-                    member.dimension2 = match[2] ? parseFloat(match[2]) : null;
-                }
+              member.dimension1 = parseInt(match[1]);
+              member.dimension2 = parseInt(match[2]);
+              member.thickness = parseFloat(match[3]);
               break;
             case 'structural_angle':
               member.leg1 = parseInt(match[1]);
@@ -310,70 +251,9 @@ export class PdfProcessor {
         });
       });
 
-      // Extract quantities
-      Object.entries(this.steelPatterns.quantities).forEach(([unit, pattern]) => {
-        const matches = [...text.matchAll(pattern)];
-        matches.forEach(match => {
-          steelData.quantities.push({
-            value: parseFloat(match[1]),
-            unit: unit,
-            rawText: match[0],
-            context: this.getContextAroundMatch(text, match.index, 50)
-          });
-        });
-      });
-
-      // Extract dimensions
-      Object.entries(this.steelPatterns.dimensions).forEach(([type, pattern]) => {
-        const matches = [...text.matchAll(pattern)];
-        matches.forEach(match => {
-          let dimension = {
-            type: type,
-            rawText: match[0],
-            context: this.getContextAroundMatch(text, match.index, 50)
-          };
-
-          switch (type) {
-            case 'feetInches':
-              dimension.feet = parseInt(match[1]);
-              dimension.inches = parseInt(match[2]);
-              dimension.totalInches = dimension.feet * 12 + dimension.inches;
-              break;
-            case 'feetOnly':
-              dimension.feet = parseInt(match[1]);
-              dimension.totalInches = dimension.feet * 12;
-              break;
-            case 'decimal':
-              dimension.feet = parseFloat(match[1]);
-              dimension.totalInches = dimension.feet * 12;
-              break;
-            case 'metric':
-              dimension.value = parseFloat(match[1]);
-              dimension.unit = match[2];
-              break;
-          }
-
-          steelData.dimensions.push(dimension);
-        });
-      });
-
-      // Extract connection details
-      Object.entries(this.steelPatterns.connections).forEach(([type, pattern]) => {
-        const matches = [...text.matchAll(pattern)];
-        matches.forEach(match => {
-          steelData.connections.push({
-            type: type,
-            size: this.parseFractionOrDecimal(match[1]),
-            rawText: match[0],
-            context: this.getContextAroundMatch(text, match.index, 50)
-          });
-        });
-      });
-
       // Generate summary
       steelData.summary.totalMembers = steelData.structuralMembers.length;
       
-      // Group by category
       steelData.structuralMembers.forEach(member => {
         if (!steelData.summary.categories[member.category]) {
           steelData.summary.categories[member.category] = {
@@ -384,9 +264,6 @@ export class PdfProcessor {
         steelData.summary.categories[member.category].count++;
         steelData.summary.categories[member.category].members.push(member.designation);
       });
-
-      // Estimate total weight (basic estimation)
-      steelData.summary.estimatedWeight = this.estimateTotalWeight(steelData);
 
       console.log(`✅ Extracted ${steelData.structuralMembers.length} structural members`);
       console.log(`📊 Categories: ${Object.keys(steelData.summary.categories).join(', ')}`);
@@ -415,34 +292,31 @@ export class PdfProcessor {
   }
 
   estimateTotalWeight(steelData) {
-    // Basic weight estimation based on typical steel densities
     let totalWeight = 0;
     
     steelData.structuralMembers.forEach(member => {
       switch (member.category) {
         case 'structural_beam':
         case 'structural_channel':
-          totalWeight += member.weight || 0; // Weight per foot
+          totalWeight += member.weight || 0; 
           break;
         case 'plate':
           if (member.thickness && member.width && member.length) {
-            // Steel density: ~490 lbs/ft³
-            const volume = member.thickness * member.width * member.length / 1728; // cubic feet
+            const volume = member.thickness * member.width * member.length / 1728;
             totalWeight += volume * 490;
           }
           break;
-        // Add more categories as needed
       }
     });
     
-    return Math.round(totalWeight * 100) / 100; // Round to 2 decimal places
+    return Math.round(totalWeight * 100) / 100;
   }
 
+  // Other methods remain the same...
   async processForEstimation(pdfBuffer, options = {}) {
     console.log('🚀 Starting PDF processing for estimation...');
     
     try {
-      // Extract text from PDF
       const extractedData = await this.extractTextFromPdf(pdfBuffer);
       
       if (!extractedData.success) {
@@ -451,13 +325,10 @@ export class PdfProcessor {
 
       console.log(`📄 Extracted ${extractedData.text.length} characters from ${extractedData.pages} pages`);
 
-      // Extract structural steel information
       const steelData = this.extractSteelInformation(extractedData.text);
       
-      // Advanced analysis
       const analysis = await this.performAdvancedAnalysis(extractedData.text, steelData, options);
       
-      // Generate estimation data
       const estimation = this.generateEstimation(steelData, analysis, options);
       
       const result = {
@@ -491,13 +362,10 @@ export class PdfProcessor {
       confidence: 0
     };
 
-    // Assess confidence level
     analysis.confidence = this.calculateConfidence(steelData, text);
     
-    // Generate recommendations
     analysis.recommendations = this.generateRecommendations(steelData, analysis);
     
-    // Check for potential issues
     analysis.warnings = this.identifyWarnings(steelData, text);
     
     return analysis;
@@ -513,7 +381,6 @@ export class PdfProcessor {
       engineer: null
     };
 
-    // Common patterns for project information
     const patterns = {
       projectName: /PROJECT\s*:?\s*([^\n\r]{1,100})/i,
       drawing: /DRAWING\s*(?:NO\.?)?\s*:?\s*([A-Z0-9\-\.]{1,20})/i,
@@ -540,7 +407,6 @@ export class PdfProcessor {
       foundation: []
     };
 
-    // Categorize members by structural function
     steelData.structuralMembers.forEach(member => {
       if (member.category === 'structural_beam') {
         if (member.depth >= 12) {
@@ -553,7 +419,6 @@ export class PdfProcessor {
       }
     });
 
-    // Determine structural system type
     if (system.primaryMembers.length > 0) {
       system.type = 'steel_frame';
     }
@@ -565,7 +430,6 @@ export class PdfProcessor {
     let complexity = 'simple';
     let score = 0;
 
-    // Factors that increase complexity
     const uniqueMembers = new Set(steelData.structuralMembers.map(m => m.designation)).size;
     const totalMembers = steelData.structuralMembers.length;
     const categories = Object.keys(steelData.summary.categories).length;
@@ -595,13 +459,11 @@ export class PdfProcessor {
   calculateConfidence(steelData, text) {
     let confidence = 0;
     
-    // Base confidence from extracted data
     if (steelData.structuralMembers.length > 0) confidence += 30;
     if (steelData.quantities.length > 0) confidence += 20;
     if (steelData.dimensions.length > 0) confidence += 15;
     if (steelData.connections.length > 0) confidence += 15;
     
-    // Bonus for clear patterns
     const clearPatterns = text.match(/W\d+X\d+|PL\s*\d+|#\d+/g) || [];
     confidence += Math.min(clearPatterns.length * 2, 20);
     
@@ -658,14 +520,13 @@ export class PdfProcessor {
       methodology: 'basic_estimation'
     };
 
-    // Basic material cost estimation
     steelData.structuralMembers.forEach(member => {
       const materialCost = this.estimateMaterialCost(member, options);
       if (materialCost > 0) {
         estimation.materials.push({
           description: member.designation,
           category: member.category,
-          quantity: 1, // Default quantity
+          quantity: 1,
           unitCost: materialCost,
           totalCost: materialCost
         });
@@ -673,16 +534,12 @@ export class PdfProcessor {
       }
     });
 
-    // Basic labor estimation (typically 40-60% of material cost)
     estimation.totals.labor = estimation.totals.materials * 0.5;
 
-    // Basic equipment estimation (typically 10-15% of material cost)
     estimation.totals.equipment = estimation.totals.materials * 0.125;
 
-    // Calculate total
     estimation.totals.total = estimation.totals.materials + estimation.totals.labor + estimation.totals.equipment;
 
-    // Add assumptions
     estimation.assumptions = [
       'Material costs based on current market averages',
       'Labor costs estimated at 50% of material costs',
@@ -697,34 +554,31 @@ export class PdfProcessor {
   }
 
   estimateMaterialCost(member, options = {}) {
-    // Basic cost per unit for different steel types (in USD)
     const baseCosts = {
-      'Wide Flange Beam': 2.5,    // per lb
-      'Standard Beam': 2.3,      // per lb
-      'HP Section': 2.8,         // per lb
-      'Channel': 2.4,            // per lb
-      'Angle': 2.6,              // per lb
-      'HSS Rectangular': 3.0,    // per lb
-      'HSS Round': 3.2,          // per lb
-      'Steel Plate': 2.2         // per lb
+      'Wide Flange Beam': 2.5,
+      'Standard Beam': 2.3,
+      'HP Section': 2.8,
+      'Channel': 2.4,
+      'Angle': 2.6,
+      'HSS Rectangular': 3.0,
+      'HSS Round': 3.2,
+      'Steel Plate': 2.2
     };
 
     const baseCost = baseCosts[member.type] || 2.5;
     
-    // Estimate weight based on member type
-    let estimatedWeight = 10; // Default weight in lbs
+    let estimatedWeight = 10;
     
     if (member.weight) {
       estimatedWeight = member.weight;
     } else if (member.category === 'plate' && member.thickness && member.width && member.length) {
-      const volume = member.thickness * member.width * member.length / 1728; // cubic feet
-      estimatedWeight = volume * 490; // steel density ~490 lbs/ft³
+      const volume = member.thickness * member.width * member.length / 1728;
+      estimatedWeight = volume * 490;
     }
 
     return baseCost * estimatedWeight;
   }
 
-  // Utility method for saving processed results
   async saveProcessedResults(results, outputPath) {
     try {
       const data = JSON.stringify(results, null, 2);

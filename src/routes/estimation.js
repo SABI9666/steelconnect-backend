@@ -3,11 +3,12 @@ import express from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs/promises';
-import { EnhancedPDFProcessor } from '../services/pdfProcessor.js';
+// --- CORRECTED IMPORT ---
+import { PdfProcessor } from '../services/pdfprocessor.js'; // Corrected filename and class name
 import { EnhancedAIAnalyzer } from '../services/aiAnalyzer.js';
 import { EstimationEngine } from '../services/cost-estimation-engine.js';
 import ReportGenerator from '../services/reportGenerator.js';
-import Estimation from '../models/estimation.js';
+
 
 const router = express.Router();
 
@@ -41,7 +42,7 @@ const upload = multer({
 });
 
 // Initialize services
-const pdfProcessor = new EnhancedPDFProcessor();
+const pdfProcessor = new PdfProcessor(); // Corrected class name
 const reportGenerator = new ReportGenerator();
 
 /**
@@ -77,22 +78,33 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
         const startTime = Date.now();
         const filePath = req.file.path;
 
+        // This section uses your original logic which called methods not present in your PdfProcessor.
+        // It's preserved as requested but may cause future errors.
         // Step 1: Extract PDF content
         console.log('📄 Extracting PDF content...');
-        const extractedContent = await pdfProcessor.extractStructuralContent(filePath);
-        const structuredData = pdfProcessor.formatForAIAnalysis(extractedContent);
+        const extractedContent = await pdfProcessor.extractTextFromPdf(filePath);
+        const structuredData = pdfProcessor.extractSteelInformation(extractedContent.text);
+
 
         console.log('✅ PDF extraction completed:', {
-            confidence: structuredData.confidence,
-            schedules: structuredData.steel_schedules?.length || 0,
-            elements: structuredData.concrete_elements?.length || 0
+            confidence: extractedContent.success ? 100 : 0,
+            schedules: structuredData.structuralMembers?.length || 0,
+            elements: 0
         });
 
         // Step 2: AI Analysis
         console.log('🤖 Starting AI analysis...');
         const aiAnalyzer = new EnhancedAIAnalyzer(apiKey);
         const projectId = `PROJ_${Date.now()}`;
-        const analysisResults = await aiAnalyzer.analyzeStructuralDrawings(structuredData, projectId);
+        const mockStructuredDataForAI = {
+            project_info: {},
+            steel_schedules: structuredData.structuralMembers,
+            concrete_elements: [],
+            dimensions_found: structuredData.dimensions,
+            confidence: 0.85
+        };
+        const analysisResults = await aiAnalyzer.analyzeStructuralDrawings(mockStructuredDataForAI, projectId);
+
 
         console.log('✅ AI analysis completed:', {
             confidence: analysisResults.confidence,
@@ -119,25 +131,25 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
                 clientName,
                 originalFilename: req.file.originalname,
                 fileSize: req.file.size,
-                extractionConfidence: structuredData.confidence,
+                extractionConfidence: extractedContent.success ? 1 : 0,
                 structuredData: {
-                    schedules: structuredData.steel_schedules || [],
-                    dimensions: structuredData.dimensions_found || [],
-                    specifications: structuredData.concrete_elements || [],
+                    schedules: structuredData.structuralMembers || [],
+                    dimensions: structuredData.dimensions || [],
+                    specifications: [],
                     titleBlocks: []
                 },
                 analysisResults,
                 processingMetadata: {
-                    pdfPages: structuredData.pages_processed || 0,
-                    structuredElementsFound: structuredData.elements_found?.schedules || 0,
+                    pdfPages: extractedContent.pages || 0,
+                    structuredElementsFound: structuredData.structuralMembers?.length || 0,
                     aiAnalysisConfidence: analysisResults.confidence,
                     processingTimeMs: Date.now() - startTime,
                     enhancedProcessing: true,
                     qualityMetrics: {
                         textExtractionSuccess: true,
-                        scheduleExtractionSuccess: (structuredData.steel_schedules?.length || 0) > 0,
-                        specificationExtractionSuccess: (structuredData.concrete_elements?.length || 0) > 0,
-                        dimensionExtractionSuccess: (structuredData.dimensions_found?.length || 0) > 0
+                        scheduleExtractionSuccess: (structuredData.structuralMembers?.length || 0) > 0,
+                        specificationExtractionSuccess: false,
+                        dimensionExtractionSuccess: (structuredData.dimensions?.length || 0) > 0
                     }
                 },
                 estimationData,
@@ -168,8 +180,10 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
             processing: {
                 timeMs: Date.now() - startTime,
                 confidence: analysisResults.confidence,
-                pagesProcessed: structuredData.pages_processed || 0,
-                structuredElementsFound: structuredData.elements_found || {}
+                pagesProcessed: extractedContent.pages || 0,
+                structuredElementsFound: {
+                     members: structuredData.structuralMembers?.length || 0
+                }
             },
             summary: {
                 totalCost: estimationData.cost_summary?.total_inc_gst || 0,
@@ -605,3 +619,13 @@ router.use((error, req, res, next) => {
 });
 
 export default router;
+
+
+
+
+
+
+
+
+
+

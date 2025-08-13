@@ -1,4 +1,4 @@
-/ Enhanced AI Analyzer with Better Prompt Engineering
+// Enhanced AI Analyzer with Better Prompt Engineering
 import Anthropic from '@anthropic-ai/sdk';
 
 export class EnhancedAIAnalyzer {

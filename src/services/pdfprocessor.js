@@ -1,24 +1,28 @@
 // src/services/pdfprocessor.js
-import * as pdfjsLib from 'pdfjs-dist';
+// --- FIX: Use the 'legacy' build of pdfjs-dist for Node.js environments ---
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import fs from 'fs/promises';
 import sharp from 'sharp';
 
 export class PdfProcessor {
   constructor() {
-    this.setupPdfJs();
+    // --- FIX: The setupPdfJs() call is no longer needed and has been removed ---
     this.steelPatterns = this.initializeSteelPatterns();
     this.unitConversions = this.initializeUnitConversions();
   }
 
+  // --- FIX: This entire function is removed as it's the source of the error ---
+  /*
   setupPdfJs() {
     // Configure PDF.js for Node.js environment
     if (typeof globalThis === 'undefined') {
       global.globalThis = global;
     }
     
-    // Set worker path for PDF.js
+    // Set worker path for PDF.js - THIS IS THE PROBLEMATIC LINE
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdfjs-dist/build/pdf.worker.js';
   }
+  */
 
   initializeSteelPatterns() {
     return {

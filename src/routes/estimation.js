@@ -4,9 +4,9 @@ import mongoose from 'mongoose';
 
 // Enhanced service imports
 import { adminStorage } from '../config/firebase.js';
-import { EnhancedPdfProcessor } from '../services/enhancedPdfProcessor.js';
-import { ImprovedAIAnalyzer } from '../services/improvedAIAnalyzer.js';
-import { EnhancedCostEstimationEngine } from '../services/enhancedCostEngine.js';
+import { EnhancedPdfProcessor } from '../services/pdfprocessor.js';
+import { ImprovedAIAnalyzer } from '../services/aiAnalyzer.js';
+import { EnhancedCostEstimationEngine } from '../services/cost-estimation-engine.js';
 import ReportGenerator from '../services/reportGenerator.js';
 import Estimation from '../models/estimation.js';
 

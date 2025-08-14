@@ -240,30 +240,42 @@ Return ONLY valid JSON in this exact format (no additional text):
 
     // --- FIXED: Improved JSON parsing with better error handling ---
     _parseJsonResponse(text, fallback) {
+        if (!text || typeof text !== 'string') {
+            console.warn('Invalid text input for JSON parsing');
+            return fallback;
+        }
+
         try {
             // Remove any markdown formatting
-            let cleanText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+            let cleanText = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
             
-            // Find the JSON object bounds
-            const startIndex = cleanText.indexOf('{');
-            const lastBraceIndex = cleanText.lastIndexOf('}');
+            // Find the JSON object bounds more carefully
+            const openBrace = cleanText.indexOf('{');
+            const closeBrace = cleanText.lastIndexOf('}');
             
-            if (startIndex === -1 || lastBraceIndex === -1) {
+            if (openBrace === -1 || closeBrace === -1 || openBrace >= closeBrace) {
                 console.warn('No valid JSON structure found in response');
                 return fallback;
             }
             
-            let jsonString = cleanText.substring(startIndex, lastBraceIndex + 1);
+            let jsonString = cleanText.substring(openBrace, closeBrace + 1);
             
             // Clean up common JSON formatting issues
             jsonString = jsonString
-                .replace(/,\s*([\]}])/g, '$1')  // Remove trailing commas
-                .replace(/([{,]\s*)(\w+):/g, '$1"$2":')  // Quote unquoted keys
+                .replace(/,\s*([}\]])/g, '$1')  // Remove trailing commas
+                .replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":')  // Quote unquoted keys
                 .replace(/:\s*([^",{\[\s][^,}\]]*[^",}\]\s])\s*([,}\]])/g, ':"$1"$2')  // Quote unquoted string values
                 .replace(/"\s*(\d+\.?\d*)\s*"/g, '$1');  // Unquote numbers
                 
             // Try to parse the cleaned JSON
             const parsed = JSON.parse(jsonString);
+            
+            // Basic validation that it's an object
+            if (typeof parsed !== 'object' || parsed === null) {
+                console.warn('Parsed JSON is not a valid object');
+                return fallback;
+            }
+            
             return parsed;
             
         } catch (error) {
@@ -394,6 +406,9 @@ Return ONLY valid JSON in this exact format (no additional text):
         }
         if (!quantities.steel_quantities.summary) {
             quantities.steel_quantities.summary = {};
+        }
+        if (!Array.isArray(quantities.steel_quantities.members)) {
+            quantities.steel_quantities.members = [];
         }
 
         const steelSummary = quantities.steel_quantities.summary;

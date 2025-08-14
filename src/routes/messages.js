@@ -1,4 +1,5 @@
 import express from 'express';
+import { adminDb, adminStorage } from '../config/firebase.js';
 import {
   getConversations,
   findOrCreateConversation,

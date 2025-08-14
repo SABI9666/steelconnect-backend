@@ -85,74 +85,67 @@ export class EstimationEngine {
                 sl82_mesh: { rate: 9.20, unit: "m²" }
             },
             structural_steel: {
-                // Universal Beams
-                "150 UB 14": { rate: 3.15, unit: "kg", weight_per_m: 14.0 },
-                "180 UB 16.1": { rate: 3.15, unit: "kg", weight_per_m: 16.1 },
-                "200 UB 18": { rate: 3.15, unit: "kg", weight_per_m: 18.2 },
-                "200 UB 22.3": { rate: 3.15, unit: "kg", weight_per_m: 22.3 },
-                "200 UB 25": { rate: 3.15, unit: "kg", weight_per_m: 25.4 },
-                "250 UB 25.7": { rate: 3.15, unit: "kg", weight_per_m: 25.7 },
-                "250 UB 31": { rate: 3.15, unit: "kg", weight_per_m: 31.4 },
-                "250 UB 37.3": { rate: 3.15, unit: "kg", weight_per_m: 37.3 },
-                "310 UB 32": { rate: 3.15, unit: "kg", weight_per_m: 32.0 },
+                // Universal Beams - Fixed section mappings
+                "250 UB 31.4": { rate: 3.15, unit: "kg", weight_per_m: 31.4 },
                 "310 UB 40.4": { rate: 3.15, unit: "kg", weight_per_m: 40.4 },
-                "360 UB 50.7": { rate: 3.15, unit: "kg", weight_per_m: 50.7 },
-                "410 UB 54": { rate: 3.15, unit: "kg", weight_per_m: 54.0 },
+                "200 UB 18.2": { rate: 3.15, unit: "kg", weight_per_m: 18.2 },
+                "200 UB 25.4": { rate: 3.15, unit: "kg", weight_per_m: 25.4 },
+                "180 UB 16.1": { rate: 3.15, unit: "kg", weight_per_m: 16.1 },
                 "410 UB 59.7": { rate: 3.15, unit: "kg", weight_per_m: 59.7 },
+                "360 UB 50.7": { rate: 3.15, unit: "kg", weight_per_m: 50.7 },
                 "460 UB 67.1": { rate: 3.15, unit: "kg", weight_per_m: 67.1 },
 
-                // Parallel Flange Channels
-                "180 PFC": { rate: 3.25, unit: "kg", weight_per_m: 20.0 },
-                "230 PFC": { rate: 3.25, unit: "kg", weight_per_m: 30.0 },
+                // Parallel Flange Channels - Fixed mappings
+                "200 PFC": { rate: 3.25, unit: "kg", weight_per_m: 23.4 },
+                "150 PFC": { rate: 3.25, unit: "kg", weight_per_m: 17.0 },
                 "250 PFC": { rate: 3.25, unit: "kg", weight_per_m: 35.0 },
                 "300 PFC": { rate: 3.25, unit: "kg", weight_per_m: 40.0 },
-                "380 PFC": { rate: 3.25, unit: "kg", weight_per_m: 50.0 },
 
-                // Square Hollow Sections
-                "50x50x2 SHS": { rate: 3.20, unit: "kg", weight_per_m: 3.0 },
-                "75x75x5.0 SHS": { rate: 3.20, unit: "kg", weight_per_m: 11.0 },
-                "89x89x5.0 SHS": { rate: 3.20, unit: "kg", weight_per_m: 13.4 },
-                "100x100x2.5 SHS": { rate: 3.20, unit: "kg", weight_per_m: 7.5 },
-                "100x100x5.0 SHS": { rate: 3.20, unit: "kg", weight_per_m: 14.9 },
-                "100x100x6.0 SHS": { rate: 3.20, unit: "kg", weight_per_m: 17.7 },
-                "100x100x9.0 SHS": { rate: 3.20, unit: "kg", weight_per_m: 25.8 },
-                "125x125x4.0 SHS": { rate: 3.20, unit: "kg", weight_per_m: 18.9 },
-                "125x125x5.0 SHS": { rate: 3.20, unit: "kg", weight_per_m: 23.4 },
-                "150x150x3.0 SHS": { rate: 3.25, unit: "kg", weight_per_m: 13.6 },
-                "150x150x4.0 SHS": { rate: 3.25, unit: "kg", weight_per_m: 18.0 },
-                "150x150x5.0 SHS": { rate: 3.25, unit: "kg", weight_per_m: 22.3 },
-                "150x150x6.0 SHS": { rate: 3.25, unit: "kg", weight_per_m: 26.6 },
-                "150x150x9.0 SHS": { rate: 3.25, unit: "kg", weight_per_m: 38.5 },
+                // Square Hollow Sections - Fixed mappings
+                "100 X 100 X 9.0 SHS": { rate: 3.20, unit: "kg", weight_per_m: 25.8 },
+                "100 X 100 X 6.0 SHS": { rate: 3.20, unit: "kg", weight_per_m: 17.7 },
+                "89 X 89 X 5.0 SHS": { rate: 3.20, unit: "kg", weight_per_m: 13.4 },
+                "150 X 150 X 9.0 SHS": { rate: 3.25, unit: "kg", weight_per_m: 38.5 },
+                "150 X 150 X 6.0 SHS": { rate: 3.25, unit: "kg", weight_per_m: 26.6 },
+                "100 X 100 X 2.5 SHS": { rate: 3.20, unit: "kg", weight_per_m: 7.5 },
+                "150 X 150 X 5.0 SHS": { rate: 3.25, unit: "kg", weight_per_m: 22.3 },
+                "150 X 150 X 3.0 SHS": { rate: 3.25, unit: "kg", weight_per_m: 13.6 },
+                "150 X 150 X 4.0 SHS": { rate: 3.25, unit: "kg", weight_per_m: 18.0 },
+                "75 X 75 X 5.0 SHS": { rate: 3.20, unit: "kg", weight_per_m: 11.0 },
+                "125 X 125 X 4.0 SHS": { rate: 3.20, unit: "kg", weight_per_m: 18.9 },
+                "100 X 100 X 5.0 SHS": { rate: 3.20, unit: "kg", weight_per_m: 14.9 },
+                "125 X 125 X 5.0 SHS": { rate: 3.20, unit: "kg", weight_per_m: 23.4 },
+                "50 X 50 X 2 SHS": { rate: 3.20, unit: "kg", weight_per_m: 3.0 },
+                "100 X 100 X 6 SHS": { rate: 3.20, unit: "kg", weight_per_m: 17.7 },
 
-                // Rectangular Hollow Sections
-                "125x75x3.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 11.4 },
-                "150x50x4.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 15.0 },
-                "150x50x5.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 18.5 },
-                "150x50x6.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 22.0 },
-                "150x50x9.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 31.0 },
-                "150x100x5.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 23.4 },
-                "150x100x6.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 27.8 },
-                "150x100x10.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 44.0 },
-                "150x150x4.0 RHS": { rate: 3.25, unit: "kg", weight_per_m: 22.7 },
-                "200x50x6.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 28.0 },
-                "200x100x3.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 17.1 },
-                "200x100x5.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 28.0 },
-                "200x100x6.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 33.1 },
-                "200x100x9.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 47.0 },
-                "200x150x6.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 39.5 },
-                "200x150x9.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 56.8 },
-                "250x150x5.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 38.0 },
+                // Rectangular Hollow Sections - Fixed mappings
+                "200 X 100 X 3.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 17.1 },
+                "200 X 100 X 5.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 28.0 },
+                "150 X 50 X 4.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 15.0 },
+                "125 X 75 X 3.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 11.4 },
+                "200 X 150 X 9.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 56.8 },
+                "200 X 150 X 6.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 39.5 },
+                "250 X 150 X 5.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 38.0 },
+                "200 X 100 X 6.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 33.1 },
+                "150 X 150 X 4.0 RHS": { rate: 3.25, unit: "kg", weight_per_m: 22.7 },
+                "150 X 100 X 10.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 44.0 },
+                "200 X 100 X 9.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 47.0 },
+                "200 X 50 X 6.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 28.0 },
+                "150 X 50 X 5.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 18.5 },
+                "150 X 100 X 5.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 23.4 },
+                "150 X 100 X 10 RHS": { rate: 3.20, unit: "kg", weight_per_m: 44.0 },
+                "150 X 50 X 6.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 22.0 },
+                "150 X 100 X 6.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 27.8 },
+                "150 X 50 X 9.0 SHS": { rate: 3.20, unit: "kg", weight_per_m: 31.0 },
 
-                // C and Z Purlins
-                "C100 15": { rate: 3.30, unit: "kg", weight_per_m: 15.0 },
-                "C150 19": { rate: 3.30, unit: "kg", weight_per_m: 19.0 },
-                "C200 15": { rate: 3.30, unit: "kg", weight_per_m: 15.0 },
-                "C200 19": { rate: 3.30, unit: "kg", weight_per_m: 19.0 },
-                "C20019": { rate: 3.30, unit: "kg", weight_per_m: 19.0 },
-                "Z150 19": { rate: 3.30, unit: "kg", weight_per_m: 19.0 },
-                "Z200 15": { rate: 3.30, unit: "kg", weight_per_m: 15.0 },
-                "Z200 19": { rate: 3.30, unit: "kg", weight_per_m: 19.0 },
-                "Z250 24": { rate: 3.30, unit: "kg", weight_per_m: 24.0 }
+                // Generic sections for fallback
+                "250 UB": { rate: 3.15, unit: "kg", weight_per_m: 31.4 },
+                "310 UB": { rate: 3.15, unit: "kg", weight_per_m: 40.4 },
+                "200 UB": { rate: 3.15, unit: "kg", weight_per_m: 25.4 },
+                "180 UB": { rate: 3.15, unit: "kg", weight_per_m: 18.2 },
+                "410 UB": { rate: 3.15, unit: "kg", weight_per_m: 59.7 },
+                "360 UB": { rate: 3.15, unit: "kg", weight_per_m: 50.7 },
+                "460 UB": { rate: 3.15, unit: "kg", weight_per_m: 67.1 }
             },
             fabrication: {
                 simple: { rate: 800, unit: "tonne" },
@@ -200,7 +193,7 @@ export class EstimationEngine {
             const concreteItems = await this._estimateConcreteWorks(quantities, location);
             estimationItems.push(...concreteItems);
 
-            // Process steel works
+            // Process steel works - MAIN FOCUS
             const steelItems = await this._estimateSteelWorks(quantities, location);
             estimationItems.push(...steelItems);
 
@@ -291,41 +284,6 @@ export class EstimationEngine {
                     category: "Concrete",
                     subcategory: "Pumping"
                 }));
-
-                // Add formwork for beams and columns
-                if (element.element_type === 'beam' || element.element_type === 'column') {
-                    const formworkArea = area || (volume * 4); // Estimate if not provided
-                    const formworkType = `${element.element_type}_formwork`;
-                    const formworkRate = this.baseRates.formwork[formworkType]?.rate || 65;
-
-                    items.push(new EstimationItem({
-                        code: `FORM_${element.element_type?.toUpperCase()}_001`,
-                        description: `${element.element_type} formwork`,
-                        quantity: formworkArea,
-                        unit: "m²",
-                        unitRate: formworkRate,
-                        totalCost: formworkArea * formworkRate,
-                        category: "Formwork",
-                        subcategory: element.element_type
-                    }));
-                }
-
-                // Add excavation for footings
-                if (element.element_type === 'footing') {
-                    const excavation = volume * 1.2; // Add 20% for over-dig
-                    const excRate = this.baseRates.excavation.general_excavation.rate;
-
-                    items.push(new EstimationItem({
-                        code: "EXC_FOOTING_001",
-                        description: "Footing excavation",
-                        quantity: excavation,
-                        unit: "m³",
-                        unitRate: excRate,
-                        totalCost: excavation * excRate,
-                        category: "Excavation",
-                        subcategory: "Footings"
-                    }));
-                }
             }
         }
 
@@ -360,7 +318,7 @@ export class EstimationEngine {
                 console.log(`Steel section "${section}" not found in base rates.`);
                 // Use fallback calculation
                 const estimatedWeightPerM = this._estimateWeightPerMeter(section);
-                const estimatedWeight = totalLength > 0 ? totalLength * estimatedWeightPerM : estimatedWeightPerM * 6 * quantity;
+                const estimatedWeight = weight > 0 ? weight : (totalLength > 0 ? totalLength * estimatedWeightPerM : estimatedWeightPerM * 6 * quantity);
                 
                 if (estimatedWeight > 0) {
                     totalWeight += estimatedWeight;
@@ -639,12 +597,60 @@ export class EstimationEngine {
         }
         
         // Try normalized matches
-        const normalizedSection = cleanSection.replace(/\s+/g, ' ').replace(/[xX×]/g, 'x');
+        const normalizedSection = cleanSection.replace(/\s+/g, ' ').replace(/[×]/g, 'X').trim();
         
         for (const [key, details] of Object.entries(this.baseRates.structural_steel)) {
-            const normalizedKey = key.replace(/\s+/g, ' ').replace(/[xX×]/g, 'x');
+            const normalizedKey = key.replace(/\s+/g, ' ').replace(/[×]/g, 'X').trim();
             if (normalizedKey.toLowerCase() === normalizedSection.toLowerCase()) {
                 return details;
+            }
+        }
+        
+        // Try partial matches for common variations
+        const sectionLower = cleanSection.toLowerCase();
+        
+        // Handle UB variations
+        if (sectionLower.includes('ub')) {
+            const ubMatch = sectionLower.match(/(\d+)\s*ub\s*(\d+\.?\d*)?/);
+            if (ubMatch) {
+                const depth = ubMatch[1];
+                const weight = ubMatch[2];
+                
+                // Try to find by depth and weight
+                if (weight) {
+                    const searchKey = `${depth} UB ${weight}`;
+                    if (this.baseRates.structural_steel[searchKey]) {
+                        return this.baseRates.structural_steel[searchKey];
+                    }
+                }
+                
+                // Try generic depth match
+                const genericKey = `${depth} UB`;
+                if (this.baseRates.structural_steel[genericKey]) {
+                    return this.baseRates.structural_steel[genericKey];
+                }
+            }
+        }
+        
+        // Handle SHS variations
+        if (sectionLower.includes('shs')) {
+            const shsMatch = sectionLower.match(/(\d+)\s*[×x]\s*(\d+)\s*[×x]\s*(\d+\.?\d*)\s*shs/);
+            if (shsMatch) {
+                const searchKey = `${shsMatch[1]} X ${shsMatch[2]} X ${shsMatch[3]} SHS`;
+                if (this.baseRates.structural_steel[searchKey]) {
+                    return this.baseRates.structural_steel[searchKey];
+                }
+            }
+        }
+        
+        // Handle RHS variations
+        if (sectionLower.includes('rhs')) {
+            const rhsMatch = sectionLower.match(/(\d+)\s*[×x]\s*(\d+)\s*[×x]\s*(\d+\.?\d*)\s*rhs/);
+            if (rhsMatch) {
+                const searchKey = `${rhsMatch[1]} X ${rhsMatch[2]} X ${rhsMatch[3]} RHS`;
+                if (this.baseRates.structural_steel[searchKey]) {
+                    return this.baseRates.structural_steel[searchKey];
+                }
             }
         }
         

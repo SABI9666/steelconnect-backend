@@ -4,7 +4,7 @@ import path from 'path';
 import mongoose from 'mongoose';
 
 // --- Service, Model, and Firebase Imports ---
-import { adminStorage } from '../firebase.js'; // Import Firebase admin storage
+import { adminStorage } from '../config/firebase.js';
 import { PdfProcessor } from '../services/pdfprocessor.js';
 import { EnhancedAIAnalyzer } from '../services/aiAnalyzer.js';
 import { EstimationEngine } from '../services/cost-estimation-engine.js';

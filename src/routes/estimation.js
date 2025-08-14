@@ -3,7 +3,7 @@ import multer from 'multer';
 import mongoose from 'mongoose';
 
 // --- Firebase and Service Imports ---
-import { adminStorage } from '../config/firebaseAdmin.js'; // Assuming firebase config is in src/config
+import { adminStorage } from '../config/firebase.js'; // Assuming firebase config is in src/config
 import { PdfProcessor } from '../services/pdfprocessor.js';
 import { EnhancedAIAnalyzer } from '../services/aiAnalyzer.js';
 import { EstimationEngine } from '../services/cost-estimation-engine.js';

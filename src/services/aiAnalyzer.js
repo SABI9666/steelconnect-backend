@@ -4,7 +4,7 @@ import Anthropic from '@anthropic-ai/sdk';
 export class EnhancedAIAnalyzer {
     constructor(apiKey) {
         this.client = new Anthropic({ apiKey });
-        this.maxTokens = 3000; // Reduced to prevent truncation
+        this.maxTokens = 3000;
         this.model = "claude-3-5-sonnet-20241022";
     }
 
@@ -30,21 +30,18 @@ export class EnhancedAIAnalyzer {
             
             const summary = this._createSummaryForAI(structuredData);
 
-            // Get the result from the quantity takeoff method, which may be a fallback
             const quantityTakeoff = await this._performIntelligentQuantityTakeoff(summary, structuredData);
 
-            // Construct the final analysis object using the potentially corrected data
             const analysisResults = {
                 projectId,
                 confidence: structuredData.confidence || 0,
-                quantityTakeoff, // Use the result from the line above
+                quantityTakeoff,
                 specifications: await this._extractDetailedSpecifications(summary),
                 scopeIdentification: this._identifyProjectScope(structuredData),
                 riskAssessment: this._assessProjectRisks(structuredData),
                 assumptions: this._generateIntelligentAssumptions(structuredData)
             };
             
-            // Add a final safety check to prevent empty quantities from proceeding
             if (!analysisResults.quantityTakeoff || !analysisResults.quantityTakeoff.steel_quantities.members.length) {
                 console.warn('AI analysis resulted in empty quantities, using final fallback.');
                 analysisResults.quantityTakeoff = this._calculateFallbackQuantities(structuredData);
@@ -54,7 +51,6 @@ export class EnhancedAIAnalyzer {
 
         } catch (error) {
             console.error(`Enhanced AI analysis error: ${error.message}`);
-            // Return fallback data instead of throwing
             return this._generateFallbackAnalysis(structuredData, projectId);
         }
     }
@@ -109,11 +105,16 @@ Rules:
             const responseText = response.content[0]?.text || '';
             console.log('AI Response received, length:', responseText.length);
 
-            const quantities = this._parseJsonResponse(responseText, this._calculateFallbackQuantities(originalData));
+            const quantities = this._parseJsonResponse(responseText, () => this._calculateFallbackQuantities(originalData));
 
-            // If the AI result is sparse, use the more reliable fallback calculation
-            if (quantities.steel_quantities.members.length < 5) {
-                console.log('AI result has too few members, using enhanced fallback');
+            // --- Enhanced Validation Logic ---
+            // Get the member count from the AI's response and from the original PDF extraction.
+            const aiMemberCount = quantities.steel_quantities?.summary?.member_count || quantities.steel_quantities?.members?.length || 0;
+            const originalMemberCount = originalData.steel_schedules.length;
+
+            // If the AI result accounts for less than 75% of the members found in the PDF, it's wrong.
+            if (originalMemberCount > 10 && aiMemberCount < originalMemberCount * 0.75) {
+                console.log(`AI result member count (${aiMemberCount}) is significantly lower than extracted count (${originalMemberCount}). Using fallback.`);
                 return this._calculateFallbackQuantities(originalData);
             }
 
@@ -153,7 +154,7 @@ Return JSON only:
                 }]
             });
 
-            return this._parseJsonResponse(response.content[0]?.text || '', this._getDefaultSpecifications());
+            return this._parseJsonResponse(response.content[0]?.text || '', () => this._getDefaultSpecifications());
 
         } catch (error) {
             console.error(`Specification extraction error: ${error.message}`);
@@ -161,62 +162,41 @@ Return JSON only:
         }
     }
 
-    _parseJsonResponse(text, fallback) {
+    _parseJsonResponse(text, fallbackFn) {
         if (!text || typeof text !== 'string') {
-            console.warn('Invalid text input for JSON parsing');
-            return fallback;
+            console.warn('Invalid text input for JSON parsing, using fallback.');
+            return fallbackFn();
         }
 
         try {
-            // Clean the text more aggressively
             let cleanText = text
                 .replace(/```json\s*/g, '')
                 .replace(/```\s*/g, '')
-                .replace(/^[^{]*({.*})[^}]*$/s, '$1') // Extract JSON object
+                .replace(/^[^{]*({.*})[^}]*$/s, '$1')
                 .trim();
 
-            // Find JSON boundaries
             const openBrace = cleanText.indexOf('{');
             const closeBrace = cleanText.lastIndexOf('}');
             
             if (openBrace === -1 || closeBrace === -1 || openBrace >= closeBrace) {
-                console.warn('No valid JSON structure found');
-                return fallback;
+                console.warn('No valid JSON structure found, using fallback.');
+                return fallbackFn();
             }
             
             let jsonString = cleanText.substring(openBrace, closeBrace + 1);
             
-            // Clean up common JSON issues
-            jsonString = jsonString
-                .replace(/,(\s*[}\]])/g, '$1') // Remove trailing commas
-                .replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":') // Quote unquoted keys
-                .replace(/:\s*([a-zA-Z_][a-zA-Z0-9_\s]*[a-zA-Z0-9_])\s*([,}\]])/g, ':"$1"$2') // Quote string values
-                .replace(/"\s*(-?\d+\.?\d*)\s*"/g, '$1'); // Unquote numbers
-                
             const parsed = JSON.parse(jsonString);
             
             if (typeof parsed !== 'object' || parsed === null) {
-                console.warn('Parsed JSON is not a valid object');
-                return fallback;
+                console.warn('Parsed JSON is not a valid object, using fallback.');
+                return fallbackFn();
             }
             
             return parsed;
             
         } catch (error) {
-            console.error(`JSON parsing failed: ${error.message}`);
-            
-            // Try simpler extraction
-            try {
-                const simpleMatch = text.match(/\{[\s\S]*\}/);
-                if (simpleMatch) {
-                    const simpleParsed = JSON.parse(simpleMatch[0]);
-                    return typeof simpleParsed === 'object' ? simpleParsed : fallback;
-                }
-            } catch (simpleError) {
-                console.error('Simple JSON extraction also failed');
-            }
-            
-            return fallback;
+            console.error(`JSON parsing failed: ${error.message}. Using fallback.`);
+            return fallbackFn();
         }
     }
 
@@ -288,9 +268,7 @@ Return JSON only:
         
         const sectionLower = section.toLowerCase().replace(/\s+/g, '');
         
-        // Comprehensive weight patterns
         const weightMappings = {
-            // Universal Beams
             '150ub14': 14.0, '150ub18': 18.0,
             '180ub16': 16.1, '180ub18': 18.1, '180ub22': 22.2,
             '200ub18': 18.2, '200ub22': 22.3, '200ub25': 25.4, '200ub29': 29.8,
@@ -299,79 +277,35 @@ Return JSON only:
             '360ub44': 44.7, '360ub50': 50.7, '360ub56': 56.7,
             '410ub53': 53.7, '410ub59': 59.7, '410ub67': 67.1,
             '460ub67': 67.1, '460ub74': 74.6, '460ub82': 82.1,
-            
-            // Universal Columns
             '100uc14': 14.8, '150uc23': 23.4, '150uc30': 30.0,
             '200uc46': 46.2, '200uc52': 52.0, '200uc59': 59.5,
             '250uc72': 72.4, '250uc89': 89.5,
             '310uc96': 96.8, '310uc118': 118.0, '310uc137': 137.0,
-            
-            // Parallel Flange Channels
             '75pfc': 7.5, '100pfc': 10.4, '125pfc': 13.4,
             '150pfc': 17.0, '180pfc': 20.9, '200pfc': 23.4,
             '230pfc': 27.6, '250pfc': 31.1, '300pfc': 37.9,
             '380pfc': 48.2, '430pfc': 54.9,
-            
-            // Square Hollow Sections (estimated)
             '50shs': 6.0, '65shs': 8.0, '75shs': 11.0,
             '89shs': 13.4, '100shs': 14.9, '125shs': 18.9,
             '150shs': 22.3, '200shs': 29.7, '250shs': 37.1,
-            
-            // Purlins and Girts (estimated)
             'z150': 15.0, 'z200': 19.0, 'z250': 24.0,
             'c150': 15.0, 'c200': 19.0, 'c250': 24.0,
             'c100': 12.0
         };
         
-        // Try exact match first
         for (const [key, weight] of Object.entries(weightMappings)) {
             if (sectionLower.includes(key)) {
                 return weight;
             }
         }
         
-        // Pattern-based extraction
-        const patterns = [
-            // UB with weight: "250 UB 31.4" -> 31.4
-            { regex: /(\d+)ub(\d+\.?\d*)/, handler: (m) => parseFloat(m[2]) },
-            // UC with weight: "200 UC 46.2" -> 46.2
-            { regex: /(\d+)uc(\d+\.?\d*)/, handler: (m) => parseFloat(m[2]) },
-            // PFC: estimate based on depth
-            { regex: /(\d+)pfc/, handler: (m) => parseInt(m[1]) * 0.12 },
-            // SHS: estimate based on size and thickness
-            { regex: /(\d+)x(\d+)x(\d+\.?\d*)shs/, handler: (m) => {
-                const perimeter = 4 * parseInt(m[1]);
-                const thickness = parseFloat(m[3]);
-                return perimeter * thickness * 0.00785;
-            }},
-            // RHS: estimate based on dimensions
-            { regex: /(\d+)x(\d+)x(\d+\.?\d*)rhs/, handler: (m) => {
-                const perimeter = 2 * (parseInt(m[1]) + parseInt(m[2]));
-                const thickness = parseFloat(m[3]);
-                return perimeter * thickness * 0.00785;
-            }},
-            // Z-purlins
-            { regex: /z(\d+)/, handler: (m) => parseInt(m[1]) * 0.15 },
-            // C-purlins
-            { regex: /c(\d+)/, handler: (m) => parseInt(m[1]) * 0.12 }
-        ];
-        
-        for (const { regex, handler } of patterns) {
-            const match = sectionLower.match(regex);
-            if (match) {
-                const weight = handler(match);
-                return Math.max(5, Math.min(weight, 200)); // Reasonable bounds
-            }
-        }
-        
-        // Final fallback based on section size
         const numberMatch = section.match(/(\d+)/);
         if (numberMatch) {
             const size = parseInt(numberMatch[1]);
             return Math.max(10, Math.min(size * 0.2, 50));
         }
         
-        return 20; // Ultimate fallback
+        return 20;
     }
 
     _classifyMember(section) {
@@ -383,19 +317,14 @@ Return JSON only:
         if (sectionLower.includes('rhs')) return 'beam';
         if (sectionLower.includes('z') || sectionLower.includes('c')) return 'purlin';
         
-        return 'beam'; // Default
+        return 'beam';
     }
 
     _validateAndCleanQuantities(quantities) {
         if (!quantities || typeof quantities !== 'object') {
-            console.warn('Quantities validation failed, using empty structure');
-            return {
-                steel_quantities: { members: [], summary: { total_steel_weight_tonnes: 0, beam_weight_tonnes: 0, column_weight_tonnes: 0, member_count: 0 } },
-                concrete_quantities: { summary: { total_concrete_m3: 0 } }
-            };
+            return this._calculateFallbackQuantities({});
         }
 
-        // Ensure steel_quantities structure
         if (!quantities.steel_quantities) quantities.steel_quantities = {};
         if (!quantities.steel_quantities.summary) quantities.steel_quantities.summary = {};
         if (!Array.isArray(quantities.steel_quantities.members)) quantities.steel_quantities.members = [];
@@ -406,14 +335,12 @@ Return JSON only:
         summary.column_weight_tonnes = Math.max(0, parseFloat(summary.column_weight_tonnes) || 0);
         summary.member_count = Math.max(0, parseInt(summary.member_count) || 0);
 
-        // Ensure concrete_quantities structure
         if (!quantities.concrete_quantities) quantities.concrete_quantities = {};
         if (!quantities.concrete_quantities.summary) quantities.concrete_quantities.summary = {};
         
         const concreteSummary = quantities.concrete_quantities.summary;
         concreteSummary.total_concrete_m3 = Math.max(0, parseFloat(concreteSummary.total_concrete_m3) || 0);
 
-        // Validate individual members
         quantities.steel_quantities.members = quantities.steel_quantities.members.map(member => ({
             section: member.section || 'Unknown',
             total_length_m: Math.max(0, parseFloat(member.total_length_m) || 6),
@@ -457,7 +384,8 @@ Return JSON only:
 
     _assessProjectRisks(data) {
         const risks = [];
-        
+        const memberCount = this._calculateMemberCount(data);
+
         if ((data.confidence || 0) < 0.7) {
             risks.push({
                 risk: "Low drawing data extraction confidence",
@@ -467,7 +395,6 @@ Return JSON only:
             });
         }
 
-        const memberCount = this._calculateMemberCount(data);
         if (memberCount > 100) {
             risks.push({
                 risk: "Complex steel structure",
@@ -496,12 +423,12 @@ Return JSON only:
             "Standard connection details unless noted",
             "Site access available for delivery and crane operations"
         ];
+        const memberCount = this._calculateMemberCount(data);
 
         if ((data.confidence || 0) < 0.8) {
             assumptions.push("Quantities estimated due to limited data extraction");
         }
 
-        const memberCount = this._calculateMemberCount(data);
         if (memberCount > 0) {
             assumptions.push(`Approximately ${memberCount} steel members as per schedules`);
         }

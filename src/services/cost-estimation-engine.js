@@ -1,5 +1,4 @@
-/** 
- * Individual cost item class 
+/** * Individual cost item class 
  */
 class EstimationItem {
     constructor({
@@ -45,8 +44,7 @@ class EstimationItem {
     }
 }
 
-/** 
- * Advanced cost estimation engine with AI-derived quantities 
+/** * Advanced cost estimation engine with AI-derived quantities 
  */
 export class EstimationEngine {
     constructor() {
@@ -64,8 +62,7 @@ export class EstimationEngine {
         this.baseRates = this._initializeBaseRates();
     }
 
-    /** 
-     * Initialize comprehensive base rates database 
+    /** * Initialize comprehensive base rates database 
      */
     _initializeBaseRates() {
         return {
@@ -95,13 +92,16 @@ export class EstimationEngine {
                 "360 UB 50.7": { rate: 3.15, unit: "kg", weight_per_m: 50.7 },
                 "460 UB 67.1": { rate: 3.15, unit: "kg", weight_per_m: 67.1 },
 
-                // Parallel Flange Channels - Fixed mappings
+                // --- FIX: Added missing Parallel Flange Channels ---
+                "180 PFC": { rate: 3.25, unit: "kg", weight_per_m: 20.9 },
                 "200 PFC": { rate: 3.25, unit: "kg", weight_per_m: 23.4 },
                 "150 PFC": { rate: 3.25, unit: "kg", weight_per_m: 17.0 },
-                "250 PFC": { rate: 3.25, unit: "kg", weight_per_m: 35.0 },
-                "300 PFC": { rate: 3.25, unit: "kg", weight_per_m: 40.0 },
+                "230 PFC": { rate: 3.25, unit: "kg", weight_per_m: 27.6 },
+                "250 PFC": { rate: 3.25, unit: "kg", weight_per_m: 31.1 },
+                "300 PFC": { rate: 3.25, unit: "kg", weight_per_m: 37.9 },
+                "380 PFC": { rate: 3.25, unit: "kg", weight_per_m: 48.2 },
 
-                // Square Hollow Sections - Fixed mappings
+                // Square Hollow Sections
                 "100 X 100 X 9.0 SHS": { rate: 3.20, unit: "kg", weight_per_m: 25.8 },
                 "100 X 100 X 6.0 SHS": { rate: 3.20, unit: "kg", weight_per_m: 17.7 },
                 "89 X 89 X 5.0 SHS": { rate: 3.20, unit: "kg", weight_per_m: 13.4 },
@@ -118,7 +118,7 @@ export class EstimationEngine {
                 "50 X 50 X 2 SHS": { rate: 3.20, unit: "kg", weight_per_m: 3.0 },
                 "100 X 100 X 6 SHS": { rate: 3.20, unit: "kg", weight_per_m: 17.7 },
 
-                // Rectangular Hollow Sections - Fixed mappings
+                // Rectangular Hollow Sections
                 "200 X 100 X 3.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 17.1 },
                 "200 X 100 X 5.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 28.0 },
                 "150 X 50 X 4.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 15.0 },
@@ -137,6 +137,17 @@ export class EstimationEngine {
                 "150 X 50 X 6.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 22.0 },
                 "150 X 100 X 6.0 RHS": { rate: 3.20, unit: "kg", weight_per_m: 27.8 },
                 "150 X 50 X 9.0 SHS": { rate: 3.20, unit: "kg", weight_per_m: 31.0 },
+
+                // --- FIX: Added missing Purlin/Girt sections ---
+                "Z200 19": { rate: 3.10, unit: "kg", weight_per_m: 2.22 },
+                "Z250 24": { rate: 3.10, unit: "kg", weight_per_m: 3.03 },
+                "Z200 15": { rate: 3.10, unit: "kg", weight_per_m: 1.74 },
+                "Z150 19": { rate: 3.10, unit: "kg", weight_per_m: 1.84 },
+                "C20019": { rate: 3.10, unit: "kg", weight_per_m: 2.38 },
+                "C200 19": { rate: 3.10, unit: "kg", weight_per_m: 2.38 },
+                "C150 19": { rate: 3.10, unit: "kg", weight_per_m: 1.93 },
+                "C100 15": { rate: 3.10, unit: "kg", weight_per_m: 1.22 },
+                "C200 15": { rate: 3.10, unit: "kg", weight_per_m: 1.86 },
 
                 // Generic sections for fallback
                 "250 UB": { rate: 3.15, unit: "kg", weight_per_m: 31.4 },
@@ -175,48 +186,39 @@ export class EstimationEngine {
         };
     }
 
-    /** 
-     * Generate comprehensive cost estimation from AI analysis 
+    /** * Generate comprehensive cost estimation from AI analysis 
      */
     async generateEstimation(analysisResult, location = "Sydney") {
         try {
             const estimationItems = [];
             
-            // Validate input
             if (!analysisResult || !analysisResult.quantityTakeoff) {
                 throw new Error("Invalid analysis result: missing quantityTakeoff");
             }
 
             const quantities = analysisResult.quantityTakeoff;
 
-            // Process concrete works
             const concreteItems = await this._estimateConcreteWorks(quantities, location);
             estimationItems.push(...concreteItems);
 
-            // Process steel works - MAIN FOCUS
             const steelItems = await this._estimateSteelWorks(quantities, location);
             estimationItems.push(...steelItems);
 
-            // Process reinforcement
             const reinfItems = await this._estimateReinforcement(quantities, location);
             estimationItems.push(...reinfItems);
 
-            // Process miscellaneous works
             const miscItems = await this._estimateMiscellaneousWorks(quantities, location);
             estimationItems.push(...miscItems);
 
-            // Add professional services
             const professionalItems = await this._estimateProfessionalServices(analysisResult, location);
             estimationItems.push(...professionalItems);
 
-            // Calculate cost summary
             const costSummary = await this._calculateCostSummary(
                 estimationItems,
                 location,
                 analysisResult.riskAssessment || {}
             );
 
-            // Generate final estimation package
             const estimationData = {
                 project_id: analysisResult.projectId || 'unknown',
                 items: estimationItems.map(item => item.toObject()),
@@ -237,10 +239,8 @@ export class EstimationEngine {
         }
     }
 
-    /** 
-     * Estimate concrete works from quantities 
-     */
     async _estimateConcreteWorks(quantities, location) {
+        // This function remains the same
         const items = [];
         const concreteQty = quantities.concrete_quantities || {};
 
@@ -248,7 +248,6 @@ export class EstimationEngine {
             return items;
         }
 
-        // Process each concrete element
         for (const element of concreteQty.elements) {
             const volume = parseFloat(element.volume_m3) || 0;
             const area = parseFloat(element.area_m2) || 0;
@@ -256,8 +255,7 @@ export class EstimationEngine {
 
             if (volume > 0) {
                 const gradeKey = grade.toLowerCase();
-                const concreteRate = (this.baseRates.concrete[gradeKey]?.rate || 320) * 
-                    (this.locationFactors[location] || 1.0);
+                const concreteRate = (this.baseRates.concrete[gradeKey]?.rate || 320) * (this.locationFactors[location] || 1.0);
 
                 items.push(new EstimationItem({
                     code: `CON_${element.element_type?.toUpperCase()}_001`,
@@ -270,7 +268,6 @@ export class EstimationEngine {
                     subcategory: element.element_type
                 }));
 
-                // Add concrete pumping
                 const pumpingRate = this.baseRates.concrete.pumping.rate;
                 const pumpingCost = Math.max(volume * pumpingRate, this.baseRates.concrete.pumping.minimum);
                 
@@ -290,10 +287,8 @@ export class EstimationEngine {
         return items;
     }
 
-    /** 
-     * Estimate structural steel works with improved section matching
-     */
     async _estimateSteelWorks(quantities, location) {
+        // This function remains the same
         const items = [];
         const steelQty = quantities.steel_quantities || {};
 
@@ -303,7 +298,6 @@ export class EstimationEngine {
 
         let totalWeight = 0;
 
-        // Process each steel member
         for (let i = 0; i < steelQty.members.length; i++) {
             const member = steelQty.members[i];
             const section = member.section || '';
@@ -311,12 +305,10 @@ export class EstimationEngine {
             const weight = parseFloat(member.total_weight_kg) || 0;
             const quantity = parseInt(member.quantity) || 1;
 
-            // Find steel section details from the base rates database
             const sectionDetails = this._findSteelSectionDetails(section);
 
             if (!sectionDetails) {
                 console.log(`Steel section "${section}" not found in base rates.`);
-                // Use fallback calculation
                 const estimatedWeightPerM = this._estimateWeightPerMeter(section);
                 const estimatedWeight = weight > 0 ? weight : (totalLength > 0 ? totalLength * estimatedWeightPerM : estimatedWeightPerM * 6 * quantity);
                 
@@ -339,12 +331,10 @@ export class EstimationEngine {
                 continue;
             }
 
-            // Use provided weight, or calculate if necessary
             let finalWeightKg = weight;
             if (finalWeightKg <= 0 && sectionDetails.weight_per_m && totalLength > 0) {
                 finalWeightKg = totalLength * sectionDetails.weight_per_m;
             } else if (finalWeightKg <= 0) {
-                // Fallback: assume 6m length per piece
                 finalWeightKg = 6 * quantity * sectionDetails.weight_per_m;
             }
 
@@ -366,11 +356,9 @@ export class EstimationEngine {
             }
         }
 
-        // Add aggregate costs based on total weight
         if (totalWeight > 0) {
             const totalWeightTonnes = totalWeight / 1000;
 
-            // Fabrication
             const fabRate = this.baseRates.fabrication.medium.rate;
             items.push(new EstimationItem({
                 code: "STEEL_FAB_001",
@@ -383,7 +371,6 @@ export class EstimationEngine {
                 subcategory: "Fabrication"
             }));
 
-            // Surface Treatment
             const galvRate = this.baseRates.treatment.galvanizing.rate;
             const galvMinCharge = this.baseRates.treatment.galvanizing.minimum;
             const galvCost = Math.max(totalWeightTonnes * galvRate, galvMinCharge);
@@ -399,7 +386,6 @@ export class EstimationEngine {
                 subcategory: "Treatment"
             }));
 
-            // Erection
             const erectionRate = this.baseRates.erection.steel_erection.rate;
             items.push(new EstimationItem({
                 code: "STEEL_ERECT_001",
@@ -415,15 +401,12 @@ export class EstimationEngine {
 
         return items;
     }
-
-    /** 
-     * Estimate reinforcement quantities 
-     */
+    
     async _estimateReinforcement(quantities, location) {
+        // This function remains the same
         const items = [];
         const reinforcement = quantities.reinforcement_quantities || {};
 
-        // Process deformed bars
         if (reinforcement.deformed_bars) {
             const bars = reinforcement.deformed_bars;
             const locationFactor = this.locationFactors[location] || 1.0;
@@ -448,7 +431,6 @@ export class EstimationEngine {
             });
         }
 
-        // Process mesh
         if (reinforcement.mesh) {
             const mesh = reinforcement.mesh;
             const locationFactor = this.locationFactors[location] || 1.0;
@@ -475,14 +457,11 @@ export class EstimationEngine {
         return items;
     }
 
-    /** 
-     * Estimate miscellaneous works 
-     */
     async _estimateMiscellaneousWorks(quantities, location) {
+        // This function remains the same
         const items = [];
         const misc = quantities.miscellaneous || {};
 
-        // Process anchors
         if (misc.anchors) {
             const anchors = misc.anchors;
             const locationFactor = this.locationFactors[location] || 1.0;
@@ -509,16 +488,13 @@ export class EstimationEngine {
         return items;
     }
 
-    /** 
-     * Estimate professional services 
-     */
     async _estimateProfessionalServices(analysisResult, location) {
+        // This function remains the same
         const items = [];
         const baseCost = this._calculateBaseCost(analysisResult);
         const locationFactor = this.locationFactors[location] || 1.0;
 
-        // Engineering design (percentage of construction cost)
-        const engineeringRate = baseCost * 0.08; // 8% of construction cost
+        const engineeringRate = baseCost * 0.08;
         items.push(new EstimationItem({
             code: "PROF_ENG_001",
             description: "Structural Engineering Design",
@@ -530,8 +506,7 @@ export class EstimationEngine {
             subcategory: "Engineering"
         }));
 
-        // Project management
-        const pmRate = baseCost * 0.05; // 5% of construction cost
+        const pmRate = baseCost * 0.05;
         items.push(new EstimationItem({
             code: "PROF_PM_001",
             description: "Project Management",
@@ -546,22 +521,18 @@ export class EstimationEngine {
         return items;
     }
 
-    /** 
-     * Calculate comprehensive cost summary 
-     */
     async _calculateCostSummary(items, location, riskAssessment) {
+        // This function remains the same
         const baseCost = items.reduce((sum, item) => sum + item.totalCost, 0);
         const locationFactor = this.locationFactors[location] || 1.0;
         const complexityMultiplier = riskAssessment.cost_factors?.complexity_multiplier || 1.0;
         const dataConfidenceFactor = riskAssessment.cost_factors?.data_confidence_factor || 1.0;
 
-        // Apply adjustments
-        const locationAdjusted = baseCost; // Already applied in item calculations
+        const locationAdjusted = baseCost;
         const riskAdjusted = locationAdjusted * complexityMultiplier * dataConfidenceFactor;
 
-        // Add contingencies
-        const siteAccessContingency = riskAdjusted * 0.05; // 5%
-        const unforeseenContingency = riskAdjusted * 0.10; // 10%
+        const siteAccessContingency = riskAdjusted * 0.05;
+        const unforeseenContingency = riskAdjusted * 0.10;
         
         const subtotalExGst = riskAdjusted + siteAccessContingency + unforeseenContingency;
         const gst = subtotalExGst * this.gstRate;
@@ -583,95 +554,53 @@ export class EstimationEngine {
         };
     }
 
-    /** 
-     * Improved steel section finder with better matching
+    /** * --- FIX: Improved steel section finder with better normalization ---
      */
     _findSteelSectionDetails(sectionName) {
         if (!sectionName) return null;
         
-        const cleanSection = sectionName.trim();
+        // Normalize the input section name for more robust matching
+        const cleanSection = sectionName.toUpperCase().replace(/\s+/g, '').replace(/[×]/g, 'X');
         
-        // Try exact match first
-        if (this.baseRates.structural_steel[cleanSection]) {
-            return this.baseRates.structural_steel[cleanSection];
-        }
-        
-        // Try normalized matches
-        const normalizedSection = cleanSection.replace(/\s+/g, ' ').replace(/[×]/g, 'X').trim();
-        
+        // Create a normalized key for comparison
+        const getNormalizedKey = (key) => key.toUpperCase().replace(/\s+/g, '').replace(/[×]/g, 'X');
+
         for (const [key, details] of Object.entries(this.baseRates.structural_steel)) {
-            const normalizedKey = key.replace(/\s+/g, ' ').replace(/[×]/g, 'X').trim();
-            if (normalizedKey.toLowerCase() === normalizedSection.toLowerCase()) {
+            if (getNormalizedKey(key) === cleanSection) {
                 return details;
             }
         }
         
-        // Try partial matches for common variations
-        const sectionLower = cleanSection.toLowerCase();
-        
-        // Handle UB variations
-        if (sectionLower.includes('ub')) {
-            const ubMatch = sectionLower.match(/(\d+)\s*ub\s*(\d+\.?\d*)?/);
-            if (ubMatch) {
-                const depth = ubMatch[1];
-                const weight = ubMatch[2];
-                
-                // Try to find by depth and weight
-                if (weight) {
-                    const searchKey = `${depth} UB ${weight}`;
-                    if (this.baseRates.structural_steel[searchKey]) {
-                        return this.baseRates.structural_steel[searchKey];
+        // Handle SHS/RHS variations without decimals (e.g., 100x100x6 SHS)
+        if (cleanSection.includes('SHS') || cleanSection.includes('RHS')) {
+             const shsMatch = cleanSection.match(/(\d+)X(\d+)X(\d+)/);
+             if(shsMatch){
+                const simplifiedKey = `${shsMatch[1]}X${shsMatch[2]}X${shsMatch[3]}.0`;
+                for (const [key, details] of Object.entries(this.baseRates.structural_steel)) {
+                    if (getNormalizedKey(key).includes(simplifiedKey)) {
+                        return details;
                     }
                 }
-                
-                // Try generic depth match
-                const genericKey = `${depth} UB`;
-                if (this.baseRates.structural_steel[genericKey]) {
-                    return this.baseRates.structural_steel[genericKey];
-                }
-            }
+             }
         }
         
-        // Handle SHS variations
-        if (sectionLower.includes('shs')) {
-            const shsMatch = sectionLower.match(/(\d+)\s*[×x]\s*(\d+)\s*[×x]\s*(\d+\.?\d*)\s*shs/);
-            if (shsMatch) {
-                const searchKey = `${shsMatch[1]} X ${shsMatch[2]} X ${shsMatch[3]} SHS`;
-                if (this.baseRates.structural_steel[searchKey]) {
-                    return this.baseRates.structural_steel[searchKey];
-                }
-            }
-        }
-        
-        // Handle RHS variations
-        if (sectionLower.includes('rhs')) {
-            const rhsMatch = sectionLower.match(/(\d+)\s*[×x]\s*(\d+)\s*[×x]\s*(\d+\.?\d*)\s*rhs/);
-            if (rhsMatch) {
-                const searchKey = `${rhsMatch[1]} X ${rhsMatch[2]} X ${rhsMatch[3]} RHS`;
-                if (this.baseRates.structural_steel[searchKey]) {
-                    return this.baseRates.structural_steel[searchKey];
-                }
-            }
-        }
-        
-        return null;
+        return null; // Return null if no match is found
     }
 
     _estimateWeightPerMeter(section) {
+        // This function remains the same
         if (!section) return 20;
         
         const sectionLower = section.toLowerCase().replace(/\s/g, '');
         
-        // Try to extract weight from section name (e.g., "310 UB 40.4" -> 40.4)
         const weightMatch = section.match(/(\d+\.?\d*)\s*$/);
         if (weightMatch) {
             const weight = parseFloat(weightMatch[1]);
-            if (weight > 0 && weight < 500) { // Reasonable range for kg/m
+            if (weight > 0 && weight < 500) {
                 return weight;
             }
         }
         
-        // Fallback to pattern matching
         const weightTable = {
             '150ub': 14.0, '180ub': 18.2, '200ub': 25.4,
             '250ub': 31.4, '310ub': 40.4, '360ub': 50.7,
@@ -689,7 +618,6 @@ export class EstimationEngine {
             }
         }
         
-        // Final fallback based on first number
         const numberMatch = section.match(/(\d+)/);
         if (numberMatch) {
             const size = parseInt(numberMatch[1]);
@@ -700,16 +628,18 @@ export class EstimationEngine {
     }
 
     _calculateBaseCost(analysisResult) {
+        // This function remains the same
         const steelSummary = analysisResult.quantityTakeoff?.steel_quantities?.summary || {};
         const concreteSummary = analysisResult.quantityTakeoff?.concrete_quantities?.summary || {};
         
-        const steelCost = (steelSummary.total_steel_weight_tonnes || 0) * 3500; // AUD per tonne
-        const concreteCost = (concreteSummary.total_concrete_m3 || 0) * 400; // AUD per m3
+        const steelCost = (steelSummary.total_steel_weight_tonnes || 0) * 3500;
+        const concreteCost = (concreteSummary.total_concrete_m3 || 0) * 400;
         
         return steelCost + concreteCost;
     }
 
     _groupByCategory(items) {
+        // This function remains the same
         const categories = {};
         
         items.forEach(item => {
@@ -728,6 +658,7 @@ export class EstimationEngine {
     }
 
     _generateAssumptions(analysisResult) {
+        // This function remains the same
         const assumptions = [
             "Steel sections conform to AS/NZS standards",
             "Standard connection details unless noted",
@@ -750,6 +681,7 @@ export class EstimationEngine {
     }
 
     _generateExclusions() {
+        // This function remains the same
         return [
             "Building permits and approvals",
             "Site survey and soil testing",
@@ -762,6 +694,7 @@ export class EstimationEngine {
     }
 
     _calculateConfidenceScore(items) {
+        // This function remains the same
         if (items.length === 0) return 0;
         
         const averageConfidence = items.reduce((sum, item) => sum + item.confidence, 0) / items.length;

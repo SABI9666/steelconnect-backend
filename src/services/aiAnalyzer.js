@@ -14,14 +14,16 @@ export class EnhancedAIAnalyzer {
             return "No structural data provided.";
         }
         
+        // --- FIX: Send the full list of members to the AI, not just a slice. ---
+        // This gives the AI the complete context to perform an accurate analysis.
         const memberSummary = data.steel_schedules
-            .slice(0, 20) // Limit to first 20 members to reduce token usage
             .map(item => item.designation || 'Unknown Section')
             .join(', ');
         
         const concreteSummary = data.concrete_elements ? `Concrete elements: ${data.concrete_elements.length}` : '';
         
-        return `Steel Members: ${memberSummary}${data.steel_schedules.length > 20 ? ` and ${data.steel_schedules.length - 20} more` : ''}. ${concreteSummary} Confidence: ${(data.confidence * 100).toFixed(0)}%.`;
+        // --- FIX: Improved prompt to guide the AI more effectively. ---
+        return `Analyze all ${data.steel_schedules.length} steel members listed. Designations: ${memberSummary}. ${concreteSummary} Confidence: ${(data.confidence * 100).toFixed(0)}%.`;
     }
 
     async analyzeStructuralDrawings(structuredData, projectId) {

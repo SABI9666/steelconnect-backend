@@ -311,7 +311,6 @@ export default class ReportGenerator {
         </div>
         
         <div class="content">
-            <!-- Cost Summary Section -->
             <div class="section">
                 <div class="section-header">
                     <span class="section-icon">💰</span>
@@ -351,7 +350,6 @@ export default class ReportGenerator {
                 </table>
             </div>
 
-            <!-- Categories Overview -->
             <div class="section">
                 <div class="section-header">
                     <span class="section-icon">📋</span>
@@ -360,7 +358,6 @@ export default class ReportGenerator {
                 ${this._generateCategoryOverview(data.categories)}
             </div>
 
-            <!-- Detailed Line Items -->
             <div class="section">
                 <div class="section-header">
                     <span class="section-icon">📊</span>
@@ -369,7 +366,6 @@ export default class ReportGenerator {
                 ${this._generateDetailedItems(data.items, data.categories)}
             </div>
 
-            <!-- Assumptions & Exclusions -->
             <div class="section">
                 <div class="section-header">
                     <span class="section-icon">📝</span>
@@ -391,12 +387,11 @@ export default class ReportGenerator {
                 </div>
             </div>
 
-            <!-- Footer -->
             <div class="section">
                 <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; text-align: center; color: #6c757d;">
                     <p><strong>Disclaimer:</strong> This estimate is based on the information provided and current market rates. 
                     Final costs may vary based on site conditions, material availability, and project specifications. 
-                    Valid for ${data.estimationData?.validityPeriodDays || 30} days from generation date.</p>
+                    Valid for ${data.validityPeriodDays || 30} days from generation date.</p>
                 </div>
             </div>
         </div>

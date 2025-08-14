@@ -51,26 +51,39 @@ const ensureDirectories = async () => {
 // --- Middleware Setup ---
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(compression());
-app.use(cors({ origin: process.env.CORS_ORIGIN || '*', credentials: true }));
+
+// --- FIX: Correct CORS Configuration ---
+// This setup is more secure and robust.
+const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',');
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
+  credentials: true,
+};
+app.use(cors(corsOptions));
+// --- END FIX ---
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // --- Fallback Route Creator ---
-// This function creates a basic estimation route if the main one fails to load.
 const createBasicEstimationRoute = () => {
   console.log('📝 Creating basic estimation fallback route...');
   const estimationRouter = express.Router();
   const storage = multer.memoryStorage();
-  // This makes the endpoint more flexible by accepting any file, regardless of the field name.
   const upload = multer({ storage: storage });
 
-  // This handler now uses upload.any()
   estimationRouter.post('/generate-from-upload', upload.any(), (req, res) => {
-    // upload.any() populates req.files as an array.
     if (!req.files || req.files.length === 0) {
-      return res.status(400).json({ success: false, error: 'No file uploaded', message: "The server expects a file but didn't receive one." });
+      return res.status(400).json({ success: false, error: 'No file uploaded' });
     }
-    // Basic success response
     res.json({ success: true, message: 'Basic estimation fallback successful', projectId: `temp_${Date.now()}` });
   });
 
@@ -80,12 +93,8 @@ const createBasicEstimationRoute = () => {
 
 
 // --- Dynamic Route Loading ---
-// This function dynamically loads all routes from the 'src/routes' directory.
-// It's more robust and provides clearer error messages if a route file is missing or invalid.
 const loadRoutes = async () => {
   console.log('🔄 Loading routes...');
-  
-  // Define all routes you want to load
   const routesToLoad = [
     { path: '/api/auth', file: 'src/routes/auth.js', name: 'Auth' },
     { path: '/api/jobs', file: 'src/routes/jobs.js', name: 'Jobs' },
@@ -96,25 +105,17 @@ const loadRoutes = async () => {
   for (const route of routesToLoad) {
     const routeFilePath = path.join(projectRoot, route.file);
     try {
-      // First, check if the file actually exists
       await fs.access(routeFilePath);
-      
-      // If it exists, import and use it
       const routeUrl = pathToFileURL(routeFilePath).href;
       const { default: routeModule } = await import(routeUrl);
       app.use(route.path, routeModule);
       console.log(`✅ ${route.name} routes loaded successfully from ${route.file}`);
-
     } catch (error) {
-      // Handle different kinds of errors during loading
-      if (error.code === 'ENOENT') { // ENOENT = Error NO ENTry (file not found)
-        console.warn(`⚠️  ${route.name} routes file not found at ${route.file}. This endpoint will not be available.`);
+      if (error.code === 'ENOENT') {
+        console.warn(`⚠️  ${route.name} routes file not found at ${route.file}.`);
       } else {
-        // This catches syntax errors or other issues within the route file itself
         console.error(`❌ Error loading ${route.name} routes from ${route.file}: ${error.message}`);
       }
-      
-      // Specific fallback for estimation routes if they fail to load
       if (route.name === 'Estimation') {
         createBasicEstimationRoute();
       }
@@ -127,50 +128,31 @@ const loadRoutes = async () => {
 const initializeApp = async () => {
   try {
     await ensureDirectories();
-    // Removed createAuthRoutes and createEstimationModel as they are not provided
-    // You can add them back if they are defined elsewhere in your project
     await connectDB();
     console.log('🚀 SteelConnect Backend initialized successfully');
   } catch (error) {
     console.error('❌ Initialization failed:', error);
-    process.exit(1); // Exit if initialization fails
+    process.exit(1);
   }
 };
 
 const startServer = async () => {
   await initializeApp();
-  await loadRoutes(); // Load all our routes
+  await loadRoutes();
 
-  // Health check and root endpoints
   app.get('/', (req, res) => res.json({ message: 'SteelConnect Backend API', version: '1.0.0', status: 'running' }));
   app.get('/health', (req, res) => res.json({ status: 'OK', database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected' }));
 
-  // 404 Handler: This should be placed AFTER all other routes are defined.
   app.use('*', (req, res) => {
-    res.status(404).json({ success: false, error: 'Not Found', message: `The route ${req.method} ${req.originalUrl} does not exist on this server.` });
+    res.status(404).json({ success: false, error: 'Not Found', message: `The route ${req.method} ${req.originalUrl} does not exist.` });
   });
 
-  // Global Error Handler: This catches errors from any route.
   app.use((error, req, res, next) => {
-    // --- FIX: Re-introduced a specific handler for MulterErrors to provide a better client response. ---
     if (error instanceof multer.MulterError) {
-      if (error.code === 'LIMIT_UNEXPECTED_FILE') {
-        // This error means the field name in the form data (e.g., 'drawing') doesn't match what the server expects.
-        return res.status(400).json({
-          success: false,
-          error: 'Unexpected field',
-          message: `The file was sent with an incorrect field name: "${error.field}". Please check your frontend code.`
-        });
-      }
-      // You can add more specific Multer error checks here if needed
       return res.status(400).json({ success: false, error: 'File Upload Error', message: error.message });
     }
-    
-    // Log any other unhandled errors
     console.error('❌ Unhandled Error:', error);
-    
-    // Send a generic 500 Internal Server Error response for all other errors
-    res.status(500).json({ success: false, error: 'Internal Server Error', message: 'An unexpected error occurred on the server.' });
+    res.status(500).json({ success: false, error: 'Internal Server Error' });
   });
 
   app.listen(PORT, () => {

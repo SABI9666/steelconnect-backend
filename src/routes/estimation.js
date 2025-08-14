@@ -1,28 +1,26 @@
-// routes/estimation.js
 import express from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs/promises';
+import mongoose from 'mongoose';
 
-// --- FIX: Use the 'legacy' build of pdfjs-dist for Node.js environments ---
-// This version is designed for server-side use and avoids issues with worker scripts.
-import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
-
+// --- Service and Model Imports ---
+// Ensure the paths to these files are correct relative to your 'src/routes' directory
 import { PdfProcessor } from '../services/pdfprocessor.js';
 import { EnhancedAIAnalyzer } from '../services/aiAnalyzer.js';
 import { EstimationEngine } from '../services/cost-estimation-engine.js';
 import ReportGenerator from '../services/reportGenerator.js';
-import Estimation from '../models/estimation.js';
-
+import Estimation from '../models/estimation.js'; // Assuming your model is in 'src/models'
 
 const router = express.Router();
 
-// Configure multer for file uploads
+// --- Multer Configuration for File Uploads ---
+// This setup saves the uploaded file to the 'uploads/' directory temporarily
 const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
+    destination: (req, file, cb) => {
         cb(null, 'uploads/');
     },
-    filename: function (req, file, cb) {
+    filename: (req, file, cb) => {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
         cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
     }
@@ -30,642 +28,174 @@ const storage = multer.diskStorage({
 
 const upload = multer({
     storage: storage,
-    limits: {
-        fileSize: 10 * 1024 * 1024 // 10MB limit
-    },
+    limits: { fileSize: 15 * 1024 * 1024 }, // 15MB limit
     fileFilter: (req, file, cb) => {
-        const allowedTypes = /pdf/;
-        const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-        const mimetype = allowedTypes.test(file.mimetype);
-
-        if (mimetype && extname) {
-            return cb(null, true);
-        } else {
-            cb(new Error('Only PDF files are allowed for estimation'));
+        // Allow only PDF files
+        if (path.extname(file.originalname).toLowerCase() !== '.pdf') {
+            return cb(new Error('Only PDF files are allowed.'), false);
         }
+        cb(null, true);
     }
 });
 
-// Initialize services
-const pdfProcessor = new PdfProcessor();
-const reportGenerator = new ReportGenerator();
+// --- Initialize Services ---
+// By initializing them outside the route handlers, they are created only once.
+try {
+    var pdfProcessor = new PdfProcessor();
+    var reportGenerator = new ReportGenerator();
+    var estimationEngine = new EstimationEngine();
+} catch (e) {
+    console.error("Failed to initialize services:", e);
+}
+
 
 /**
+ * =================================================================
  * POST /api/estimation/generate-from-upload
- * Upload PDF and generate cost estimation
+ * Main route to upload a PDF and generate a cost estimation.
+ * =================================================================
  */
-router.post('/generate-from-upload', upload.any(), async (req, res) => {
+router.post('/generate-from-upload', upload.single('drawing'), async (req, res, next) => {
+    // Note: using upload.single('drawing') is more specific than upload.any()
+    // It expects the file to be sent with the field name 'drawing'.
+    
+    console.log('🚀 Received request for estimation generation...');
+    const startTime = Date.now();
+    let filePath;
+
     try {
-        console.log('🚀 Starting estimation process...');
-
-        if (!req.files || req.files.length === 0) {
-            return res.status(400).json({
-                success: false,
-                error: 'No PDF file uploaded'
-            });
+        if (!req.file) {
+            return res.status(400).json({ success: false, error: 'No PDF file uploaded or incorrect field name used. Expecting field name "drawing".' });
         }
-        const uploadedFile = req.files[0];
+        filePath = req.file.path;
+        console.log(`📄 File received and saved to: ${filePath}`);
 
-        const {
-            projectName = 'Unnamed Project',
-            location = 'Sydney',
-            clientName = ''
-        } = req.body;
-
+        const { projectName = 'Unnamed Project', location = 'Sydney', clientName = '' } = req.body;
         console.log('📋 Project details:', { projectName, location, clientName });
 
-        // Validate API key
         const apiKey = process.env.ANTHROPIC_API_KEY;
         if (!apiKey) {
-            throw new Error('ANTHROPIC_API_KEY not configured');
+            throw new Error('Server configuration error: ANTHROPIC_API_KEY is not set.');
         }
 
-        const startTime = Date.now();
-        const filePath = uploadedFile.path;
-
-        // The pdfProcessor expects the raw file data, not the path to the file.
-        console.log(`📄 Reading file from path: ${filePath}`);
+        // --- Step 1: Extract PDF Content ---
+        console.log('[1/5] Extracting text from PDF...');
         const fileBuffer = await fs.readFile(filePath);
-
-        // --- FIX: Convert the Node.js Buffer to a Uint8Array for pdf.js ---
-        // The pdf.js library expects this specific format for binary data.
         const uint8Array = new Uint8Array(fileBuffer);
-
-        // Step 1: Extract PDF content from the Uint8Array
-        console.log('📄 Extracting PDF content...');
         const extractedContent = await pdfProcessor.extractTextFromPdf(uint8Array);
-        
-        if (!extractedContent || !extractedContent.success) {
-            throw new Error('PDF text extraction failed');
+        if (!extractedContent.success) {
+            throw new Error('PDF text extraction failed.');
         }
-        
         const structuredData = pdfProcessor.extractSteelInformation(extractedContent.text);
+        console.log(`[1/5] ✅ PDF Extraction Complete. Found ${structuredData.structuralMembers?.length || 0} members.`);
 
-        console.log('✅ PDF extraction completed:', {
-            confidence: extractedContent.success ? 100 : 0,
-            schedules: structuredData.structuralMembers?.length || 0,
-            elements: 0
-        });
-
-        // Step 2: AI Analysis
-        console.log('🤖 Starting AI analysis...');
+        // --- Step 2: AI Analysis ---
+        console.log('[2/5] Starting AI analysis...');
         const aiAnalyzer = new EnhancedAIAnalyzer(apiKey);
         const projectId = `PROJ_${Date.now()}`;
-        
-        // Create properly structured data for AI analysis
         const mockStructuredDataForAI = {
-            project_info: {},
             steel_schedules: (structuredData.structuralMembers || []).map(member => ({
-                designation: member.designation || member.type || 'Unknown',
+                designation: member.designation || 'Unknown',
                 quantity: member.quantity || 1,
                 length: member.length || 6,
                 weight: member.weight || 0
             })),
             concrete_elements: [],
-            dimensions_found: structuredData.dimensions || [],
-            confidence: 0.85
+            confidence: 0.85 // Base confidence, can be improved
         };
-        
         const analysisResults = await aiAnalyzer.analyzeStructuralDrawings(mockStructuredDataForAI, projectId);
+        console.log(`[2/5] ✅ AI Analysis Complete.`);
 
-        // Validate analysis results
-        if (!analysisResults.quantityTakeoff) {
-            console.warn('AI analysis did not return quantityTakeoff, using fallback');
-            analysisResults.quantityTakeoff = {
-                steel_quantities: {
-                    members: mockStructuredDataForAI.steel_schedules.map(steel => ({
-                        section: steel.designation,
-                        total_length_m: (steel.length || 6) * (steel.quantity || 1),
-                        weight_per_m: steel.weight || 25,
-                        total_weight_kg: ((steel.length || 6) * (steel.quantity || 1) * (steel.weight || 25)),
-                        member_type: 'beam',
-                        quantity: steel.quantity || 1
-                    })),
-                    summary: {
-                        total_steel_weight_tonnes: mockStructuredDataForAI.steel_schedules.reduce((sum, steel) => {
-                            return sum + (((steel.length || 6) * (steel.quantity || 1) * (steel.weight || 25)) / 1000);
-                        }, 0),
-                        beam_weight_tonnes: 0,
-                        column_weight_tonnes: 0,
-                        member_count: mockStructuredDataForAI.steel_schedules.length
-                    }
-                },
-                concrete_quantities: {
-                    summary: { total_concrete_m3: 0 }
-                }
-            };
-        }
-
-        console.log('✅ AI analysis completed:', {
-            confidence: analysisResults.confidence,
-            steelMembers: analysisResults.quantityTakeoff?.steel_quantities?.summary?.member_count || 0,
-            concreteVolume: analysisResults.quantityTakeoff?.concrete_quantities?.summary?.total_concrete_m3 || 0
-        });
-
-        // Step 3: Cost Estimation
-        console.log('💰 Generating cost estimation...');
-        const estimationEngine = new EstimationEngine();
+        // --- Step 3: Cost Estimation ---
+        console.log('[3/5] Generating cost estimation...');
         const estimationData = await estimationEngine.generateEstimation(analysisResults, location);
+        console.log(`[3/5] ✅ Cost Estimation Complete. Total: ${estimationData.cost_summary?.total_inc_gst || 0}`);
 
-        console.log('✅ Cost estimation completed:', {
-            totalCost: estimationData.cost_summary?.total_inc_gst || 0,
-            lineItems: estimationData.items?.length || 0
+        // --- Step 4: Save to Database ---
+        console.log('[4/5] Saving estimation to database...');
+        const estimation = new Estimation({
+            projectName,
+            projectLocation: location,
+            clientName,
+            originalFilename: req.file.originalname,
+            fileSize: req.file.size,
+            structuredData: { schedules: structuredData.structuralMembers || [] },
+            analysisResults,
+            estimationData,
+            status: 'Draft',
+            user: req.body.userId // Assuming userId might be passed from an authenticated frontend
         });
+        const savedEstimation = await estimation.save();
+        console.log(`[4/5] ✅ Estimation saved with ID: ${savedEstimation._id}`);
 
-        // Step 4: Save to database (if mongoose is connected)
-        let savedEstimation = null;
-        try {
-            const estimation = new Estimation({
-                projectName,
-                projectLocation: location,
-                clientName,
-                originalFilename: uploadedFile.originalname,
-                fileSize: uploadedFile.size,
-                extractionConfidence: extractedContent.success ? 1 : 0,
-                structuredData: {
-                    schedules: structuredData.structuralMembers || [],
-                    dimensions: structuredData.dimensions || [],
-                    specifications: [],
-                    titleBlocks: []
-                },
-                analysisResults,
-                processingMetadata: {
-                    pdfPages: extractedContent.pages || 0,
-                    structuredElementsFound: structuredData.structuralMembers?.length || 0,
-                    aiAnalysisConfidence: analysisResults.confidence,
-                    processingTimeMs: Date.now() - startTime,
-                    enhancedProcessing: true,
-                    qualityMetrics: {
-                        textExtractionSuccess: true,
-                        scheduleExtractionSuccess: (structuredData.structuralMembers?.length || 0) > 0,
-                        specificationExtractionSuccess: false,
-                        dimensionExtractionSuccess: (structuredData.dimensions?.length || 0) > 0
-                    }
-                },
-                estimationData,
-                status: 'Draft',
-                user: req.body.userId || '000000000000000000000000' // Default user if not provided
-            });
-
-            savedEstimation = await estimation.save();
-            console.log('💾 Estimation saved to database:', savedEstimation._id);
-        } catch (dbError) {
-            console.warn('⚠️ Database save failed:', dbError.message);
-            // Continue without saving to database
-        }
-
-        // Step 5: Clean up uploaded file
-        try {
-            await fs.unlink(filePath);
-            console.log('🗑️ Temporary file cleaned up');
-        } catch (cleanupError) {
-            console.warn('⚠️ File cleanup failed:', cleanupError.message);
-        }
-
-        // Prepare response
+        // --- Step 5: Final Response ---
         const response = {
             success: true,
-            projectId: savedEstimation?._id || projectId,
+            projectId: savedEstimation._id.toString(),
             estimationData,
-            processing: {
-                timeMs: Date.now() - startTime,
-                confidence: analysisResults.confidence,
-                pagesProcessed: extractedContent.pages || 0,
-                structuredElementsFound: {
-                     members: structuredData.structuralMembers?.length || 0
-                }
-            },
             summary: {
                 totalCost: estimationData.cost_summary?.total_inc_gst || 0,
-                baseCost: estimationData.cost_summary?.base_cost || 0,
-                gst: estimationData.cost_summary?.gst || 0,
-                lineItems: estimationData.items?.length || 0,
-                categories: Object.keys(estimationData.categories || {}).length,
                 currency: 'AUD',
                 location
             }
         };
-
-        console.log('🎉 Estimation process completed successfully');
-        res.json(response);
+        console.log('🎉 Estimation process completed successfully.');
+        res.status(201).json(response);
 
     } catch (error) {
-        console.error('❌ Estimation error:', error);
-
-        // Clean up file if it exists
-        if (req.files && req.files.length > 0) {
+        console.error('❌ An error occurred during the estimation process:', error);
+        // Pass the error to the global error handler in server.js
+        next(error);
+    } finally {
+        // Cleanup: always try to delete the uploaded file
+        if (filePath) {
             try {
-                await fs.unlink(req.files[0].path);
+                await fs.unlink(filePath);
+                console.log('🗑️ Temporary file cleaned up.');
             } catch (cleanupError) {
-                console.warn('⚠️ Error cleanup failed:', cleanupError.message);
+                console.warn(`⚠️  Failed to clean up temporary file ${filePath}:`, cleanupError.message);
             }
         }
-
-        res.status(500).json({
-            success: false,
-            error: error.message,
-            details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-        });
     }
 });
 
-/**
- * GET /api/estimation/:id
- * Get estimation by ID
- */
-router.get('/:id', async (req, res) => {
-    try {
-        const estimation = await Estimation.findById(req.params.id);
-        
-        if (!estimation) {
-            return res.status(404).json({
-                success: false,
-                error: 'Estimation not found'
-            });
-        }
-
-        res.json({
-            success: true,
-            estimation
-        });
-
-    } catch (error) {
-        console.error('Error fetching estimation:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
 
 /**
+ * =================================================================
  * GET /api/estimation/:id/report
- * Generate and return HTML report
+ * Fetches an estimation and generates a report in the specified format.
+ * =================================================================
  */
-router.get('/:id/report', async (req, res) => {
+router.get('/:id/report', async (req, res, next) => {
+    console.log(`📄 Request received for report for estimation ID: ${req.params.id}`);
     try {
         const { format = 'html' } = req.query;
-        
-        let estimationData;
-        
-        // Try to get from database first
-        try {
-            const estimation = await Estimation.findById(req.params.id);
-            if (estimation) {
-                estimationData = estimation.estimationData;
-            } else {
-                return res.status(404).json({
-                    success: false,
-                    error: 'Estimation not found'
-                });
-            }
-        } catch (dbError) {
-            console.warn('Database query failed:', dbError.message);
-            return res.status(404).json({
-                success: false,
-                error: 'Estimation not found'
-            });
+        const estimationId = req.params.id;
+
+        if (!mongoose.Types.ObjectId.isValid(estimationId)) {
+            return res.status(400).json({ success: false, error: 'Invalid estimation ID format.' });
         }
 
-        // Generate report
-        const report = await reportGenerator.generateReport(estimationData, format, req.params.id);
-
-        // Set appropriate headers based on format
-        if (format === 'html') {
-            res.setHeader('Content-Type', 'text/html');
-            res.send(report.content);
-        } else if (format === 'json') {
-            res.setHeader('Content-Type', 'application/json');
-            res.send(report.content);
-        } else if (format === 'csv') {
-            res.setHeader('Content-Type', 'text/csv');
-            res.setHeader('Content-Disposition', `attachment; filename="estimation-${req.params.id}.csv"`);
-            res.send(report.content);
-        } else {
-            res.status(400).json({
-                success: false,
-                error: 'Unsupported format. Use html, json, or csv'
-            });
+        const estimation = await Estimation.findById(estimationId);
+        if (!estimation) {
+            return res.status(404).json({ success: false, error: 'Estimation not found.' });
         }
 
-    } catch (error) {
-        console.error('Error generating report:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
+        console.log(`Generating '${format}' report...`);
+        // The report generator handles different formats internally
+        const report = await reportGenerator.generateReport(estimation.estimationData, format, estimationId);
 
-/**
- * GET /api/estimation/reports/:id/download
- * Download report as file
- */
-router.get('/reports/:id/download', async (req, res) => {
-    try {
-        const { format = 'html' } = req.query;
-        
-        let estimationData;
-        
-        try {
-            const estimation = await Estimation.findById(req.params.id);
-            if (estimation) {
-                estimationData = estimation.estimationData;
-            } else {
-                return res.status(404).json({
-                    success: false,
-                    error: 'Estimation not found'
-                });
-            }
-        } catch (dbError) {
-            return res.status(404).json({
-                success: false,
-                error: 'Estimation not found'
-            });
-        }
-
-        const report = await reportGenerator.generateReport(estimationData, format, req.params.id);
-
-        // Set download headers
-        const timestamp = new Date().toISOString().split('T')[0];
-        const filename = `estimation-${req.params.id}-${timestamp}.${format}`;
-        
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-        
-        if (format === 'html') {
-            res.setHeader('Content-Type', 'text/html');
-        } else if (format === 'json') {
-            res.setHeader('Content-Type', 'application/json');
-        } else if (format === 'csv') {
-            res.setHeader('Content-Type', 'text/csv');
-        }
-
+        res.setHeader('Content-Type', report.type);
         res.send(report.content);
+        console.log(`✅ Successfully sent '${format}' report.`);
 
     } catch (error) {
-        console.error('Error downloading report:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
+        console.error(`❌ Error generating report for ID ${req.params.id}:`, error);
+        next(error);
     }
 });
 
-/**
- * GET /api/estimation
- * List all estimations with pagination
- */
-router.get('/', async (req, res) => {
-    try {
-        const {
-            page = 1,
-            limit = 10,
-            status,
-            location,
-            sortBy = 'createdAt',
-            sortOrder = 'desc'
-        } = req.query;
 
-        const query = {};
-        if (status) query.status = status;
-        if (location) query.projectLocation = location;
-
-        const options = {
-            page: parseInt(page),
-            limit: parseInt(limit),
-            sort: { [sortBy]: sortOrder === 'desc' ? -1 : 1 },
-            select: 'projectName projectLocation clientName status extractionConfidence estimationData.cost_summary.total_inc_gst createdAt updatedAt'
-        };
-
-        let result;
-        try {
-            const estimations = await Estimation.find(query)
-                .sort(options.sort)
-                .limit(options.limit)
-                .skip((options.page - 1) * options.limit)
-                .select(options.select);
-
-            const total = await Estimation.countDocuments(query);
-
-            result = {
-                estimations,
-                pagination: {
-                    page: options.page,
-                    limit: options.limit,
-                    total,
-                    pages: Math.ceil(total / options.limit)
-                }
-            };
-        } catch (dbError) {
-            console.warn('Database query failed:', dbError.message);
-            result = {
-                estimations: [],
-                pagination: { page: 1, limit: 10, total: 0, pages: 0 }
-            };
-        }
-
-        res.json({
-            success: true,
-            ...result
-        });
-
-    } catch (error) {
-        console.error('Error listing estimations:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-/**
- * PUT /api/estimation/:id
- * Update estimation
- */
-router.put('/:id', async (req, res) => {
-    try {
-        const updateData = req.body;
-        
-        // Remove fields that shouldn't be updated directly
-        delete updateData._id;
-        delete updateData.createdAt;
-        delete updateData.processingMetadata;
-
-        const estimation = await Estimation.findByIdAndUpdate(
-            req.params.id,
-            updateData,
-            { new: true, runValidators: true }
-        );
-
-        if (!estimation) {
-            return res.status(404).json({
-                success: false,
-                error: 'Estimation not found'
-            });
-        }
-
-        res.json({
-            success: true,
-            estimation
-        });
-
-    } catch (error) {
-        console.error('Error updating estimation:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-/**
- * DELETE /api/estimation/:id
- * Delete estimation
- */
-router.delete('/:id', async (req, res) => {
-    try {
-        const estimation = await Estimation.findByIdAndDelete(req.params.id);
-
-        if (!estimation) {
-            return res.status(404).json({
-                success: false,
-                error: 'Estimation not found'
-            });
-        }
-
-        res.json({
-            success: true,
-            message: 'Estimation deleted successfully'
-        });
-
-    } catch (error) {
-        console.error('Error deleting estimation:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-/**
- * POST /api/estimation/:id/duplicate
- * Duplicate an existing estimation
- */
-router.post('/:id/duplicate', async (req, res) => {
-    try {
-        const originalEstimation = await Estimation.findById(req.params.id);
-
-        if (!originalEstimation) {
-            return res.status(404).json({
-                success: false,
-                error: 'Original estimation not found'
-            });
-        }
-
-        // Create duplicate with modified data
-        const duplicateData = originalEstimation.toObject();
-        delete duplicateData._id;
-        delete duplicateData.createdAt;
-        delete duplicateData.updatedAt;
-        
-        duplicateData.projectName += ' (Copy)';
-        duplicateData.status = 'Draft';
-        duplicateData.version = 1;
-
-        const duplicatedEstimation = new Estimation(duplicateData);
-        await duplicatedEstimation.save();
-
-        res.json({
-            success: true,
-            estimation: duplicatedEstimation
-        });
-
-    } catch (error) {
-        console.error('Error duplicating estimation:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-/**
- * GET /api/estimation/stats/summary
- * Get estimation statistics
- */
-router.get('/stats/summary', async (req, res) => {
-    try {
-        let stats;
-        
-        try {
-            const totalEstimations = await Estimation.countDocuments();
-            const draftEstimations = await Estimation.countDocuments({ status: 'Draft' });
-            const approvedEstimations = await Estimation.countDocuments({ status: 'Approved' });
-            
-            const totalValueResult = await Estimation.aggregate([
-                { $match: { status: { $ne: 'Archived' } } },
-                { $group: { _id: null, total: { $sum: '$estimationData.cost_summary.total_inc_gst' } } }
-            ]);
-            
-            const avgConfidenceResult = await Estimation.aggregate([
-                { $group: { _id: null, avg: { $avg: '$extractionConfidence' } } }
-            ]);
-
-            stats = {
-                totalEstimations,
-                draftEstimations,
-                approvedEstimations,
-                totalValue: totalValueResult[0]?.total || 0,
-                averageConfidence: avgConfidenceResult[0]?.avg || 0,
-                recentActivity: await Estimation.find()
-                    .sort({ updatedAt: -1 })
-                    .limit(5)
-                    .select('projectName status updatedAt')
-            };
-        } catch (dbError) {
-            console.warn('Database query failed:', dbError.message);
-            stats = {
-                totalEstimations: 0,
-                draftEstimations: 0,
-                approvedEstimations: 0,
-                totalValue: 0,
-                averageConfidence: 0,
-                recentActivity: []
-            };
-        }
-
-        res.json({
-            success: true,
-            ...stats
-        });
-
-    } catch (error) {
-        console.error('Error getting stats:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-/**
- * Error handling middleware
- */
-router.use((error, req, res, next) => {
-    if (error instanceof multer.MulterError) {
-        if (error.code === 'LIMIT_FILE_SIZE') {
-            return res.status(400).json({
-                success: false,
-                error: 'File too large. Maximum size is 10MB.'
-            });
-        }
-    }
-    
-    console.error('Estimation route error:', error);
-    res.status(500).json({
-        success: false,
-        error: error.message
-    });
-});
+// Add other routes like GET /:id, DELETE /:id etc. here if needed...
 
 export default router;

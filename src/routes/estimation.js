@@ -66,7 +66,6 @@ router.post('/generate-from-upload', upload.any(), async (req, res) => {
         }
         const uploadedFile = req.files[0];
 
-
         const {
             projectName = 'Unnamed Project',
             location = 'Sydney',
@@ -95,8 +94,12 @@ router.post('/generate-from-upload', upload.any(), async (req, res) => {
         // Step 1: Extract PDF content from the Uint8Array
         console.log('📄 Extracting PDF content...');
         const extractedContent = await pdfProcessor.extractTextFromPdf(uint8Array);
+        
+        if (!extractedContent || !extractedContent.success) {
+            throw new Error('PDF text extraction failed');
+        }
+        
         const structuredData = pdfProcessor.extractSteelInformation(extractedContent.text);
-
 
         console.log('✅ PDF extraction completed:', {
             confidence: extractedContent.success ? 100 : 0,
@@ -108,15 +111,50 @@ router.post('/generate-from-upload', upload.any(), async (req, res) => {
         console.log('🤖 Starting AI analysis...');
         const aiAnalyzer = new EnhancedAIAnalyzer(apiKey);
         const projectId = `PROJ_${Date.now()}`;
+        
+        // Create properly structured data for AI analysis
         const mockStructuredDataForAI = {
             project_info: {},
-            steel_schedules: structuredData.structuralMembers,
+            steel_schedules: (structuredData.structuralMembers || []).map(member => ({
+                designation: member.designation || member.type || 'Unknown',
+                quantity: member.quantity || 1,
+                length: member.length || 6,
+                weight: member.weight || 0
+            })),
             concrete_elements: [],
-            dimensions_found: structuredData.dimensions,
+            dimensions_found: structuredData.dimensions || [],
             confidence: 0.85
         };
+        
         const analysisResults = await aiAnalyzer.analyzeStructuralDrawings(mockStructuredDataForAI, projectId);
 
+        // Validate analysis results
+        if (!analysisResults.quantityTakeoff) {
+            console.warn('AI analysis did not return quantityTakeoff, using fallback');
+            analysisResults.quantityTakeoff = {
+                steel_quantities: {
+                    members: mockStructuredDataForAI.steel_schedules.map(steel => ({
+                        section: steel.designation,
+                        total_length_m: (steel.length || 6) * (steel.quantity || 1),
+                        weight_per_m: steel.weight || 25,
+                        total_weight_kg: ((steel.length || 6) * (steel.quantity || 1) * (steel.weight || 25)),
+                        member_type: 'beam',
+                        quantity: steel.quantity || 1
+                    })),
+                    summary: {
+                        total_steel_weight_tonnes: mockStructuredDataForAI.steel_schedules.reduce((sum, steel) => {
+                            return sum + (((steel.length || 6) * (steel.quantity || 1) * (steel.weight || 25)) / 1000);
+                        }, 0),
+                        beam_weight_tonnes: 0,
+                        column_weight_tonnes: 0,
+                        member_count: mockStructuredDataForAI.steel_schedules.length
+                    }
+                },
+                concrete_quantities: {
+                    summary: { total_concrete_m3: 0 }
+                }
+            };
+        }
 
         console.log('✅ AI analysis completed:', {
             confidence: analysisResults.confidence,

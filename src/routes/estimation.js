@@ -1,29 +1,17 @@
 import express from 'express';
-console.log('DEBUG: Express imported');
-
 import multer from 'multer';
-console.log('DEBUG: Multer imported');
-
 import mongoose from 'mongoose';
-console.log('DEBUG: Mongoose imported');
 
-// TEST IMPORT 1: Firebase (✅ WORKING)
+// Restored Imports
 import { adminStorage } from '../config/firebase.js';
-console.log('DEBUG: Firebase imported successfully');
-
-// TEST IMPORT 2: PdfProcessor (uncomment this next)
 import { PdfProcessor } from '../services/pdfprocessor.js';
-console.log('DEBUG: PdfProcessor imported successfully');
-
-// KEEP THESE COMMENTED FOR NOW - ADD ONE BY ONE
-// import { EnhancedAIAnalyzer } from '../services/aiAnalyzer.js';
-// import { EstimationEngine } from '../services/cost-estimation-engine.js';
-// import Estimation from '../models/estimation.js';
+import { EnhancedAIAnalyzer } from '../services/aiAnalyzer.js';
+import { EstimationEngine } from '../services/cost-estimation-engine.js';
+import Estimation from '../models/estimation.js';
 
 const router = express.Router();
 
 // --- Multer Configuration for In-Memory File Uploads ---
-// Switched to memoryStorage to handle the file as a buffer instead of saving it to disk.
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 15 * 1024 * 1024 }, // 15MB limit
@@ -35,88 +23,129 @@ const upload = multer({
     }
 });
 
-// COMMENT OUT SERVICE INITIALIZATION FOR NOW
-// try {
-//     var pdfProcessor = new PdfProcessor();
-//     var estimationEngine = new EstimationEngine();
-// } catch (e) {
-//     console.error("Failed to initialize core services:", e);
-// }
+// --- Service Initialization ---
+// Initialize services in a try-catch block to handle potential startup errors.
+let pdfProcessor, estimationEngine, aiAnalyzer;
+try {
+    pdfProcessor = new PdfProcessor();
+    estimationEngine = new EstimationEngine();
+    aiAnalyzer = new EnhancedAIAnalyzer(process.env.ANTHROPIC_API_KEY);
+} catch (e) {
+    console.error("Fatal Error: Failed to initialize core services.", e);
+    // Exit the process if core services can't be initialized.
+    process.exit(1); 
+}
 
+// --- Firebase Upload Helper Function ---
+// Uploads a file buffer to Firebase Storage.
+const uploadToFirebase = (buffer, originalname) => {
+    return new Promise((resolve, reject) => {
+        const bucket = adminStorage.bucket();
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        const destinationPath = `drawings/${uniqueSuffix}-${originalname}`;
+        const file = bucket.file(destinationPath);
 
-// COMMENT OUT FIREBASE FUNCTION FOR NOW
-// const uploadToFirebase = (buffer, originalname) => {
-//     return new Promise((resolve, reject) => {
-//         const bucket = adminStorage.bucket();
-//         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-//         const destinationPath = `drawings/${uniqueSuffix}-${originalname}`;
-//         const file = bucket.file(destinationPath);
+        const stream = file.createWriteStream({
+            metadata: {
+                contentType: 'application/pdf',
+            },
+        });
 
-//         const stream = file.createWriteStream({
-//             metadata: {
-//                 contentType: 'application/pdf',
-//             },
-//         });
+        stream.on('error', (err) => {
+            reject(new Error(`Firebase upload failed: ${err.message}`));
+        });
 
-//         stream.on('error', (err) => {
-//             reject(new Error(`Firebase upload failed: ${err.message}`));
-//         });
+        stream.on('finish', () => {
+            // Return the public URL for the uploaded file
+            const publicUrl = `https://storage.googleapis.com/${bucket.name}/${destinationPath}`;
+            resolve({ path: destinationPath, url: publicUrl });
+        });
 
-//         stream.on('finish', () => {
-//             resolve(destinationPath);
-//         });
+        stream.end(buffer);
+    });
+};
 
-//         stream.end(buffer);
-//     });
-// };
-
-
-// SIMPLIFIED ROUTE FOR TESTING
+// --- Main Route to Generate Estimation from PDF Upload ---
 router.post('/generate-from-upload', upload.single('drawing'), async (req, res, next) => {
-    console.log('[TEST] Basic route working...');
-    
     try {
         if (!req.file) {
             return res.status(400).json({ success: false, error: 'No PDF file uploaded.' });
         }
-        
-        const { projectName = 'Test Project', location = 'Sydney' } = req.body;
-        console.log('[TEST] Project details:', { projectName, location });
 
-        // Simple response without any service calls
-        const response = {
-            success: true,
-            message: 'Basic upload test successful',
+        const { projectName = 'Untitled Project', location = 'Not Specified' } = req.body;
+        const userId = req.user.id; // Assuming user ID is available from auth middleware
+
+        // 1. Upload to Firebase
+        const { path: firebasePath, url: firebaseUrl } = await uploadToFirebase(req.file.buffer, req.file.originalname);
+
+        // 2. Process PDF to extract structured data
+        const structuredData = await pdfProcessor.process(req.file.buffer);
+
+        // 3. Analyze data with AI to get quantities and scope
+        const analysisResults = await aiAnalyzer.analyzeStructuralDrawings(structuredData);
+
+        // 4. Calculate cost estimation based on AI analysis
+        const costEstimation = estimationEngine.calculate(analysisResults);
+
+        // 5. Create a new estimation document
+        const newEstimation = new Estimation({
+            _id: new mongoose.Types.ObjectId(),
+            userId,
             projectName,
             location,
-            fileName: req.file.originalname,
-            fileSize: req.file.size
-        };
-        
-        console.log('[TEST] Route completed successfully.');
-        res.status(201).json(response);
+            status: 'Completed',
+            drawingUrl: firebaseUrl,
+            drawingPath: firebasePath,
+            structuredData,
+            analysisResults,
+            costEstimation,
+        });
+
+        // 6. Save to MongoDB
+        await newEstimation.save();
+
+        // 7. Send successful response
+        res.status(201).json({
+            success: true,
+            message: 'Estimation generated successfully.',
+            estimationId: newEstimation._id,
+            data: newEstimation,
+        });
 
     } catch (error) {
-        console.error('[TEST ERROR]:', error);
-        next(error);
+        console.error('Error in /generate-from-upload route:', error);
+        next(error); // Pass error to the global error handler
     }
 });
 
-// SIMPLIFIED REPORT ROUTE
+// --- Route to Fetch a Specific Estimation Report ---
 router.get('/:id/report', async (req, res, next) => {
     try {
-        res.json({ 
-            success: true, 
-            message: "Report route working - simplified version",
-            id: req.params.id
+        const { id } = req.params;
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ success: false, error: 'Invalid estimation ID format.' });
+        }
+
+        const estimation = await Estimation.findById(id);
+
+        if (!estimation) {
+            return res.status(404).json({ success: false, error: 'Estimation not found.' });
+        }
+        
+        // Ensure the user requesting the report is the one who created it
+        if (estimation.userId.toString() !== req.user.id) {
+            return res.status(403).json({ success: false, error: 'Forbidden: You do not have access to this resource.' });
+        }
+
+        res.status(200).json({
+            success: true,
+            data: estimation,
         });
+        
     } catch (error) {
+        console.error(`Error fetching report for ID ${req.params.id}:`, error);
         next(error);
     }
 });
-
-console.log('DEBUG: All routes defined successfully');
-console.log('DEBUG: About to export router...');
-
 
 export default router;

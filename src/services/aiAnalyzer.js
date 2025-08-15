@@ -375,7 +375,8 @@ Return ONLY this JSON structure:
 
     _getAccurateWeight(section) {
         const normalized = this._normalizeSection(section);
-        const ubMatch = normalized.match(new RegExp('(\\d+)\\s*UB\\s*(\\d+\\.?\\d*)'));
+        // Fixed: proper escaping of regex patterns
+        const ubMatch = normalized.match(/(\d+)\s*UB\s*(\d+\.?\d*)/);
         if (ubMatch) {
             const depth = parseInt(ubMatch[1]);
             const weight = parseFloat(ubMatch[2]);
@@ -383,7 +384,7 @@ Return ONLY this JSON structure:
                 return weight;
             }
         }
-        const ucMatch = normalized.match(new RegExp('(\\d+)\\s*UC\\s*(\\d+\\.?\\d*)'));
+        const ucMatch = normalized.match(/(\d+)\s*UC\s*(\d+\.?\d*)/);
         if (ucMatch) {
             const depth = parseInt(ucMatch[1]);
             const weight = parseFloat(ucMatch[2]);
@@ -391,7 +392,7 @@ Return ONLY this JSON structure:
                 return weight;
             }
         }
-        const pfcMatch = normalized.match(new RegExp('(\\d+)\\s*PFC'));
+        const pfcMatch = normalized.match(/(\d+)\s*PFC/);
         if (pfcMatch) {
             const depth = parseInt(pfcMatch[1]);
             return this.steelWeights.PFC[depth] || this._estimateWeight(section);
@@ -401,7 +402,7 @@ Return ONLY this JSON structure:
 
     _estimateWeight(section) {
         const s = section.toLowerCase();
-        const numbers = section.match(new RegExp('\\d+(?:\\.\\d+)?', 'g'))?.map(Number) || [];
+        const numbers = section.match(/\d+(?:\.\d+)?/g)?.map(Number) || [];
         if (numbers.length === 0) return 20;
         const depth = numbers[0];
         if (s.includes('ub')) {

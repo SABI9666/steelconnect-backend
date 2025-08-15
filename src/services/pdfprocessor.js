@@ -2,7 +2,7 @@ import pdf from 'pdf-parse';
 
 export class PdfProcessor {
     constructor() {
-        // Using RegExp constructor to avoid any regex literal parsing issues
+        // Fixed RegExp patterns - properly escaped
         this.patterns = {
             steelScheduleHeader: new RegExp('STEEL\\s+SCHEDULE', 'i'),
             generalNotesBlock: new RegExp('GENERAL\\s+NOTES:([\\s\\S]*?)(?=STEEL\\s+SCHEDULE|STRUCTURAL\\s+SPECIFICATIONS)', 'i'),
@@ -10,11 +10,11 @@ export class PdfProcessor {
             memberLine: new RegExp('(\\d+\\s*(UB|UC|PFC|SHS|RHS|CHS|EA|UA)[\\s\\d\\.x]*)', 'i'),
             quantity: new RegExp('(?:QTY|QUANTITY)\\s*[:\\-]\\s*(\\d+)', 'i'),
             length: new RegExp('(?:LENGTH|LEN)\\s*[:\\-]\\s*([\\d\\.]+)', 'i'),
-            // Properly handle forward slashes for grades like '300PLUS/S'
-            steelGrade: new RegExp('STEEL\\s+GRADE\\s*:\\s*(\\w+(?:/\\w+)*)', 'i'),
+            // Fixed: properly handle forward slashes for grades like '300PLUS/S'
+            steelGrade: new RegExp('STEEL\\s+GRADE\\s*:\\s*(\\w+(?:\\/\\w+)*)', 'i'),
             concreteGrade: new RegExp('CONCRETE\\s+GRADE\\s*:\\s*(\\w+)', 'i'),
             // Fixed: bolt grade pattern with proper forward slash handling
-            boltGrade: new RegExp('BOLT\\s+GRADE\\s*:\\s*([\\d\\.]+/S)', 'i')
+            boltGrade: new RegExp('BOLT\\s+GRADE\\s*:\\s*([\\d\\.]+\\/S)', 'i')
         };
     }
 

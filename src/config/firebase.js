@@ -17,8 +17,8 @@ const serviceAccount = JSON.parse(serviceAccountJson);
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
-    // --- FIX: The bucket name should not include 'firebasestorage.' ---
-    storageBucket: 'steelconnect-backend-3f684.firebasestorage.app'
+    // --- CORRECTED BUCKET NAME ---
+    storageBucket: 'steelconnect-backend-3f684.appspot.com'
   });
 }
 

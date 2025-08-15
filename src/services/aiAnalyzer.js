@@ -1,11 +1,15 @@
+// File: src/services/aiAnalyzer.js
+
 // Improved AI Analyzer with better prompting and validation
 import Anthropic from '@anthropic-ai/sdk';
 
-export class  ImprovedAIAnalyzer{
+// FIX: Renamed class from 'ImprovedAIAnalyzer' to 'EnhancedAIAnalyzer'
+// This ensures it matches the name being imported in your routes file.
+export class EnhancedAIAnalyzer {
     constructor(apiKey) {
         this.client = new Anthropic({ apiKey });
         this.maxTokens = 4000;
-        this.model = "claude-3-5-sonnet-20241022";
+        this.model = "claude-3-5-sonnet-20240620"; // Note: Updated to a valid model name
         this.steelWeights = this.initializeSteelWeights();
     }
 
@@ -39,12 +43,10 @@ export class  ImprovedAIAnalyzer{
 
     async analyzeStructuralDrawings(structuredData, projectId) {
         try {
-            console.log('🤖 Starting improved AI analysis...');
+            console.log('🤖 Starting AI analysis...');
             
-            // Create a more detailed summary for AI
             const detailedSummary = this._createDetailedSummary(structuredData);
             
-            // Perform analysis in stages for better accuracy
             const quantityTakeoff = await this._performEnhancedQuantityTakeoff(detailedSummary, structuredData);
             const specifications = await this._extractSpecifications(detailedSummary);
             const riskAssessment = this._performRiskAssessment(structuredData, quantityTakeoff);
@@ -59,7 +61,6 @@ export class  ImprovedAIAnalyzer{
                 assumptions: this._generateAssumptions(structuredData, quantityTakeoff)
             };
             
-            // Validate results
             if (!this._validateResults(analysisResults)) {
                 console.warn('AI analysis validation failed, using enhanced fallback');
                 analysisResults.quantityTakeoff = this._calculateEnhancedFallback(structuredData);
@@ -86,7 +87,6 @@ export class  ImprovedAIAnalyzer{
             categories: {}
         };
 
-        // Categorize and detail each member
         members.forEach(member => {
             const category = this._classifyMember(member.designation);
             const weight = this._getAccurateWeight(member.designation);
@@ -223,26 +223,17 @@ Return ONLY this JSON structure:
 
     _parseAndValidateJSON(text) {
         try {
-            // Clean the response text
-            let cleanText = text
-                .replace(/```json\s*/gi, '')
-                .replace(/```\s*/g, '')
-                .replace(/^\s*[^{]*/, '') // Remove text before first {
-                .replace(/[^}]*$/, '') // Remove text after last }
-                .trim();
-
-            // Find the main JSON object
-            const startIndex = cleanText.indexOf('{');
-            const endIndex = cleanText.lastIndexOf('}');
+            // More robustly find the JSON object within the response text
+            const startIndex = text.indexOf('{');
+            const endIndex = text.lastIndexOf('}');
             
             if (startIndex === -1 || endIndex === -1) {
-                throw new Error('No valid JSON structure found');
+                throw new Error('No valid JSON structure found in AI response.');
             }
 
-            const jsonString = cleanText.substring(startIndex, endIndex + 1);
+            const jsonString = text.substring(startIndex, endIndex + 1);
             const parsed = JSON.parse(jsonString);
 
-            // Basic validation
             if (!parsed || typeof parsed !== 'object') {
                 throw new Error('Invalid JSON object');
             }
@@ -251,13 +242,13 @@ Return ONLY this JSON structure:
 
         } catch (error) {
             console.error('JSON parsing failed:', error.message);
+            console.error('Problematic text received from AI:', text);
             return null;
         }
     }
 
     _validateQuantities(quantities, originalData) {
         try {
-            // Check required structure
             if (!quantities.steel_quantities || !quantities.steel_quantities.members) {
                 return false;
             }
@@ -265,13 +256,11 @@ Return ONLY this JSON structure:
             const aiMemberCount = quantities.steel_quantities.summary?.member_count || 0;
             const originalMemberCount = originalData.steel_schedules?.length || 0;
 
-            // AI should account for at least 80% of original members
             if (originalMemberCount > 5 && aiMemberCount < originalMemberCount * 0.8) {
                 console.log(`Member count mismatch: AI=${aiMemberCount}, Original=${originalMemberCount}`);
                 return false;
             }
 
-            // Validate individual members have required fields
             const members = quantities.steel_quantities.members;
             const validMembers = members.filter(member => 
                 member.section && 
@@ -288,11 +277,9 @@ Return ONLY this JSON structure:
     }
 
     _enhanceQuantities(quantities, originalData) {
-        // Cross-reference with original data to ensure accuracy
         const enhanced = JSON.parse(JSON.stringify(quantities));
         
         if (originalData.steel_schedules) {
-            // Map original data to enhance AI results
             const originalMap = new Map();
             originalData.steel_schedules.forEach(member => {
                 const key = this._normalizeSection(member.designation);
@@ -302,7 +289,6 @@ Return ONLY this JSON structure:
                 originalMap.get(key).push(member);
             });
 
-            // Enhance AI members with original data
             enhanced.steel_quantities.members = enhanced.steel_quantities.members.map(aiMember => {
                 const normalizedSection = this._normalizeSection(aiMember.section);
                 const originalMembers = originalMap.get(normalizedSection) || [];
@@ -311,7 +297,6 @@ Return ONLY this JSON structure:
                     const totalOriginalQty = originalMembers.reduce((sum, m) => sum + (parseInt(m.quantity) || 1), 0);
                     const avgOriginalLength = originalMembers.reduce((sum, m) => sum + (parseFloat(m.length) || 6), 0) / originalMembers.length;
                     
-                    // Use original data if significantly different
                     if (Math.abs(aiMember.quantity - totalOriginalQty) > totalOriginalQty * 0.3) {
                         aiMember.quantity = totalOriginalQty;
                         aiMember.total_length_m = totalOriginalQty * avgOriginalLength;
@@ -322,7 +307,6 @@ Return ONLY this JSON structure:
                 return aiMember;
             });
 
-            // Recalculate summary
             this._recalculateSummary(enhanced.steel_quantities);
         }
 
@@ -336,22 +320,12 @@ Return ONLY this JSON structure:
             steel_quantities: {
                 members: [],
                 summary: {
-                    total_steel_weight_tonnes: 0,
-                    beam_weight_tonnes: 0,
-                    column_weight_tonnes: 0,
-                    purlin_weight_tonnes: 0,
-                    hollow_section_weight_tonnes: 0,
-                    member_count: 0,
-                    beam_count: 0,
-                    column_count: 0,
-                    purlin_count: 0,
-                    hollow_section_count: 0
+                    total_steel_weight_tonnes: 0, beam_weight_tonnes: 0, column_weight_tonnes: 0,
+                    purlin_weight_tonnes: 0, hollow_section_weight_tonnes: 0, member_count: 0,
+                    beam_count: 0, column_count: 0, purlin_count: 0, hollow_section_count: 0
                 }
             },
-            concrete_quantities: {
-                elements: [],
-                summary: { total_concrete_m3: 0 }
-            },
+            concrete_quantities: { elements: [], summary: { total_concrete_m3: 0 } },
             reinforcement_quantities: {
                 deformed_bars: { n12: 0, n16: 0, n20: 0 },
                 mesh: { sl72: 0, sl82: 0 }
@@ -362,7 +336,6 @@ Return ONLY this JSON structure:
             return fallback;
         }
 
-        // Group similar members
         const memberGroups = new Map();
         data.steel_schedules.forEach(member => {
             const key = this._normalizeSection(member.designation);
@@ -372,7 +345,6 @@ Return ONLY this JSON structure:
             memberGroups.get(key).push(member);
         });
 
-        // Process each group
         memberGroups.forEach((members, section) => {
             const totalQuantity = members.reduce((sum, m) => sum + (parseInt(m.quantity) || 1), 0);
             const avgLength = members.reduce((sum, m) => sum + (parseFloat(m.length) || 6), 0) / members.length;
@@ -390,12 +362,10 @@ Return ONLY this JSON structure:
                 average_length_m: parseFloat(avgLength.toFixed(2))
             });
 
-            // Update summary
             const weightTonnes = totalWeight / 1000;
             fallback.steel_quantities.summary.total_steel_weight_tonnes += weightTonnes;
             fallback.steel_quantities.summary.member_count += totalQuantity;
 
-            // Update category-specific counts
             switch (memberType) {
                 case 'beam':
                     fallback.steel_quantities.summary.beam_weight_tonnes += weightTonnes;
@@ -416,14 +386,12 @@ Return ONLY this JSON structure:
             }
         });
 
-        // Round summary values
         Object.keys(fallback.steel_quantities.summary).forEach(key => {
             if (typeof fallback.steel_quantities.summary[key] === 'number' && key.includes('weight')) {
                 fallback.steel_quantities.summary[key] = parseFloat(fallback.steel_quantities.summary[key].toFixed(3));
             }
         });
 
-        // Estimate concrete and reinforcement
         this._estimateConcreteAndReinforcement(fallback);
 
         return fallback;
@@ -433,9 +401,8 @@ Return ONLY this JSON structure:
         const steelWeight = quantities.steel_quantities.summary.total_steel_weight_tonnes;
         const memberCount = quantities.steel_quantities.summary.member_count;
 
-        // Estimate concrete based on steel structure size
         if (steelWeight > 0) {
-            const estimatedConcrete = Math.max(10, steelWeight * 8); // Rule of thumb: 8m³ concrete per tonne steel
+            const estimatedConcrete = Math.max(10, steelWeight * 8);
             
             quantities.concrete_quantities.elements.push({
                 element_type: "foundation",
@@ -454,7 +421,6 @@ Return ONLY this JSON structure:
             quantities.concrete_quantities.summary.total_concrete_m3 = parseFloat(estimatedConcrete.toFixed(1));
         }
 
-        // Estimate reinforcement
         const concreteVolume = quantities.concrete_quantities.summary.total_concrete_m3;
         if (concreteVolume > 0) {
             quantities.reinforcement_quantities.deformed_bars.n12 = Math.round(concreteVolume * 50);
@@ -468,7 +434,7 @@ Return ONLY this JSON structure:
     _getAccurateWeight(section) {
         const normalized = this._normalizeSection(section);
         
-        // Match against database
+        // All regexes here are valid and do not contain unescaped slashes.
         const ubMatch = normalized.match(/(\d+)\s*UB\s*(\d+\.?\d*)/);
         if (ubMatch) {
             const depth = parseInt(ubMatch[1]);
@@ -535,16 +501,9 @@ Return ONLY this JSON structure:
 
     _recalculateSummary(steelQuantities) {
         const summary = {
-            total_steel_weight_tonnes: 0,
-            beam_weight_tonnes: 0,
-            column_weight_tonnes: 0,
-            purlin_weight_tonnes: 0,
-            hollow_section_weight_tonnes: 0,
-            member_count: 0,
-            beam_count: 0,
-            column_count: 0,
-            purlin_count: 0,
-            hollow_section_count: 0
+            total_steel_weight_tonnes: 0, beam_weight_tonnes: 0, column_weight_tonnes: 0,
+            purlin_weight_tonnes: 0, hollow_section_weight_tonnes: 0, member_count: 0,
+            beam_count: 0, column_count: 0, purlin_count: 0, hollow_section_count: 0
         };
 
         steelQuantities.members.forEach(member => {
@@ -572,7 +531,6 @@ Return ONLY this JSON structure:
             }
         });
 
-        // Round values
         Object.keys(summary).forEach(key => {
             if (typeof summary[key] === 'number' && key.includes('weight')) {
                 summary[key] = parseFloat(summary[key].toFixed(3));
@@ -683,7 +641,6 @@ Return only JSON:
     _calculateOverallConfidence(structuredData, quantityTakeoff) {
         let confidence = structuredData.confidence || 0.5;
         
-        // Boost confidence if quantities are reasonable
         const totalWeight = quantityTakeoff?.steel_quantities?.summary?.total_steel_weight_tonnes || 0;
         const memberCount = quantityTakeoff?.steel_quantities?.summary?.member_count || 0;
         
@@ -691,7 +648,6 @@ Return only JSON:
             confidence = Math.min(0.95, confidence + 0.1);
         }
         
-        // Reduce confidence for very large projects (higher uncertainty)
         if (totalWeight > 200 || memberCount > 300) {
             confidence *= 0.9;
         }
@@ -719,7 +675,7 @@ Return only JSON:
             work_packages: [
                 {
                     package_name: "Steel Structure",
-                    description: `${memberCount} steel members, ${totalWeight}T total`,
+                    description: `${memberCount} steel members, ${totalWeight.toFixed(1)}T total`,
                     complexity: complexity,
                     estimated_duration_days: duration,
                     scope_items: [
@@ -836,3 +792,4 @@ Return only JSON:
         };
     }
 }
+

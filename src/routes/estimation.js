@@ -91,7 +91,7 @@ router.post('/generate-from-upload', upload.single('drawing'), async (req, res, 
         console.log('[1/6] Uploading file to Firebase Storage...');
         const fileBuffer = req.file.buffer;
         const storagePath = await uploadToFirebase(fileBuffer, req.file.originalname);
-        console.log(`[1/6] SUCCESS: File uploaded to: ${storagePath}`);
+        console.log(`[1/6] SUCCESS - File uploaded to: ${storagePath}`);
         
         // --- Step 2: Extract PDF Content from Buffer ---
         console.log('[2/6] Extracting text from PDF...');
@@ -101,7 +101,7 @@ router.post('/generate-from-upload', upload.single('drawing'), async (req, res, 
             throw new Error('PDF text extraction failed.');
         }
         const structuredData = pdfProcessor.extractSteelInformation(extractedContent.text);
-        console.log(`[2/6] SUCCESS: PDF Extraction Complete. Found ${structuredData.structuralMembers?.length || 0} members.`);
+        console.log(`[2/6] SUCCESS - PDF Extraction Complete. Found ${structuredData.structuralMembers?.length || 0} members.`);
 
         // --- Step 3: AI Analysis ---
         console.log('[3/6] Starting AI analysis...');
@@ -114,12 +114,12 @@ router.post('/generate-from-upload', upload.single('drawing'), async (req, res, 
             confidence: 0.85
         };
         const analysisResults = await aiAnalyzer.analyzeStructuralDrawings(mockStructuredDataForAI, `PROJ_${Date.now()}`);
-        console.log(`[3/6] SUCCESS: AI Analysis Complete.`);
+        console.log(`[3/6] SUCCESS - AI Analysis Complete.`);
 
         // --- Step 4: Cost Estimation ---
         console.log('[4/6] Generating cost estimation...');
         const estimationData = await estimationEngine.generateEstimation(analysisResults, location);
-        console.log(`[4/6] SUCCESS: Cost Estimation Complete. Total: ${estimationData.cost_summary?.total_inc_gst || 0}`);
+        console.log(`[4/6] SUCCESS - Cost Estimation Complete. Total: ${estimationData.cost_summary?.total_inc_gst || 0}`);
 
         // --- Step 5: Save to Database (MongoDB) ---
         console.log('[5/6] Saving estimation to database...');
@@ -133,7 +133,7 @@ router.post('/generate-from-upload', upload.single('drawing'), async (req, res, 
             status: 'Draft', user: userId
         });
         const savedEstimation = await estimation.save();
-        console.log(`[5/6] SUCCESS: Estimation saved with ID: ${savedEstimation._id}`);
+        console.log(`[5/6] SUCCESS - Estimation saved with ID: ${savedEstimation._id}`);
 
         // --- Step 6: Final Response ---
         const response = {

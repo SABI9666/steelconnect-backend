@@ -1,7 +1,7 @@
 // Improved AI Analyzer with better prompting and validation
 import Anthropic from '@anthropic-ai/sdk';
 
-export class ImprovedAIAnalyzer {
+export class aiAnalyzer {
     constructor(apiKey) {
         this.client = new Anthropic({ apiKey });
         this.maxTokens = 4000;

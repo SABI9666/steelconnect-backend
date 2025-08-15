@@ -14,7 +14,7 @@ export class PdfProcessor {
             // Correctly escaped forward slashes for grades like '300PLUS/S'
             steelGrade: /STEEL\s+GRADE\s*:\s*(\w+(?:\/\w+)*)/i,
             concreteGrade: /CONCRETE\s+GRADE\s*:\s*(\w+)/i,
-            boltGrade: /BOLT\s+GRADE\s*:\s*([\d\.]+\/S)/i, // <-- FIX WAS HERE
+            boltGrade: /BOLT\s+GRADE\s*:\s*([\d\.]+\/S)/i, // Fixed: properly escaped forward slash
         };
     }
 

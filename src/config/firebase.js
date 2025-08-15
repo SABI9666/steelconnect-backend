@@ -18,7 +18,7 @@ if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
     // --- CORRECTED BUCKET NAME ---
-    storageBucket: 'steelconnect-backend-3f684.appspot.com'
+    storageBucket: ''steelconnect-backend-3f684.firebasestorage.app' '
   });
 }
 

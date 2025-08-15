@@ -2,7 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import mongoose from 'mongoose';
 
-// Restored Imports
+// Core Service Imports
 import { adminStorage } from '../config/firebase.js';
 import { PdfProcessor } from '../services/pdfprocessor.js';
 import { EnhancedAIAnalyzer } from '../services/aiAnalyzer.js';
@@ -24,20 +24,18 @@ const upload = multer({
 });
 
 // --- Service Initialization ---
-// Initialize services in a try-catch block to handle potential startup errors.
 let pdfProcessor, estimationEngine, aiAnalyzer;
 try {
     pdfProcessor = new PdfProcessor();
     estimationEngine = new EstimationEngine();
+    // Ensure you have ANTHROPIC_API_KEY set in your environment variables
     aiAnalyzer = new EnhancedAIAnalyzer(process.env.ANTHROPIC_API_KEY);
 } catch (e) {
     console.error("Fatal Error: Failed to initialize core services.", e);
-    // Exit the process if core services can't be initialized.
-    process.exit(1); 
+    process.exit(1);
 }
 
 // --- Firebase Upload Helper Function ---
-// Uploads a file buffer to Firebase Storage.
 const uploadToFirebase = (buffer, originalname) => {
     return new Promise((resolve, reject) => {
         const bucket = adminStorage.bucket();
@@ -56,7 +54,6 @@ const uploadToFirebase = (buffer, originalname) => {
         });
 
         stream.on('finish', () => {
-            // Return the public URL for the uploaded file
             const publicUrl = `https://storage.googleapis.com/${bucket.name}/${destinationPath}`;
             resolve({ path: destinationPath, url: publicUrl });
         });
@@ -73,7 +70,11 @@ router.post('/generate-from-upload', upload.single('drawing'), async (req, res, 
         }
 
         const { projectName = 'Untitled Project', location = 'Not Specified' } = req.body;
-        const userId = req.user.id; // Assuming user ID is available from auth middleware
+        // Assuming user ID is available from an authentication middleware
+        const userId = req.user ? req.user.id : null; 
+        if (!userId) {
+             return res.status(401).json({ success: false, error: 'User not authenticated.' });
+        }
 
         // 1. Upload to Firebase
         const { path: firebasePath, url: firebaseUrl } = await uploadToFirebase(req.file.buffer, req.file.originalname);
@@ -82,10 +83,10 @@ router.post('/generate-from-upload', upload.single('drawing'), async (req, res, 
         const structuredData = await pdfProcessor.process(req.file.buffer);
 
         // 3. Analyze data with AI to get quantities and scope
-        const analysisResults = await aiAnalyzer.analyzeStructuralDrawings(structuredData);
+        const analysisResults = await aiAnalyzer.analyzeStructuralDrawings(structuredData, new mongoose.Types.ObjectId().toString());
 
         // 4. Calculate cost estimation based on AI analysis
-        const costEstimation = estimationEngine.calculate(analysisResults);
+        const costEstimation = await estimationEngine.generateEstimation(analysisResults, location);
 
         // 5. Create a new estimation document
         const newEstimation = new Estimation({
@@ -132,8 +133,8 @@ router.get('/:id/report', async (req, res, next) => {
             return res.status(404).json({ success: false, error: 'Estimation not found.' });
         }
         
-        // Ensure the user requesting the report is the one who created it
-        if (estimation.userId.toString() !== req.user.id) {
+        // Ensure the user requesting is the one who created it (requires auth middleware)
+        if (req.user && estimation.userId.toString() !== req.user.id) {
             return res.status(403).json({ success: false, error: 'Forbidden: You do not have access to this resource.' });
         }
 
@@ -149,3 +150,4 @@ router.get('/:id/report', async (req, res, next) => {
 });
 
 export default router;
+

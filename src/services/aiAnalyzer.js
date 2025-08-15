@@ -1,15 +1,15 @@
 // File: src/services/aiAnalyzer.js
-// Improved AI Analyzer with better prompting and validation
+// Enhanced AI Analyzer with corrected syntax
 import Anthropic from '@anthropic-ai/sdk';
-// FIX: Renamed class from 'ImprovedAIAnalyzer' to 'EnhancedAIAnalyzer'
-// This ensures it matches the name being imported in your routes file.
+
 export class EnhancedAIAnalyzer {
     constructor(apiKey) {
         this.client = new Anthropic({ apiKey });
         this.maxTokens = 4000;
-        this.model = "claude-3-5-sonnet-20240620"; // Note: Updated to a valid model name
+        this.model = "claude-3-5-sonnet-20240620";
         this.steelWeights = this.initializeSteelWeights();
     }
+
     initializeSteelWeights() {
         // Comprehensive Australian steel weights database
         return {
@@ -37,6 +37,7 @@ export class EnhancedAIAnalyzer {
             }
         };
     }
+
     async analyzeStructuralDrawings(structuredData, projectId) {
         try {
             console.log('🤖 Starting AI analysis...');
@@ -53,6 +54,7 @@ export class EnhancedAIAnalyzer {
                 riskAssessment,
                 assumptions: this._generateAssumptions(structuredData, quantityTakeoff)
             };
+
             if (!this._validateResults(analysisResults)) {
                 console.warn('AI analysis validation failed, using enhanced fallback');
                 analysisResults.quantityTakeoff = this._calculateEnhancedFallback(structuredData);
@@ -64,6 +66,7 @@ export class EnhancedAIAnalyzer {
             return this._generateEnhancedFallback(structuredData, projectId);
         }
     }
+
     _createDetailedSummary(data) {
         if (!data || !data.steel_schedules) {
             return "No structural data available for analysis.";
@@ -95,6 +98,7 @@ export class EnhancedAIAnalyzer {
         });
         return this._formatSummaryForAI(summary);
     }
+
     _formatSummaryForAI(summary) {
         const categoryBreakdown = Object.entries(summary.categories)
             .map(([cat, data]) => `${cat}: ${data.count} members, ${data.weight.toFixed(1)}kg`)
@@ -103,11 +107,75 @@ export class EnhancedAIAnalyzer {
             .slice(0, 20) // Limit for token efficiency
             .map(m => `${m.designation}(${m.quantity}x${m.length}m)`)
             .join(', ');
-        return `PROJECT ANALYSIS:Total Members: ${summary.totalMembers}Categories: ${categoryBreakdown}Sample Members: ${memberList}${summary.memberDetails.length > 20 ? '... and more' : ''}
-        `.trim();
+        return `PROJECT ANALYSIS:Total Members: ${summary.totalMembers}
+Categories: ${categoryBreakdown}
+Sample Members: ${memberList}${summary.memberDetails.length > 20 ? '... and more' : ''}`.trim();
     }
+
     async _performEnhancedQuantityTakeoff(summary, originalData) {
-        const prompt = `You are a structural engineer analyzing Australian steel drawings. Provide accurate quantity takeoff based on the following data.STRUCTURAL DATA:${summary}REQUIREMENTS:1. Use EXACT Australian steel section weights (e.g., 250 UB 31.4 = 31.4 kg/m)2. Calculate realistic member lengths (typical range 3-12m)3. Account for ALL members found in the data4. Provide detailed breakdown by member typeReturn ONLY this JSON structure:{  "steel_quantities": {    "members": [      {        "section": "250 UB 31.4",        "total_length_m": 48.0,        "weight_per_m": 31.4,        "total_weight_kg": 1507.2,        "member_type": "beam",        "quantity": 8,        "average_length_m": 6.0      }    ],    "summary": {      "total_steel_weight_tonnes": 15.5,      "beam_weight_tonnes": 8.2,      "column_weight_tonnes": 4.1,      "purlin_weight_tonnes": 2.0,      "hollow_section_weight_tonnes": 1.2,      "member_count": 85,      "beam_count": 32,      "column_count": 18,      "purlin_count": 28,      "hollow_section_count": 7    }  },  "concrete_quantities": {    "elements": [      {        "element_type": "foundation",        "volume_m3": 25.0,        "grade": "N32"      }    ],    "summary": {      "total_concrete_m3": 45.0,      "foundation_m3": 25.0,      "slab_m3": 20.0    }  },  "reinforcement_quantities": {    "deformed_bars": {      "n12": 2400,      "n16": 1800,      "n20": 1200    },    "mesh": {      "sl72": 450,      "sl82": 320    }  }}`;
+        const prompt = `You are a structural engineer analyzing Australian steel drawings. Provide accurate quantity takeoff based on the following data.
+STRUCTURAL DATA:
+${summary}
+
+REQUIREMENTS:
+1. Use EXACT Australian steel section weights (e.g., 250 UB 31.4 = 31.4 kg/m)
+2. Calculate realistic member lengths (typical range 3-12m)
+3. Account for ALL members found in the data
+4. Provide detailed breakdown by member type
+
+Return ONLY this JSON structure:
+{
+  "steel_quantities": {
+    "members": [
+      {
+        "section": "250 UB 31.4",
+        "total_length_m": 48.0,
+        "weight_per_m": 31.4,
+        "total_weight_kg": 1507.2,
+        "member_type": "beam",
+        "quantity": 8,
+        "average_length_m": 6.0
+      }
+    ],
+    "summary": {
+      "total_steel_weight_tonnes": 15.5,
+      "beam_weight_tonnes": 8.2,
+      "column_weight_tonnes": 4.1,
+      "purlin_weight_tonnes": 2.0,
+      "hollow_section_weight_tonnes": 1.2,
+      "member_count": 85,
+      "beam_count": 32,
+      "column_count": 18,
+      "purlin_count": 28,
+      "hollow_section_count": 7
+    }
+  },
+  "concrete_quantities": {
+    "elements": [
+      {
+        "element_type": "foundation",
+        "volume_m3": 25.0,
+        "grade": "N32"
+      }
+    ],
+    "summary": {
+      "total_concrete_m3": 45.0,
+      "foundation_m3": 25.0,
+      "slab_m3": 20.0
+    }
+  },
+  "reinforcement_quantities": {
+    "deformed_bars": {
+      "n12": 2400,
+      "n16": 1800,
+      "n20": 1200
+    },
+    "mesh": {
+      "sl72": 450,
+      "sl82": 320
+    }
+  }
+}`;
         try {
             const response = await this.client.messages.create({
                 model: this.model,
@@ -127,9 +195,9 @@ export class EnhancedAIAnalyzer {
             return this._calculateEnhancedFallback(originalData);
         }
     }
+
     _parseAndValidateJSON(text) {
         try {
-            // More robustly find the JSON object within the response text
             const startIndex = text.indexOf('{');
             const endIndex = text.lastIndexOf('}');
             if (startIndex === -1 || endIndex === -1) {
@@ -147,6 +215,7 @@ export class EnhancedAIAnalyzer {
             return null;
         }
     }
+
     _validateQuantities(quantities, originalData) {
         try {
             if (!quantities.steel_quantities || !quantities.steel_quantities.members) {
@@ -170,6 +239,7 @@ export class EnhancedAIAnalyzer {
             return false;
         }
     }
+
     _enhanceQuantities(quantities, originalData) {
         const enhanced = JSON.parse(JSON.stringify(quantities));
         if (originalData.steel_schedules) {
@@ -199,6 +269,7 @@ export class EnhancedAIAnalyzer {
         }
         return enhanced;
     }
+
     _calculateEnhancedFallback(data) {
         console.log('🔧 Calculating enhanced fallback quantities...');
         const fallback = {
@@ -272,6 +343,7 @@ export class EnhancedAIAnalyzer {
         this._estimateConcreteAndReinforcement(fallback);
         return fallback;
     }
+
     _estimateConcreteAndReinforcement(quantities) {
         const steelWeight = quantities.steel_quantities.summary.total_steel_weight_tonnes;
         const memberCount = quantities.steel_quantities.summary.member_count;
@@ -300,9 +372,9 @@ export class EnhancedAIAnalyzer {
             quantities.reinforcement_quantities.mesh.sl82 = Math.round(concreteVolume * 10);
         }
     }
+
     _getAccurateWeight(section) {
         const normalized = this._normalizeSection(section);
-        // Fixed regex patterns using RegExp constructor to avoid issues
         const ubMatch = normalized.match(new RegExp('(\\d+)\\s*UB\\s*(\\d+\\.?\\d*)'));
         if (ubMatch) {
             const depth = parseInt(ubMatch[1]);
@@ -326,6 +398,7 @@ export class EnhancedAIAnalyzer {
         }
         return this._estimateWeight(section);
     }
+
     _estimateWeight(section) {
         const s = section.toLowerCase();
         const numbers = section.match(new RegExp('\\d+(?:\\.\\d+)?', 'g'))?.map(Number) || [];
@@ -346,6 +419,7 @@ export class EnhancedAIAnalyzer {
         }
         return Math.max(10, depth * 0.12);
     }
+
     _classifyMember(section) {
         const s = section.toLowerCase();
         if (s.includes('ub') || s.includes('pfc')) return 'beam';
@@ -354,9 +428,11 @@ export class EnhancedAIAnalyzer {
         if (s.includes('z') || s.includes('c')) return 'purlin';
         return 'beam';
     }
+
     _normalizeSection(section) {
         return section.replace(/\s+/g, ' ').replace(/[×]/g, 'x').trim().toUpperCase();
     }
+
     _recalculateSummary(steelQuantities) {
         const summary = {
             total_steel_weight_tonnes: 0, beam_weight_tonnes: 0, column_weight_tonnes: 0,
@@ -393,8 +469,27 @@ export class EnhancedAIAnalyzer {
         });
         steelQuantities.summary = summary;
     }
+
     async _extractSpecifications(summary) {
-        const prompt = `Extract material specifications from this structural data:${summary}Return only JSON:{  "concrete_specifications": {    "grades_found": ["N32", "N40"],    "typical_applications": {      "N32": "general structural elements",      "N40": "high strength applications"    }  },  "steel_specifications": {    "sections_used": ["UB", "UC", "PFC", "SHS"],    "steel_grade": "300PLUS",    "treatment": "hot_dip_galvanized"  },  "standards_applicable": ["AS 3600-2018", "AS 4100-2020", "AS 1170"]}`;
+        const prompt = `Extract material specifications from this structural data:
+${summary}
+
+Return only JSON:
+{
+  "concrete_specifications": {
+    "grades_found": ["N32", "N40"],
+    "typical_applications": {
+      "N32": "general structural elements",
+      "N40": "high strength applications"
+    }
+  },
+  "steel_specifications": {
+    "sections_used": ["UB", "UC", "PFC", "SHS"],
+    "steel_grade": "300PLUS",
+    "treatment": "hot_dip_galvanized"
+  },
+  "standards_applicable": ["AS 3600-2018", "AS 4100-2020", "AS 1170"]
+}`;
         try {
             const response = await this.client.messages.create({
                 model: this.model,
@@ -408,11 +503,13 @@ export class EnhancedAIAnalyzer {
             return this._getDefaultSpecifications();
         }
     }
+
     _performRiskAssessment(structuredData, quantityTakeoff) {
         const risks = [];
         const totalWeight = quantityTakeoff?.steel_quantities?.summary?.total_steel_weight_tonnes || 0;
         const memberCount = quantityTakeoff?.steel_quantities?.summary?.member_count || 0;
         const confidence = structuredData.confidence || 0;
+
         if (confidence < 0.7) {
             risks.push({
                 risk: "Low data extraction confidence",
@@ -437,6 +534,7 @@ export class EnhancedAIAnalyzer {
                 mitigation: "Standardize connections, modular approach"
             });
         }
+
         return {
             technical_risks: risks,
             data_quality_risks: [{
@@ -451,19 +549,24 @@ export class EnhancedAIAnalyzer {
             }
         };
     }
+
     _calculateComplexityMultiplier(weight, memberCount) {
         let multiplier = 1.0;
         if (weight > 100) multiplier += 0.15;
         else if (weight > 50) multiplier += 0.1;
         else if (weight > 20) multiplier += 0.05;
+
         if (memberCount > 150) multiplier += 0.1;
         else if (memberCount > 75) multiplier += 0.05;
+
         return Math.min(1.3, multiplier); // Cap at 30% increase
     }
+
     _calculateOverallConfidence(structuredData, quantityTakeoff) {
         let confidence = structuredData.confidence || 0.5;
         const totalWeight = quantityTakeoff?.steel_quantities?.summary?.total_steel_weight_tonnes || 0;
         const memberCount = quantityTakeoff?.steel_quantities?.summary?.member_count || 0;
+
         if (totalWeight > 0 && memberCount > 0) {
             confidence = Math.min(0.95, confidence + 0.1);
         }
@@ -472,12 +575,14 @@ export class EnhancedAIAnalyzer {
         }
         return parseFloat(confidence.toFixed(2));
     }
+
     _identifyProjectScope(quantityTakeoff) {
         const summary = quantityTakeoff?.steel_quantities?.summary || {};
         const totalWeight = summary.total_steel_weight_tonnes || 0;
         const memberCount = summary.member_count || 0;
         let complexity = 'low';
         let duration = 30;
+
         if (totalWeight > 100 || memberCount > 150) {
             complexity = 'high';
             duration = 90;
@@ -485,6 +590,7 @@ export class EnhancedAIAnalyzer {
             complexity = 'medium';
             duration = 60;
         }
+
         return {
             work_packages: [
                 {
@@ -511,6 +617,7 @@ export class EnhancedAIAnalyzer {
             critical_path: ["Foundation works", "Steel fabrication", "Site erection"]
         };
     }
+
     _generateAssumptions(structuredData, quantityTakeoff) {
         const assumptions = [
             "Steel sections conform to AS/NZS 3679.1",
@@ -534,6 +641,7 @@ export class EnhancedAIAnalyzer {
         }
         return assumptions;
     }
+
     _getDefaultSpecifications() {
         return {
             concrete_specifications: {
@@ -548,19 +656,19 @@ export class EnhancedAIAnalyzer {
             standards_applicable: ["AS 3600-2018", "AS 4100-2020", "AS 1170"]
         };
     }
+
     _validateResults(results) {
         try {
             return results &&
-                   results.quantityTakeoff &&
-                   results.quantityTakeoff.steel_quantities &&
-                   results.quantityTakeoff.steel_quantities.members &&
-                   results.quantityTakeoff.steel_quantities.members.length > 0 &&
-                   results.quantityTakeoff.steel_quantities.summary &&
-                   results.quantityTakeoff.steel_quantities.summary.total_steel_weight_tonnes > 0;
+                results.quantityTakeoff &&
+                results.quantityTakeoff.steel_quantities &&
+                results.quantityTakeoff.steel_quantities.members &&
+                results.quantityTakeoff.steel_quantities.members.length > 0 &&
+                results.quantityTakeoff.steel_quantities.summary &&
+                results.quantityTakeoff.steel_quantities.summary.total_steel_weight_tonnes > 0;
         } catch (error) {
             console.error('Error validating analysis results:', error.message);
             return false;
         }
     }
 }
-

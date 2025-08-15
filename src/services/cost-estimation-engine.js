@@ -1,4 +1,6 @@
-/ Enhanced Cost Estimation Engine with 2025 Australian market rates
+/**
+ * Enhanced Cost Estimation Engine with 2025 Australian market rates
+ */
 class EstimationItem {
     constructor({
         code, description, quantity, unit, unitRate, totalCost,

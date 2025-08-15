@@ -11,9 +11,13 @@ console.log('DEBUG: Mongoose imported');
 import { adminStorage } from '../config/firebase.js';
 console.log('DEBUG: Firebase imported successfully');
 
-// TEST IMPORT 2: PdfProcessor (FIX IMPORT NAME)
-import { EnhancedPdfProcessor } from '../services/pdfprocessor.js';
-console.log('DEBUG: EnhancedPdfProcessor imported successfully');
+// SKIP PDFPROCESSOR FOR NOW - TEST NEXT IMPORT
+// import EnhancedPdfProcessor from '../services/pdfprocessor.js';
+// console.log('DEBUG: EnhancedPdfProcessor imported successfully (default import)');
+
+// TEST IMPORT 3: EnhancedAIAnalyzer
+import { EnhancedAIAnalyzer } from '../services/aiAnalyzer.js';
+console.log('DEBUG: EnhancedAIAnalyzer imported successfully');
 
 // KEEP THESE COMMENTED FOR NOW - ADD ONE BY ONE
 // import { EnhancedAIAnalyzer } from '../services/aiAnalyzer.js';

@@ -1,20 +1,31 @@
 import pdf from 'pdf-parse';
 
+/**
+ * A service class to process structural engineering PDF drawings and extract structured data.
+ * It uses regular expressions to find steel schedules, general notes, and specifications.
+ */
 export class PdfProcessor {
     constructor() {
-        // Fixed RegExp patterns - properly escaped
+        // Corrected and enhanced RegExp patterns for better accuracy.
         this.patterns = {
-            steelScheduleHeader: new RegExp('STEEL\\s+SCHEDULE', 'i'),
-            generalNotesBlock: new RegExp('GENERAL\\s+NOTES:([\\s\\S]*?)(?=STEEL\\s+SCHEDULE|STRUCTURAL\\s+SPECIFICATIONS)', 'i'),
-            // Matches common steel member designations like '250 UB 31.4' or '150x100x8 RHS'
-            memberLine: new RegExp('(\\d+\\s*(UB|UC|PFC|SHS|RHS|CHS|EA|UA)[\\s\\d\\.x]*)', 'i'),
-            quantity: new RegExp('(?:QTY|QUANTITY)\\s*[:\\-]\\s*(\\d+)', 'i'),
-            length: new RegExp('(?:LENGTH|LEN)\\s*[:\\-]\\s*([\\d\\.]+)', 'i'),
-            // Fixed: properly handle forward slashes for grades like '300PLUS/S'
-            steelGrade: new RegExp('STEEL\\s+GRADE\\s*:\\s*(\\w+(?:/\\w+)*)', 'i'),
-            concreteGrade: new RegExp('CONCRETE\\s+GRADE\\s*:\\s*(\\w+)', 'i'),
-            // Fixed: bolt grade pattern with proper forward slash handling
-            boltGrade: new RegExp('BOLT\\s+GRADE\\s*:\\s*([\\d\\.]+/S)', 'i')
+            // Looks for a steel schedule header to determine confidence.
+            steelScheduleHeader: /STEEL\s+SCHEDULE/i,
+            
+            // Captures the block of text under "GENERAL NOTES". Stops at the next major section or end of text.
+            generalNotesBlock: /GENERAL\s+NOTES:([\s\S]*?)(?=STEEL\s+SCHEDULE|STRUCTURAL\s+SPECIFICATIONS|\Z)/i,
+            
+            // CORRECTED: More precise pattern for steel member designations.
+            // Handles formats like '250 UB 31.4', '150x100x8 RHS', '90x90x8 EA'.
+            memberLine: /(\b\d+(?:x\d+)*\s*(?:UB|UC|PFC|SHS|RHS|CHS|EA|UA)\b(?:\s*[\d.]*)*)/i,
+            
+            // Patterns to find quantity and length on a line.
+            quantity: /(?:QTY|QUANTITY)\s*[:\-]\s*(\d+)/i,
+            length: /(?:LENGTH|LEN)\s*[:\-]\s*([\d.]+)/i,
+            
+            // Patterns for extracting specific grades from the entire text.
+            steelGrade: /STEEL\s+GRADE\s*:\s*(\w+(?:\/\w+)*)/i,
+            concreteGrade: /CONCRETE\s+GRADE\s*:\s*(\w+)/i,
+            boltGrade: /BOLT\s+GRADE\s*:\s*([\d.]+\/S)/i
         };
     }
 
@@ -29,7 +40,7 @@ export class PdfProcessor {
             const data = await pdf(pdfBuffer);
             const text = data.text;
 
-            if (!text) {
+            if (!text || text.trim().length === 0) {
                 throw new Error("No text could be extracted from the PDF.");
             }
 
@@ -53,14 +64,10 @@ export class PdfProcessor {
             return structuredData;
 
         } catch (error) {
-            console.error(`PDF processing failed: ${error.message}`);
-            return {
-                metadata: {},
-                steel_schedules: [],
-                general_notes: "Error processing PDF.",
-                specifications: {},
-                confidence: 0.1,
-            };
+            console.error(`❌ PDF processing failed: ${error.message}`);
+            // CORRECTED: Re-throw the error to be handled by the calling service (e.g., API route).
+            // This is better than returning a successful response with an error message.
+            throw new Error(`Failed to process PDF. Reason: ${error.message}`);
         }
     }
 
@@ -69,16 +76,27 @@ export class PdfProcessor {
         const lines = text.split('\n');
         
         lines.forEach(line => {
-            if (this.patterns.memberLine.test(line)) {
-                const designationMatch = line.match(this.patterns.memberLine);
-                if (designationMatch) {
-                    schedules.push({
-                        designation: designationMatch[0].trim(),
-                        quantity: this._extractValue(line, this.patterns.quantity) || '1',
-                        length: this._extractValue(line, this.patterns.length) || '6000', // Default 6m
-                        notes: line.replace(designationMatch[0], '').trim(),
-                    });
-                }
+            // Use the more precise regex to find a potential member line.
+            const designationMatch = line.match(this.patterns.memberLine);
+            if (designationMatch) {
+                const designation = designationMatch[0].trim();
+                const quantity = this._extractValue(line, this.patterns.quantity) || '1';
+                const length = this._extractValue(line, this.patterns.length) || '6000'; // Default 6m
+
+                // CORRECTED: Smarter note extraction. Remove designation, quantity, and length to isolate notes.
+                let notes = line.replace(designation, '')
+                                .replace(this.patterns.quantity, '')
+                                .replace(this.patterns.length, '')
+                                .replace(/QTY|QUANTITY|LENGTH|LEN/ig, '') // Remove keywords
+                                .replace(/[:\-]/g, '') // Remove separators
+                                .trim();
+
+                schedules.push({
+                    designation,
+                    quantity,
+                    length,
+                    notes,
+                });
             }
         });
         return schedules;
@@ -86,7 +104,8 @@ export class PdfProcessor {
 
     _extractGeneralNotes(text) {
         const notesMatch = text.match(this.patterns.generalNotesBlock);
-        return notesMatch ? notesMatch[1].trim().split('\n').filter(line => line.trim() !== '') : "No general notes found.";
+        // Return an array of notes, or an empty array if none are found.
+        return notesMatch ? notesMatch[1].trim().split('\n').filter(line => line.trim() !== '') : [];
     }
 
     _extractSpecifications(text) {
@@ -99,16 +118,17 @@ export class PdfProcessor {
 
     _extractValue(text, regex) {
         const match = text.match(regex);
-        return match ? match[1] : null;
+        return match ? match[1].trim() : null;
     }
 
     _calculateConfidence(schedules, text) {
-        let score = 0;
+        let score = 0.1; // Start with a base score
         if (schedules.length > 0) score += 0.5;
         if (schedules.length > 10) score += 0.2;
         if (text.length > 1000) score += 0.1;
-        if (new RegExp('SPECIFICATIONS', 'i').test(text)) score += 0.1;
+        if (this.patterns.steelScheduleHeader.test(text)) score += 0.15;
 
-        return Math.min(0.95, score);
+        // Ensure confidence is capped at a realistic maximum (e.g., 0.95)
+        return Math.min(0.95, parseFloat(score.toFixed(2)));
     }
 }

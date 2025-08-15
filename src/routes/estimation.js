@@ -7,12 +7,15 @@ console.log('DEBUG: Multer imported');
 import mongoose from 'mongoose';
 console.log('DEBUG: Mongoose imported');
 
-// TEST IMPORT 1: Firebase (uncomment this first)
+// TEST IMPORT 1: Firebase (✅ WORKING)
 import { adminStorage } from '../config/firebase.js';
 console.log('DEBUG: Firebase imported successfully');
 
-// KEEP THESE COMMENTED FOR NOW - ADD ONE BY ONE AFTER FIREBASE WORKS
-// import { PdfProcessor } from '../services/pdfprocessor.js';
+// TEST IMPORT 2: PdfProcessor (uncomment this next)
+import { PdfProcessor } from '../services/pdfprocessor.js';
+console.log('DEBUG: PdfProcessor imported successfully');
+
+// KEEP THESE COMMENTED FOR NOW - ADD ONE BY ONE
 // import { EnhancedAIAnalyzer } from '../services/aiAnalyzer.js';
 // import { EstimationEngine } from '../services/cost-estimation-engine.js';
 // import Estimation from '../models/estimation.js';

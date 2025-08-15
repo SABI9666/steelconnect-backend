@@ -2,19 +2,19 @@ import pdf from 'pdf-parse';
 
 export class PdfProcessor {
     constructor() {
-        // All regex patterns are defined here for clarity and maintenance.
-        // All forward slashes within patterns are correctly escaped with a backslash (\).
+        // Using RegExp constructor to avoid any regex literal parsing issues
         this.patterns = {
-            steelScheduleHeader: /STEEL\s+SCHEDULE/i,
-            generalNotesBlock: /GENERAL\s+NOTES:([\s\S]*?)(?=STEEL\s+SCHEDULE|STRUCTURAL\s+SPECIFICATIONS)/i,
+            steelScheduleHeader: new RegExp('STEEL\\s+SCHEDULE', 'i'),
+            generalNotesBlock: new RegExp('GENERAL\\s+NOTES:([\\s\\S]*?)(?=STEEL\\s+SCHEDULE|STRUCTURAL\\s+SPECIFICATIONS)', 'i'),
             // Matches common steel member designations like '250 UB 31.4' or '150x100x8 RHS'
-            memberLine: /(\d+\s*(UB|UC|PFC|SHS|RHS|CHS|EA|UA)[\s\d\.x]*)/i,
-            quantity: /(?:QTY|QUANTITY)\s*[:\-]\s*(\d+)/i,
-            length: /(?:LENGTH|LEN)\s*[:\-]\s*([\d\.]+)/i,
-            // Correctly escaped forward slashes for grades like '300PLUS/S'
-            steelGrade: /STEEL\s+GRADE\s*:\s*(\w+(?:\/\w+)*)/i,
-            concreteGrade: /CONCRETE\s+GRADE\s*:\s*(\w+)/i,
-            boltGrade: /BOLT\s+GRADE\s*:\s*([\d\.]+\/S)/i, // Fixed: properly escaped forward slash
+            memberLine: new RegExp('(\\d+\\s*(UB|UC|PFC|SHS|RHS|CHS|EA|UA)[\\s\\d\\.x]*)', 'i'),
+            quantity: new RegExp('(?:QTY|QUANTITY)\\s*[:\\-]\\s*(\\d+)', 'i'),
+            length: new RegExp('(?:LENGTH|LEN)\\s*[:\\-]\\s*([\\d\\.]+)', 'i'),
+            // Properly handle forward slashes for grades like '300PLUS/S'
+            steelGrade: new RegExp('STEEL\\s+GRADE\\s*:\\s*(\\w+(?:/\\w+)*)', 'i'),
+            concreteGrade: new RegExp('CONCRETE\\s+GRADE\\s*:\\s*(\\w+)', 'i'),
+            // Fixed: bolt grade pattern with proper forward slash handling
+            boltGrade: new RegExp('BOLT\\s+GRADE\\s*:\\s*([\\d\\.]+/S)', 'i')
         };
     }
 
@@ -107,7 +107,7 @@ export class PdfProcessor {
         if (schedules.length > 0) score += 0.5;
         if (schedules.length > 10) score += 0.2;
         if (text.length > 1000) score += 0.1;
-        if (/SPECIFICATIONS/i.test(text)) score += 0.1;
+        if (new RegExp('SPECIFICATIONS', 'i').test(text)) score += 0.1;
 
         return Math.min(0.95, score);
     }

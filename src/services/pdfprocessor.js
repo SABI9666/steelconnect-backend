@@ -11,10 +11,10 @@ export class PdfProcessor {
             quantity: new RegExp('(?:QTY|QUANTITY)\\s*[:\\-]\\s*(\\d+)', 'i'),
             length: new RegExp('(?:LENGTH|LEN)\\s*[:\\-]\\s*([\\d\\.]+)', 'i'),
             // Fixed: properly handle forward slashes for grades like '300PLUS/S'
-            steelGrade: new RegExp('STEEL\\s+GRADE\\s*:\\s*(\\w+(?:\\/\\w+)*)', 'i'),
+            steelGrade: new RegExp('STEEL\\s+GRADE\\s*:\\s*(\\w+(?:/\\w+)*)', 'i'),
             concreteGrade: new RegExp('CONCRETE\\s+GRADE\\s*:\\s*(\\w+)', 'i'),
             // Fixed: bolt grade pattern with proper forward slash handling
-            boltGrade: new RegExp('BOLT\\s+GRADE\\s*:\\s*([\\d\\.]+\\/S)', 'i')
+            boltGrade: new RegExp('BOLT\\s+GRADE\\s*:\\s*([\\d\\.]+/S)', 'i')
         };
     }
 

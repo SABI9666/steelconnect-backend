@@ -36,7 +36,8 @@ class EstimationItem {
     }
 }
 
-export class EnhancedCostEstimationEngine {
+// ▼▼▼ THIS IS THE CORRECTED LINE ▼▼▼
+export class EstimationEngine {
     constructor() {
         this.locationFactors = {
             "Sydney": 1.15,
@@ -98,18 +99,18 @@ export class EnhancedCostEstimationEngine {
             // Steel erection ($/kg)
             steel_erection: {
                 ground_level: 1.80,
-                low_rise: 2.40,     // Up to 3 stories
-                mid_rise: 3.20,     // 4-8 stories  
-                high_rise: 4.80,    // 8+ stories
-                heavy_lift: 6.50    // Requires large cranes
+                low_rise: 2.40,      // Up to 3 stories
+                mid_rise: 3.20,      // 4-8 stories  
+                high_rise: 4.80,     // 8+ stories
+                heavy_lift: 6.50     // Requires large cranes
             },
 
             // Concrete rates ($/m³)
             concrete: {
                 n20: 320, n25: 340, n32: 360, n40: 420, n50: 480, n65: 580,
-                pumping: 35,        // $/m³
+                pumping: 35,         // $/m³
                 pumping_minimum: 850, // Minimum charge
-                high_rise_pump: 45  // $/m³ for heights >30m
+                high_rise_pump: 45   // $/m³ for heights >30m
             },
 
             // Reinforcement ($/tonne for bars, $/m² for mesh)
@@ -151,12 +152,12 @@ export class EnhancedCostEstimationEngine {
 
             // Foundations and earthworks
             earthworks: {
-                excavation: 28,     // $/m³
-                backfill: 22,       // $/m³
-                compaction: 18,     // $/m³
-                rock_breaking: 85,  // $/m³
-                disposal: 35,       // $/m³
-                imported_fill: 45   // $/m³
+                excavation: 28,      // $/m³
+                backfill: 22,        // $/m³
+                compaction: 18,      // $/m³
+                rock_breaking: 85,   // $/m³
+                disposal: 35,        // $/m³
+                imported_fill: 45    // $/m³
             },
 
             // Mechanical fixings and anchors
@@ -173,7 +174,7 @@ export class EnhancedCostEstimationEngine {
             // Professional services (% of construction cost)
             professional: {
                 structural_design: 0.08,    // 8% of construction
-                drafting: 0.03,            // 3% of construction
+                drafting: 0.03,             // 3% of construction
                 project_management: 0.06,   // 6% of construction
                 site_supervision: 0.04,     // 4% of construction
                 engineering_inspection: 0.02, // 2% of construction
@@ -193,10 +194,10 @@ export class EnhancedCostEstimationEngine {
 
             // Transport and logistics ($/tonne or $/km)
             transport: {
-                local_delivery: 85,        // $/tonne <50km
+                local_delivery: 85,      // $/tonne <50km
                 regional_delivery: 120,    // $/tonne 50-200km
-                interstate: 180,           // $/tonne >200km
-                oversized_load: 350,       // $/trip additional
+                interstate: 180,         // $/tonne >200km
+                oversized_load: 350,     // $/trip additional
                 crane_mobilization: 1200   // $/trip
             }
         };
@@ -222,9 +223,9 @@ export class EnhancedCostEstimationEngine {
 
             // Factors based on project size
             project_size: {
-                small: { max_weight: 10, factor: 1.15 },     // Small projects have higher $/kg
+                small: { max_weight: 10, factor: 1.15 },      // Small projects have higher $/kg
                 medium: { max_weight: 50, factor: 1.0 },
-                large: { max_weight: 150, factor: 0.95 },    // Economies of scale
+                large: { max_weight: 150, factor: 0.95 },     // Economies of scale
                 very_large: { max_weight: 999, factor: 0.90 }
             },
 
@@ -874,7 +875,7 @@ export class EnhancedCostEstimationEngine {
         const adjustedCost = baseCost * complexityMultiplier * dataConfidenceFactor * sizeMultiplier;
         
         // Contingencies
-        const designContingency = adjustedCost * 0.05;      // 5% design development
+        const designContingency = adjustedCost * 0.05;       // 5% design development
         const constructionContingency = adjustedCost * 0.08; // 8% construction risk
         const clientContingency = adjustedCost * 0.05;       // 5% client contingency
         
@@ -1015,4 +1016,3 @@ export class EnhancedCostEstimationEngine {
         return Math.round(overallConfidence * 100) / 100;
     }
 }
-                

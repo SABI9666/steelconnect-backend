@@ -4,64 +4,25 @@ import fs from 'fs/promises';
 
 export class PdfProcessor {
   constructor() {
-    // Patterns are now strings to be compiled later. This prevents server-crashing syntax errors.
+    // --- MODIFIED: Patterns are now strings to be safely compiled at runtime. ---
+    // This prevents the "missing /" syntax error from ever crashing the application.
     this.steelPatternStrings = {
-      universalBeam: {
-        pattern: '(\\d+)\\s*UB\\s*(\\d+\\.?\\d*)',
-        type: 'Universal Beam',
-        category: 'structural_beam'
-      },
-      universalColumn: {
-        pattern: '(\\d+)\\s*UC\\s*(\\d+\\.?\\d*)',
-        type: 'Universal Column',
-        category: 'structural_column'
-      },
-      parallelFlangeChannel: {
-        pattern: '(\\d+)\\s*PFC',
-        type: 'Parallel Flange Channel',
-        category: 'structural_channel'
-      },
-      shs: {
-        pattern: '(\\d{2,3})\\s*[xX×]\\s*(\\d{2,3})\\s*[xX×]\\s*(\\d{1,2}(?:\\.\\d+)?)s*SHS',
-        type: 'Square Hollow Section',
-        category: 'hollow_structural'
-      },
-      rhs: {
-        pattern: '(\\d{2,3})\\s*[xX×]\\s*(\\d{2,3})\\s*[xX×]\\s*(\\d{1,2}(?:\\.\\d+)?)s*RHS',
-        type: 'Rectangular Hollow Section',
-        category: 'hollow_structural'
-      },
-      zPurlin: {
-        pattern: '[CZ](\\d{3})\\s*(\\d{2}(?:\\.\\d+)?)',
-        type: 'Purlin',
-        category: 'purlin'
-      },
-      plate: {
-        pattern: 'PL\\s*(\\d+(?:\\.\\d+)?)\\s*(?:[xX×]\\s*(\\d+(?:\\.\\d+)?))?',
-        type: 'Steel Plate',
-        category: 'plate'
-      },
-      stiffenerPlate: {
-        pattern: '(\\d+)\\s*STIFFENER\\s*PL',
-        type: 'Stiffener Plate',
-        category: 'plate'
-      },
-      bolts: {
-        pattern: '(\\d+)\\s*-\\s*M(12|16|20|24|30)\\s*(?:bolts?)',
-        type: 'Bolt',
-        category: 'connections'
-      },
-      angle: {
-        pattern: 'L(\\d{1,3})[xX×](\\d{1,3})[xX×](\\d{1,2}(?:\\.\\d+)?)',
-        type: 'Angle',
-        category: 'structural_angle'
-      },
+      universalBeam: { pattern: '(\\d+)\\s*UB\\s*(\\d+\\.?\\d*)', type: 'Universal Beam', category: 'main_member' },
+      universalColumn: { pattern: '(\\d+)\\s*UC\\s*(\\d+\\.?\\d*)', type: 'Universal Column', category: 'main_member' },
+      parallelFlangeChannel: { pattern: '(\\d+)\\s*PFC', type: 'Parallel Flange Channel', category: 'main_member' },
+      shs: { pattern: '(\\d{2,3})\\s*[xX×]\\s*(\\d{2,3})\\s*[xX×]\\s*(\\d{1,2}(?:\\.\\d+)?)\\s*SHS', type: 'Square Hollow Section', category: 'main_member' },
+      rhs: { pattern: '(\\d{2,3})\\s*[xX×]\\s*(\\d{2,3})\\s*[xX×]\\s*(\\d{1,2}(?:\\.\\d+)?)\\s*RHS', type: 'Rectangular Hollow Section', category: 'main_member' },
+      angle: { pattern: 'L(\\d{1,3})[xX×](\\d{1,3})[xX×](\\d{1,2}(?:\\.\\d+)?)', type: 'Angle', category: 'main_member' },
+      purlin: { pattern: '[CZ](\\d{3})\\s*(\\d{2}(?:\\.\\d+)?)', type: 'Purlin', category: 'purlin' },
+      plateAndStiffeners: { pattern: '(\\d+)\\s*(?:MM)?\\s*(?:PL|PLATE|STIFFENER|FIN\\s*PL)', type: 'Plate/Stiffener', category: 'plate_fitting' },
+      bolts: { pattern: '(\\d+)\\s*-\\s*M(12|16|20|24|30)\\s*(?:BOLTS?)', type: 'Bolt', category: 'connection' },
     };
     this.unitConversions = this.initializeUnitConversions();
   }
 
   initializeUnitConversions() {
     return {
+      feetToMeters: (feet) => feet * 0.3048,
       fractionToDecimal: (fraction) => {
         if (!fraction || !fraction.includes('/')) return parseFloat(fraction) || 0;
         const [numerator, denominator] = fraction.split('/').map(Number);
@@ -84,7 +45,6 @@ export class PdfProcessor {
         const pageText = textContent.items.map(item => item.str).join(' ').replace(/\s+/g, ' ').trim();
         fullText += pageText + '\n';
       }
-
       console.log('✅ PDF text extraction completed');
       return { text: fullText.trim(), pages: numPages, success: true };
     } catch (error) {
@@ -94,75 +54,71 @@ export class PdfProcessor {
   }
 
   extractSteelInformation(text) {
-    console.log('🔍 Extracting steel information...');
+    console.log('🔍 Extracting all structural steel information...');
     const steelData = {
-      structuralMembers: [],
-      plates: [],
-      connections: [],
+      mainMembers: [],
       purlins: [],
-      summary: { totalMembers: 0, categories: {} }
+      platesAndFittings: [],
+      connections: [],
+      summary: { totalItems: 0, categories: {} }
     };
 
     const uniqueEntries = new Set();
 
-    try {
-      Object.entries(this.steelPatternStrings).forEach(([key, config]) => {
-        let regex;
-        try {
-          // Compile the regex at runtime, making it robust against syntax errors
-          regex = new RegExp(config.pattern, 'gi');
-        } catch (e) {
-          console.error(`❌ Invalid regex pattern for '${key}':`, e.message);
-          return; // Skip this pattern and continue
+    // --- MODIFIED: Loop through the string patterns and safely create RegExp objects ---
+    Object.entries(this.steelPatternStrings).forEach(([key, config]) => {
+      let regex;
+      try {
+        // This `new RegExp()` constructor prevents the startup crash.
+        regex = new RegExp(config.pattern, 'gi');
+      } catch (e) {
+        console.error(`Skipping invalid regex pattern for '${key}': ${e.message}`);
+        return; // Skips the bad pattern instead of crashing.
+      }
+
+      const matches = [...text.matchAll(regex)];
+      matches.forEach(match => {
+        const designation = this._normalizeDesignation(match[0]);
+        if (uniqueEntries.has(designation)) return;
+        uniqueEntries.add(designation);
+
+        const item = {
+          type: config.type,
+          designation: designation,
+          rawMatch: match[0],
+          quantity: this._extractQuantityFromContext(text, match.index) || 1,
+        };
+
+        switch(config.category) {
+            case 'main_member':
+                steelData.mainMembers.push(item);
+                break;
+            case 'purlin':
+                steelData.purlins.push(item);
+                break;
+            case 'plate_fitting':
+                item.thickness = parseInt(match[1], 10);
+                steelData.platesAndFittings.push(item);
+                break;
+            case 'connection':
+                item.quantity = parseInt(match[1], 10);
+                item.size = `M${match[2]}`;
+                steelData.connections.push(item);
+                break;
         }
-
-        const matches = [...text.matchAll(regex)];
-        matches.forEach(match => {
-          const designation = this._normalizeDesignation(match[0]);
-          if (uniqueEntries.has(designation)) return;
-          uniqueEntries.add(designation);
-
-          const item = {
-            type: config.type,
-            category: config.category,
-            designation: designation,
-            rawMatch: match[0],
-            quantity: this._extractQuantityFromContext(text, match.index) || 1
-          };
-
-          if (config.category.includes('structural') || config.category.includes('hollow')) {
-            steelData.structuralMembers.push(item);
-          } else if (config.category === 'plate') {
-             item.thickness = this.parseFractionOrDecimal(match[1]);
-             item.width = match[2] ? parseFloat(match[2]) : 0;
-            steelData.plates.push(item);
-          } else if (config.category === 'connections') {
-            item.quantity = parseInt(match[1], 10);
-            item.size = `M${match[2]}`;
-            steelData.connections.push(item);
-          } else if (config.category === 'purlin') {
-             item.depth = parseInt(match[1], 10);
-             item.gauge = parseFloat(match[2] || 0);
-            steelData.purlins.push(item);
-          }
-        });
       });
+    });
 
-      steelData.summary.totalMembers = steelData.structuralMembers.length + steelData.purlins.length;
-      steelData.summary.categories = {
-          beams: steelData.structuralMembers.filter(m => m.category.includes('beam')).length,
-          columns: steelData.structuralMembers.filter(m => m.category.includes('column')).length,
-          purlins: steelData.purlins.length,
-          plates: steelData.plates.length,
-          connections: steelData.connections.reduce((acc, conn) => acc + conn.quantity, 0)
-      };
-
-      console.log(`✅ Extracted ${steelData.summary.totalMembers} members, ${steelData.plates.length} plates, and ${steelData.summary.connections} bolts.`);
-      return steelData;
-    } catch (error) {
-      console.error('❌ Error extracting steel information:', error);
-      return steelData;
-    }
+    steelData.summary.totalItems = steelData.mainMembers.length + steelData.purlins.length + steelData.platesAndFittings.length;
+    steelData.summary.categories = {
+      main_members: steelData.mainMembers.length,
+      purlins: steelData.purlins.length,
+      plates_and_fittings: steelData.platesAndFittings.length,
+      bolt_sets: steelData.connections.reduce((acc, conn) => acc + conn.quantity, 0)
+    };
+    
+    console.log(`✅ Extracted ${steelData.summary.totalItems} unique steel items.`);
+    return steelData;
   }
 
   _normalizeDesignation(designation) {
@@ -171,13 +127,8 @@ export class PdfProcessor {
 
   _extractQuantityFromContext(text, matchIndex) {
     const context = text.substring(Math.max(0, matchIndex - 50), matchIndex);
-    const qtyMatch = context.match(/(\d+)\s*(?:NO|QTY|PCS|EA)\.?\s*$/i);
+    const qtyMatch = context.match(/(\d+)\s*(?:NO|QTY|PCS|EA|X)\.?\s*$/i);
     return qtyMatch ? parseInt(qtyMatch[1], 10) : 1;
-  }
-  
-  parseFractionOrDecimal(value) {
-      if(!value) return 0;
-      return this.unitConversions.fractionToDecimal(value);
   }
 }
 

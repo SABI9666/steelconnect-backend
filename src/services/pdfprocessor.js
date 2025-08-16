@@ -1,3 +1,4 @@
+// src/services/pdfProcessor.js
 import pdf from 'pdf-parse';
 
 /**
@@ -6,23 +7,22 @@ import pdf from 'pdf-parse';
  */
 export class PdfProcessor {
     constructor() {
-        // Corrected and enhanced RegExp patterns for better accuracy.
+        // Enhanced RegExp patterns for better accuracy
         this.patterns = {
-            // Looks for a steel schedule header to determine confidence.
+            // Looks for a steel schedule header to determine confidence
             steelScheduleHeader: /STEEL\s+SCHEDULE/i,
             
-            // Captures the block of text under "GENERAL NOTES". Stops at the next major section or end of text.
+            // Captures the block of text under "GENERAL NOTES"
             generalNotesBlock: /GENERAL\s+NOTES:([\s\S]*?)(?=STEEL\s+SCHEDULE|STRUCTURAL\s+SPECIFICATIONS|\Z)/i,
             
-            // CORRECTED: More precise pattern for steel member designations.
-            // Handles formats like '250 UB 31.4', '150x100x8 RHS', '90x90x8 EA'.
+            // More precise pattern for steel member designations
             memberLine: /(\b\d+(?:x\d+)*\s*(?:UB|UC|PFC|SHS|RHS|CHS|EA|UA)\b(?:\s*[\d.]*)*)/i,
             
-            // Patterns to find quantity and length on a line.
+            // Patterns to find quantity and length on a line
             quantity: /(?:QTY|QUANTITY)\s*[:\-]\s*(\d+)/i,
             length: /(?:LENGTH|LEN)\s*[:\-]\s*([\d.]+)/i,
             
-            // Patterns for extracting specific grades from the entire text.
+            // Patterns for extracting specific grades from the entire text
             steelGrade: /STEEL\s+GRADE\s*:\s*(\w+(?:\/\w+)*)/i,
             concreteGrade: /CONCRETE\s+GRADE\s*:\s*(\w+)/i,
             boltGrade: /BOLT\s+GRADE\s*:\s*([\d.]+\/S)/i
@@ -37,11 +37,16 @@ export class PdfProcessor {
     async process(pdfBuffer) {
         try {
             console.log('📄 Starting PDF processing...');
+            
+            if (!pdfBuffer || !Buffer.isBuffer(pdfBuffer)) {
+                throw new Error("Invalid PDF buffer provided");
+            }
+
             const data = await pdf(pdfBuffer);
             const text = data.text;
 
             if (!text || text.trim().length === 0) {
-                throw new Error("No text could be extracted from the PDF.");
+                throw new Error("No text could be extracted from the PDF");
             }
 
             const steelSchedules = this._extractSteelSchedules(text);
@@ -53,11 +58,13 @@ export class PdfProcessor {
                     pages: data.numpages,
                     version: data.version,
                     character_count: text.length,
+                    extraction_timestamp: new Date().toISOString()
                 },
                 steel_schedules: steelSchedules,
                 general_notes: generalNotes,
                 specifications: specifications,
                 confidence: this._calculateConfidence(steelSchedules, text),
+                raw_text: text // Keep for debugging if needed
             };
 
             console.log(`✅ PDF processed successfully. Found ${steelSchedules.length} steel members.`);
@@ -65,30 +72,30 @@ export class PdfProcessor {
 
         } catch (error) {
             console.error(`❌ PDF processing failed: ${error.message}`);
-            // CORRECTED: Re-throw the error to be handled by the calling service (e.g., API route).
-            // This is better than returning a successful response with an error message.
-            throw new Error(`Failed to process PDF. Reason: ${error.message}`);
+            throw new Error(`Failed to process PDF: ${error.message}`);
         }
     }
 
+    /**
+     * Extract steel schedules from text
+     */
     _extractSteelSchedules(text) {
         const schedules = [];
         const lines = text.split('\n');
         
-        lines.forEach(line => {
-            // Use the more precise regex to find a potential member line.
+        lines.forEach((line, index) => {
             const designationMatch = line.match(this.patterns.memberLine);
             if (designationMatch) {
                 const designation = designationMatch[0].trim();
                 const quantity = this._extractValue(line, this.patterns.quantity) || '1';
-                const length = this._extractValue(line, this.patterns.length) || '6000'; // Default 6m
+                const length = this._extractValue(line, this.patterns.length) || '6000';
 
-                // CORRECTED: Smarter note extraction. Remove designation, quantity, and length to isolate notes.
+                // Extract notes by removing known components
                 let notes = line.replace(designation, '')
                                 .replace(this.patterns.quantity, '')
                                 .replace(this.patterns.length, '')
-                                .replace(/QTY|QUANTITY|LENGTH|LEN/ig, '') // Remove keywords
-                                .replace(/[:\-]/g, '') // Remove separators
+                                .replace(/QTY|QUANTITY|LENGTH|LEN/ig, '')
+                                .replace(/[:\-]/g, '')
                                 .trim();
 
                 schedules.push({
@@ -96,18 +103,31 @@ export class PdfProcessor {
                     quantity,
                     length,
                     notes,
+                    line_number: index + 1
                 });
             }
         });
+
         return schedules;
     }
 
+    /**
+     * Extract general notes from text
+     */
     _extractGeneralNotes(text) {
         const notesMatch = text.match(this.patterns.generalNotesBlock);
-        // Return an array of notes, or an empty array if none are found.
-        return notesMatch ? notesMatch[1].trim().split('\n').filter(line => line.trim() !== '') : [];
+        if (!notesMatch) return [];
+        
+        return notesMatch[1]
+            .trim()
+            .split('\n')
+            .filter(line => line.trim() !== '')
+            .map(line => line.trim());
     }
 
+    /**
+     * Extract specifications from text
+     */
     _extractSpecifications(text) {
         return {
             steel_grade: this._extractValue(text, this.patterns.steelGrade) || '300PLUS',
@@ -116,19 +136,61 @@ export class PdfProcessor {
         };
     }
 
+    /**
+     * Extract value using regex pattern
+     */
     _extractValue(text, regex) {
         const match = text.match(regex);
         return match ? match[1].trim() : null;
     }
 
+    /**
+     * Calculate confidence score based on extraction quality
+     */
     _calculateConfidence(schedules, text) {
-        let score = 0.1; // Start with a base score
+        let score = 0.1; // Base score
+        
+        // Increase confidence based on schedules found
         if (schedules.length > 0) score += 0.5;
         if (schedules.length > 10) score += 0.2;
+        
+        // Increase confidence based on text content
         if (text.length > 1000) score += 0.1;
         if (this.patterns.steelScheduleHeader.test(text)) score += 0.15;
+        
+        // Check for common structural terms
+        const structuralTerms = ['beam', 'column', 'connection', 'foundation', 'steel', 'concrete'];
+        const termMatches = structuralTerms.filter(term => 
+            text.toLowerCase().includes(term)
+        ).length;
+        score += (termMatches / structuralTerms.length) * 0.1;
 
-        // Ensure confidence is capped at a realistic maximum (e.g., 0.95)
+        // Cap confidence at realistic maximum
         return Math.min(0.95, parseFloat(score.toFixed(2)));
+    }
+
+    /**
+     * Validate extracted data quality
+     */
+    validateExtraction(structuredData) {
+        const issues = [];
+        
+        if (!structuredData.steel_schedules || structuredData.steel_schedules.length === 0) {
+            issues.push('No steel schedules found');
+        }
+        
+        if (structuredData.confidence < 0.5) {
+            issues.push('Low extraction confidence');
+        }
+        
+        if (!structuredData.metadata || structuredData.metadata.character_count < 500) {
+            issues.push('Very short document - may be incomplete');
+        }
+        
+        return {
+            valid: issues.length === 0,
+            issues: issues,
+            confidence: structuredData.confidence
+        };
     }
 }

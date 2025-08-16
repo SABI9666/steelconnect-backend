@@ -1,23 +1,18 @@
 // src/services/pdfprocessor.js
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 
-export class PdfProcessor {
+// --- FIX: Changed 'export class' to 'export default class' for consistency ---
+export default class PdfProcessor {
   constructor() {
-    // --- ENHANCED: More specific and comprehensive regex patterns for Australian steel ---
     this.patterns = {
-      mainMember: /(\d+\s*(?:UB|UC|WB|WC)\s*\d+\.?\d*)|(\d+\s*PFC)|((\d{2,3})\s*[xX×]\s*(\d{2,3})\s*[xX×]\s*(\d{1,2}(?:\.\d+)?)\s*(?:SHS|RHS))|(L\d{1,3}[xX×]\d{1,3}[xX×]\d{1,2}(?:\.\d+)?)/,
-      purlin: /[CZ](\d{3})\s*(\d{2}(?:\.\d+)?)/,
-      plate: /(?:PL|STIFFENER)\s*(\d+)/,
-      bolts: /M(12|16|20|24|30)/,
-      quantity: /(?:(\d+)\s*NO)|(?:QTY\s*:\s*(\d+))|(?:(\d+)x)/
+      mainMember: /(\d+\s*(?:UB|UC|WB|WC)\s*\d+\.?\d*)|(\d+\s*PFC)|((\d{2,3})\s*[xX×]\s*(\d{2,3})\s*[xX×]\s*(\d{1,2}(?:\.\d+)?)\s*(?:SHS|RHS))|(L\d{1,3}[xX×]\d{1,3}[xX×]\d{1,2}(?:\.\d+)?)/gi,
+      purlin: /[CZ](\d{3})\s*(\d{2}(?:\.\d+)?)/gi,
+      plate: /(?:PL|STIFFENER)\s*(\d+)/gi,
+      bolts: /M(12|16|20|24|30)/gi,
+      quantity: /(?:(\d+)\s*NO)|(?:QTY\s*:\s*(\d+))|(?:(\d+)x)/gi
     };
   }
 
-  /**
-   * Primary method to extract all structured data from a PDF buffer.
-   * @param {Buffer} pdfBuffer The PDF file data.
-   * @returns {Promise<object>} A structured object with all extracted steel information.
-   */
   async extractSteelInformation(pdfBuffer) {
     console.log('🚀 Starting High-Accuracy PDF Steel Extraction...');
     const pageTexts = await this._getTextWithLayout(pdfBuffer);
@@ -37,12 +32,9 @@ export class PdfProcessor {
 
     for (const page of pageTexts) {
       console.log(`Analyzing Page ${page.pageNumber}...`);
-      // Find and process specific tables (schedules)
       this._processSchedules(page.lines, "BEAM SCHEDULE", steelData.mainMembers, uniqueEntries);
       this._processSchedules(page.lines, "COLUMN SCHEDULE", steelData.mainMembers, uniqueEntries);
       this._processSchedules(page.lines, "PURLIN SCHEDULE", steelData.purlins, uniqueEntries);
-
-      // --- NEW: Search for plates and bolts in General Notes or connection details ---
       this._findGeneralNotesItems(page.lines, this.patterns.plate, "Plate/Stiffener", steelData.platesAndFittings, uniqueEntries);
       this._findGeneralNotesItems(page.lines, this.patterns.bolts, "Bolt", steelData.connections, uniqueEntries);
     }
@@ -52,12 +44,6 @@ export class PdfProcessor {
     return steelData;
   }
 
-  /**
-   * Extracts text and preserves line-by-line structure using X/Y coordinates.
-   * This is the foundation of the high-accuracy approach.
-   * @param {Buffer} pdfBuffer The PDF file data.
-   * @returns {Promise<Array<object>>} An array of page objects, each containing structured lines of text.
-   */
   async _getTextWithLayout(pdfBuffer) {
     const uint8Array = new Uint8Array(pdfBuffer);
     const pdf = await pdfjsLib.getDocument({ data: uint8Array, useSystemFonts: true, verbosity: 0 }).promise;
@@ -68,7 +54,7 @@ export class PdfProcessor {
       const content = await page.getTextContent();
       const items = content.items;
 
-      items.sort((a, b) => { // Sort items top-to-bottom, then left-to-right
+      items.sort((a, b) => {
         if (Math.abs(a.transform[5] - b.transform[5]) > 5) {
           return b.transform[5] - a.transform[5];
         }
@@ -92,23 +78,13 @@ export class PdfProcessor {
     return pages;
   }
 
-  /**
-   * Locates and processes a table-like schedule on a page.
-   * @param {Array<object>} lines - The structured lines from a page.
-   * @param {string} scheduleTitle - The title to search for (e.g., "BEAM SCHEDULE").
-   * @param {Array<object>} targetArray - The array in steelData to push results into.
-   * @param {Set<string>} uniqueEntries - A set to prevent duplicate entries.
-   */
   _processSchedules(lines, scheduleTitle, targetArray, uniqueEntries) {
     const titleIndex = lines.findIndex(line => line.text.toUpperCase().includes(scheduleTitle));
-    if (titleIndex === -1) return; // Schedule not found on this page
+    if (titleIndex === -1) return;
 
     console.log(`Found "${scheduleTitle}"...`);
-    // Assume the table content starts on the next few lines
     for (let i = titleIndex + 1; i < lines.length; i++) {
       const lineText = lines[i].text;
-      
-      // Stop if we hit another major section or a blank line
       if (lineText.trim() === '' || lineText.toUpperCase().includes("SCHEDULE")) break;
 
       const memberMatch = lineText.match(this.patterns.mainMember) || lineText.match(this.patterns.purlin);
@@ -128,14 +104,6 @@ export class PdfProcessor {
     }
   }
 
-  /**
-   * Finds items like bolts and plates that are often listed in notes.
-   * @param {Array<object>} lines - The structured lines from a page.
-   * @param {RegExp} pattern - The regex pattern to search for.
-   * @param {string} type - The type of item being searched for.
-   * @param {Array<object>} targetArray - The array in steelData to push results into.
-   * @param {Set<string>} uniqueEntries - A set to prevent duplicate entries.
-   */
   _findGeneralNotesItems(lines, pattern, type, targetArray, uniqueEntries) {
       lines.forEach(line => {
           const matches = [...line.text.matchAll(pattern)];
@@ -157,7 +125,6 @@ export class PdfProcessor {
   _findQuantityInLine(lineText) {
       const qtyMatch = lineText.match(this.patterns.quantity);
       if (!qtyMatch) return null;
-      // Return the first captured group that is not undefined
       return parseInt(qtyMatch[1] || qtyMatch[2] || qtyMatch[3]);
   }
 
@@ -187,5 +154,3 @@ export class PdfProcessor {
     };
   }
 }
-
-export default PdfProcessor;

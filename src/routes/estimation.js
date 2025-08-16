@@ -63,104 +63,120 @@ router.post('/generate-from-upload', upload.single('drawing'), async (req, res) 
         if (!pdfProcessor || !aiAnalyzer || !estimationEngine) {
             console.log('🧪 Running in mock mode due to missing services...');
             
-            // Mock estimation data with complete structure
-            const mockEstimation = {
+            // Create a comprehensive response that covers all possible frontend expectations
+            const responseData = {
+                success: true,
+                message: 'Estimation generated successfully',
                 project_id: projectId,
                 total_cost: 125000,
                 currency: 'AUD',
-                location: location,
-                confidence_level: 0.75,
-                generated_at: new Date().toISOString(),
                 
-                // Cost summary that frontend expects
+                // Multiple possible locations for cost_summary
                 cost_summary: {
                     total_cost: 125000,
                     materials_cost: 85000,
                     labor_cost: 30000,
                     overhead_cost: 10000,
-                    currency: 'AUD'
-                },
-                
-                // Detailed breakdown
-                breakdown: {
-                    materials: 85000,
-                    labor: 30000,
-                    overheads: 10000,
-                    subtotal: 115000,
-                    gst: 11500,
-                    total: 126500
-                },
-                
-                // Steel components list
-                steel_components: [
-                    {
-                        item: '250 UB 31.4',
-                        description: 'Universal Beam',
-                        quantity: 8,
-                        length: '6.0m',
-                        unit_cost: 950,
-                        total_cost: 7600,
-                        weight_per_meter: 31.4,
-                        total_weight: 1507.2
-                    },
-                    {
-                        item: '200 UC 46.2', 
-                        description: 'Universal Column',
-                        quantity: 4,
-                        length: '3.0m',
-                        unit_cost: 1200,
-                        total_cost: 4800,
-                        weight_per_meter: 46.2,
-                        total_weight: 554.4
-                    },
-                    {
-                        item: 'Connections & Fasteners',
-                        description: 'Bolts, welds, plates',
-                        quantity: 1,
-                        unit_cost: 15000,
-                        total_cost: 15000
+                    currency: 'AUD',
+                    breakdown: {
+                        materials: 85000,
+                        labor: 30000,
+                        overheads: 10000
                     }
-                ],
-                
-                // Analysis details
-                analysis: {
-                    drawing_type: 'Structural Steel',
-                    elements_identified: 12,
-                    confidence_score: 0.75,
-                    processing_time: '2.3s'
                 },
                 
-                // Additional metadata
-                metadata: {
-                    processed_pages: 1,
-                    extraction_method: 'AI Analysis',
-                    standards_applied: ['AS 4100', 'AS 1170'],
-                    location_factors: {
-                        base_location: 'Sydney',
-                        transport_factor: 1.0,
-                        labor_rate_factor: 1.15
-                    }
-                }
-            };
-
-            return res.json({
-                success: true,
-                message: 'Estimation generated successfully',
                 data: {
                     project_id: projectId,
-                    estimation: mockEstimation,  // Wrap in estimation object
-                    cost_summary: mockEstimation.cost_summary,  // Also provide at root level
-                    analysis: mockEstimation.analysis,
+                    total_cost: 125000,
+                    currency: 'AUD',
+                    
+                    cost_summary: {
+                        total_cost: 125000,
+                        materials_cost: 85000,
+                        labor_cost: 30000,
+                        overhead_cost: 10000,
+                        currency: 'AUD'
+                    },
+                    
+                    estimation: {
+                        project_id: projectId,
+                        total_cost: 125000,
+                        currency: 'AUD',
+                        
+                        cost_summary: {
+                            total_cost: 125000,
+                            materials_cost: 85000,
+                            labor_cost: 30000,
+                            overhead_cost: 10000,
+                            currency: 'AUD'
+                        },
+                        
+                        breakdown: {
+                            materials: 85000,
+                            labor: 30000,
+                            overheads: 10000,
+                            subtotal: 115000,
+                            gst: 11500,
+                            total: 126500
+                        },
+                        
+                        steel_components: [
+                            {
+                                item: '250 UB 31.4',
+                                description: 'Universal Beam',
+                                quantity: 8,
+                                length: '6.0m',
+                                unit_cost: 950,
+                                total_cost: 7600
+                            },
+                            {
+                                item: '200 UC 46.2', 
+                                description: 'Universal Column',
+                                quantity: 4,
+                                length: '3.0m',
+                                unit_cost: 1200,
+                                total_cost: 4800
+                            }
+                        ],
+                        
+                        confidence_level: 0.75,
+                        generated_at: new Date().toISOString()
+                    },
+                    
+                    analysis: {
+                        drawing_type: 'Structural Steel',
+                        elements_identified: 12,
+                        confidence_score: 0.75,
+                        processing_time: '2.3s'
+                    },
+                    
                     pdf_info: {
                         filename: req.file.originalname,
                         size: req.file.size,
                         upload_status: 'success'
                     }
                 },
-                // Also provide key fields at root level for compatibility
-                total_cost: mockEstimation.total_cost,
-                cost_summary: mockEstimation.cost_summary
-            });
+                
+                // Root level fields for maximum compatibility
+                estimation: {
+                    cost_summary: {
+                        total_cost: 125000,
+                        materials_cost: 85000,
+                        labor_cost: 30000,
+                        overhead_cost: 10000,
+                        currency: 'AUD'
+                    }
+                }
+            };
+
+            // Log the response structure for debugging
+            console.log('🔍 Mock response structure:');
+            console.log('- Root cost_summary:', !!responseData.cost_summary);
+            console.log('- data.cost_summary:', !!responseData.data?.cost_summary);
+            console.log('- data.estimation.cost_summary:', !!responseData.data?.estimation?.cost_summary);
+            console.log('- estimation.cost_summary:', !!responseData.estimation?.cost_summary);
+
+            return res.json(responseData);
         }
 
         // Real processing (when services are available)
@@ -193,9 +209,14 @@ router.post('/generate-from-upload', upload.single('drawing'), async (req, res) 
 
     } catch (error) {
         console.error('❌ Estimation generation error:', error.message);
+        console.error('❌ Full error stack:', error.stack);
         res.status(500).json({
             success: false,
-            error: error.message || 'Failed to process PDF and generate estimation'
+            error: error.message || 'Failed to process PDF and generate estimation',
+            debug_info: {
+                error_type: error.constructor.name,
+                timestamp: new Date().toISOString()
+            }
         });
     }
 });
@@ -377,6 +398,33 @@ router.post('/test', async (req, res) => {
             error: error.message || 'Test failed'
         });
     }
+});
+
+/**
+ * GET /api/estimation/test-cost-summary
+ * Simple test endpoint to verify cost_summary structure
+ */
+router.get('/test-cost-summary', (req, res) => {
+    res.json({
+        success: true,
+        cost_summary: {
+            total_cost: 125000,
+            materials_cost: 85000,
+            labor_cost: 30000,
+            overhead_cost: 10000,
+            currency: 'AUD'
+        },
+        data: {
+            cost_summary: {
+                total_cost: 125000,
+                materials_cost: 85000,
+                labor_cost: 30000,
+                overhead_cost: 10000,
+                currency: 'AUD'
+            }
+        },
+        message: 'Test endpoint for cost_summary structure'
+    });
 });
 
 /**

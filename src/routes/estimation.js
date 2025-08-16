@@ -1,12 +1,11 @@
-// src/routes/estimation.js
 import express from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
-import { PdfProcessor } from '../services/pdfProcessor.js';
+import { PdfProcessor } from '../services/pdfprocessor.js';
 import { EnhancedAIAnalyzer } from '../services/aiAnalyzer.js';
-import { EstimationEngine } from '../services/costEstimationEngine.js';
+import { EstimationEngine } from '../services/cost-estimation-engine.js';
 import ReportGenerator from '../services/reportGenerator.js';
 
 const router = express.Router();

@@ -1,187 +1,122 @@
-// src/services/pdfprocessor.js
-import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
+import express from 'express';
+import multer from 'multer';
+import mongoose from 'mongoose';
 
-export class PdfProcessor {
-  constructor() {
-    // --- FIX: Added the 'gi' (global, case-insensitive) flag to all patterns ---
-    // This is required by the String.prototype.matchAll() function.
-    this.patterns = {
-      mainMember: /(\d+\s*(?:UB|UC|WB|WC)\s*\d+\.?\d*)|(\d+\s*PFC)|((\d{2,3})\s*[xX×]\s*(\d{2,3})\s*[xX×]\s*(\d{1,2}(?:\.\d+)?)\s*(?:SHS|RHS))|(L\d{1,3}[xX×]\d{1,3}[xX×]\d{1,2}(?:\.\d+)?)/gi,
-      purlin: /[CZ](\d{3})\s*(\d{2}(?:\.\d+)?)/gi,
-      plate: /(?:PL|STIFFENER)\s*(\d+)/gi,
-      bolts: /M(12|16|20|24|30)/gi,
-      quantity: /(?:(\d+)\s*NO)|(?:QTY\s*:\s*(\d+))|(?:(\d+)x)/gi
-    };
-  }
+// --- Firebase and Service Imports ---
+import { adminStorage } from '../config/firebase.js';
+// --- FIX: Changed from a named import { PdfProcessor } to a default import ---
+import PdfProcessor from '../services/pdfprocessor.js';
+import { EnhancedAIAnalyzer } from '../services/aiAnalyzer.js';
+import { EstimationEngine } from '../services/cost-estimation-engine.js';
+import Estimation from '../models/estimation.js';
 
-  /**
-   * Primary method to extract all structured data from a PDF buffer.
-   * @param {Buffer} pdfBuffer The PDF file data.
-   * @returns {Promise<object>} A structured object with all extracted steel information.
-   */
-  async extractSteelInformation(pdfBuffer) {
-    console.log('🚀 Starting High-Accuracy PDF Steel Extraction...');
-    const pageTexts = await this._getTextWithLayout(pdfBuffer);
-    if (!pageTexts || pageTexts.length === 0) {
-      throw new Error("PDF text extraction failed or returned no content.");
+const router = express.Router();
+
+// --- Multer Configuration for In-Memory File Uploads ---
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 15 * 1024 * 1024 }, // 15MB limit
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype !== 'application/pdf') {
+            return cb(new Error('Only PDF files are allowed.'), false);
+        }
+        cb(null, true);
     }
+});
 
-    const steelData = {
-      mainMembers: [],
-      purlins: [],
-      platesAndFittings: [],
-      connections: [],
-      summary: {}
-    };
+// --- Initialize Services ---
+const pdfProcessor = new PdfProcessor();
+const estimationEngine = new EstimationEngine();
 
-    const uniqueEntries = new Set();
+/**
+ * Helper function to upload a file buffer to Firebase Storage.
+ */
+const uploadToFirebase = (buffer, originalname) => {
+    return new Promise((resolve, reject) => {
+        const bucket = adminStorage.bucket();
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        const destinationPath = `drawings/${uniqueSuffix}-${originalname}`;
+        const file = bucket.file(destinationPath);
+        const stream = file.createWriteStream({ metadata: { contentType: 'application/pdf' } });
+        stream.on('error', (err) => reject(new Error(`Firebase upload failed: ${err.message}`)));
+        stream.on('finish', () => resolve(destinationPath));
+        stream.end(buffer);
+    });
+};
 
-    for (const page of pageTexts) {
-      console.log(`Analyzing Page ${page.pageNumber}...`);
-      // Find and process specific tables (schedules)
-      this._processSchedules(page.lines, "BEAM SCHEDULE", steelData.mainMembers, uniqueEntries);
-      this._processSchedules(page.lines, "COLUMN SCHEDULE", steelData.mainMembers, uniqueEntries);
-      this._processSchedules(page.lines, "PURLIN SCHEDULE", steelData.purlins, uniqueEntries);
-
-      // Search for plates and bolts in General Notes or connection details
-      this._findGeneralNotesItems(page.lines, this.patterns.plate, "Plate/Stiffener", steelData.platesAndFittings, uniqueEntries);
-      this._findGeneralNotesItems(page.lines, this.patterns.bolts, "Bolt", steelData.connections, uniqueEntries);
-    }
+/**
+ * =================================================================
+ * POST /api/estimation/generate-from-upload
+ * Main route to upload a PDF and generate a cost estimation.
+ * =================================================================
+ */
+router.post('/generate-from-upload', upload.single('drawing'), async (req, res, next) => {
+    console.log('🚀 Received request for estimation generation...');
     
-    steelData.summary = this._createSummary(steelData);
-    console.log(`✅ High-Accuracy Extraction Complete. Found ${steelData.summary.totalItems} unique steel items.`);
-    return steelData;
-  }
-
-  /**
-   * Extracts text and preserves line-by-line structure using X/Y coordinates.
-   * @param {Buffer} pdfBuffer The PDF file data.
-   * @returns {Promise<Array<object>>} An array of page objects, each containing structured lines of text.
-   */
-  async _getTextWithLayout(pdfBuffer) {
-    const uint8Array = new Uint8Array(pdfBuffer);
-    const pdf = await pdfjsLib.getDocument({ data: uint8Array, useSystemFonts: true, verbosity: 0 }).promise;
-    const pages = [];
-
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const content = await page.getTextContent();
-      const items = content.items;
-
-      items.sort((a, b) => {
-        if (Math.abs(a.transform[5] - b.transform[5]) > 5) {
-          return b.transform[5] - a.transform[5];
+    try {
+        if (!req.file) {
+            return res.status(400).json({ success: false, error: 'No PDF file uploaded. Expecting field name "drawing".' });
         }
-        return a.transform[4] - b.transform[4];
-      });
-
-      const lines = [];
-      let currentLine = { y: -1, text: '' };
-      for (const item of items) {
-        if (Math.abs(item.transform[5] - currentLine.y) > 5) {
-          if (currentLine.text) lines.push(currentLine);
-          currentLine = { y: item.transform[5], text: item.str };
-        } else {
-          currentLine.text += ' ' + item.str;
-        }
-      }
-      if (currentLine.text) lines.push(currentLine);
-      
-      pages.push({ pageNumber: i, lines });
-    }
-    return pages;
-  }
-
-  /**
-   * Locates and processes a table-like schedule on a page.
-   * @param {Array<object>} lines - The structured lines from a page.
-   * @param {string} scheduleTitle - The title to search for (e.g., "BEAM SCHEDULE").
-   * @param {Array<object>} targetArray - The array in steelData to push results into.
-   * @param {Set<string>} uniqueEntries - A set to prevent duplicate entries.
-   */
-  _processSchedules(lines, scheduleTitle, targetArray, uniqueEntries) {
-    const titleIndex = lines.findIndex(line => line.text.toUpperCase().includes(scheduleTitle));
-    if (titleIndex === -1) return;
-
-    console.log(`Found "${scheduleTitle}"...`);
-    for (let i = titleIndex + 1; i < lines.length; i++) {
-      const lineText = lines[i].text;
-      if (lineText.trim() === '' || lineText.toUpperCase().includes("SCHEDULE")) break;
-
-      const memberMatch = lineText.match(this.patterns.mainMember) || lineText.match(this.patterns.purlin);
-      if (memberMatch) {
-        const designation = this._normalizeDesignation(memberMatch[0]);
         
-        if (!uniqueEntries.has(designation)) {
-          uniqueEntries.add(designation);
-          targetArray.push({
-            type: this._classifyMember(designation),
-            designation: designation,
-            quantity: this._findQuantityInLine(lineText) || 1,
-            source: scheduleTitle
-          });
+        const { projectName = 'Unnamed Project', location = 'Sydney', clientName = '', userId } = req.body;
+        console.log('📋 Project details:', { projectName, location, clientName });
+
+        const apiKey = process.env.ANTHROPIC_API_KEY;
+        if (!apiKey) {
+            throw new Error('Server configuration error: ANTHROPIC_API_KEY is not set.');
         }
-      }
+
+        // --- Step 1: Upload to Firebase Storage ---
+        console.log('[1/6] Uploading file to Firebase Storage...');
+        const fileBuffer = req.file.buffer;
+        const storagePath = await uploadToFirebase(fileBuffer, req.file.originalname);
+        console.log(`[1/6] ✅ File uploaded to: ${storagePath}`);
+        
+        // --- Step 2: Extract PDF Content from Buffer ---
+        console.log('[2/6] Extracting text from PDF...');
+        const structuredData = await pdfProcessor.extractSteelInformation(fileBuffer);
+        
+        const memberCount = structuredData.summary.totalItems || 0;
+        console.log(`[2/6] ✅ PDF Extraction Complete. Found ${memberCount} members.`);
+
+        // --- Step 3: AI Analysis ---
+        console.log('[3/6] Starting AI analysis...');
+        const aiAnalyzer = new EnhancedAIAnalyzer(apiKey);
+        const analysisResults = await aiAnalyzer.analyzeStructuralDrawings(structuredData, `PROJ_${Date.now()}`);
+        console.log(`[3/6] ✅ AI Analysis Complete.`);
+
+        // --- Step 4: Cost Estimation ---
+        console.log('[4/6] Generating cost estimation...');
+        const estimationData = await estimationEngine.generateEstimation(analysisResults, location);
+        console.log(`[4/6] ✅ Cost Estimation Complete. Total: ${estimationData.cost_summary?.total_inc_gst || 0}`);
+
+        // --- Step 5: Save to Database (MongoDB) ---
+        console.log('[5/6] Saving estimation to database...');
+        const estimation = new Estimation({
+            projectName, projectLocation: location, clientName,
+            originalFilename: req.file.originalname,
+            fileSize: req.file.size,
+            storagePath,
+            structuredData: structuredData,
+            analysisResults, estimationData,
+            status: 'Draft', user: userId
+        });
+        const savedEstimation = await estimation.save();
+        console.log(`[5/6] ✅ Estimation saved with ID: ${savedEstimation._id}`);
+
+        // --- Step 6: Final Response ---
+        const response = {
+            success: true, projectId: savedEstimation._id.toString(),
+            estimationData,
+            summary: { totalCost: estimationData.cost_summary?.total_inc_gst || 0, currency: 'AUD', location }
+        };
+        console.log('🎉 Estimation process completed successfully.');
+        res.status(201).json(response);
+
+    } catch (error) {
+        console.error('❌ An error occurred during the estimation process:', error);
+        next(error);
     }
-  }
+});
 
-  /**
-   * Finds items like bolts and plates that are often listed in notes.
-   * @param {Array<object>} lines - The structured lines from a page.
-   * @param {RegExp} pattern - The regex pattern to search for.
-   * @param {string} type - The type of item being searched for.
-   * @param {Array<object>} targetArray - The array in steelData to push results into.
-   * @param {Set<string>} uniqueEntries - A set to prevent duplicate entries.
-   */
-  _findGeneralNotesItems(lines, pattern, type, targetArray, uniqueEntries) {
-      lines.forEach(line => {
-          const matches = [...line.text.matchAll(pattern)];
-          matches.forEach(match => {
-              const designation = this._normalizeDesignation(match[0]);
-              if (!uniqueEntries.has(designation)) {
-                  uniqueEntries.add(designation);
-                  targetArray.push({
-                      type: type,
-                      designation: designation,
-                      quantity: this._findQuantityInLine(line.text) || 1,
-                      source: "General Notes / Detail"
-                  });
-              }
-          });
-      });
-  }
-
-  _findQuantityInLine(lineText) {
-      const qtyMatch = lineText.match(this.patterns.quantity);
-      if (!qtyMatch) return null;
-      return parseInt(qtyMatch[1] || qtyMatch[2] || qtyMatch[3]);
-  }
-
-  _classifyMember(designation) {
-    const d = designation.toUpperCase();
-    if (d.includes('UB') || d.includes('WB')) return 'Universal Beam';
-    if (d.includes('UC') || d.includes('WC')) return 'Universal Column';
-    if (d.includes('PFC')) return 'Parallel Flange Channel';
-    if (d.includes('SHS')) return 'Square Hollow Section';
-    if (d.includes('RHS')) return 'Rectangular Hollow Section';
-    if (d.includes('L')) return 'Angle';
-    if (d.startsWith('C') || d.startsWith('Z')) return 'Purlin';
-    return 'Unknown Member';
-  }
-
-  _normalizeDesignation(designation) {
-    return designation.replace(/\s+/g, ' ').replace(/[×]/g, 'x').toUpperCase().trim();
-  }
-
-  _createSummary(steelData) {
-    return {
-      totalItems: steelData.mainMembers.length + steelData.purlins.length + steelData.platesAndFittings.length + steelData.connections.length,
-      mainMembersCount: steelData.mainMembers.length,
-      purlinCount: steelData.purlins.length,
-      plateAndFittingCount: steelData.platesAndFittings.length,
-      connectionCount: steelData.connections.length,
-    };
-  }
-}
-
-export default PdfProcessor;
+export default router;

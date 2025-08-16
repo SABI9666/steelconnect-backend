@@ -1,23 +1,31 @@
-// server.js - FIXED VERSION
+// server.js - SIMPLIFIED VERSION with Direct Imports
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { pathToFileURL } from 'url';
+
+// Import routes directly
+import authRoutes from './src/routes/auth.js';
+import jobsRoutes from './src/routes/jobs.js';
+import quotesRoutes from './src/routes/quotes.js';
+import messagesRoutes from './src/routes/messages.js';
+// Optional route - use try/catch
+let estimationRoutes;
+try {
+    const estimationModule = await import('./src/routes/estimation.js');
+    estimationRoutes = estimationModule.default;
+} catch (error) {
+    console.warn('⚠️ Estimation routes not available:', error.message);
+}
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 10000;
-const __filename = fileURLToPath(import.meta.url);
-const projectRoot = path.dirname(__filename);
 
 console.log('🚀 SteelConnect Backend Starting...');
-console.log(`📁 Project root: ${projectRoot}`);
 console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
 console.log(`⏰ Started at: ${new Date().toISOString()}`);
 
@@ -35,12 +43,8 @@ const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',').filter(origin 
 
 const corsOptions = {
     origin: (origin, callback) => {
-        // Allow requests with no origin (like mobile apps, curl requests, or localhost development)
-        if (!origin) {
-            return callback(null, true);
-        }
+        if (!origin) return callback(null, true);
 
-        // Check if the origin is in the whitelisted array OR if it's a Vercel URL
         if (allowedOrigins.includes(origin) || 
             origin.endsWith('.vercel.app') || 
             origin.includes('localhost') ||
@@ -48,7 +52,6 @@ const corsOptions = {
             callback(null, true);
         } else {
             console.warn(`⚠️ CORS Warning: Origin "${origin}" not in allowed list`);
-            // Allow in development, block in production
             if (process.env.NODE_ENV !== 'production') {
                 callback(null, true);
             } else {
@@ -74,48 +77,7 @@ app.use((req, res, next) => {
     next();
 });
 
-// --- Dynamic Route Loading ---
-const loadRoutes = async () => {
-    console.log('🔄 Loading application routes...');
-    
-    const routesToLoad = [
-        { path: '/api/auth', file: './src/routes/auth.js', name: 'Auth', required: true },
-        { path: '/api/jobs', file: './src/routes/jobs.js', name: 'Jobs', required: true },
-        { path: '/api/quotes', file: './src/routes/quotes.js', name: 'Quotes', required: true },
-        { path: '/api/messages', file: './src/routes/messages.js', name: 'Messages', required: true },
-        { path: '/api/estimation', file: './src/routes/estimation.js', name: 'Estimation', required: false }
-    ];
-
-    for (const route of routesToLoad) {
-        try {
-            const routeUrl = pathToFileURL(path.join(projectRoot, route.file)).href;
-            const { default: routeModule } = await import(routeUrl);
-            
-            if (routeModule) {
-                app.use(route.path, routeModule);
-                console.log(`✅ ${route.name} routes loaded successfully`);
-            } else {
-                console.error(`❌ ${route.name} routes module is empty`);
-                if (route.required) {
-                    throw new Error(`Required route ${route.name} failed to load`);
-                }
-            }
-        } catch (error) {
-            console.error(`❌ Failed to load ${route.name} routes: ${error.message}`);
-            
-            if (route.required) {
-                console.error(`💥 Required route ${route.name} failed - server cannot start`);
-                process.exit(1);
-            } else {
-                console.warn(`⚠️ ${route.name} routes are optional - continuing without them`);
-            }
-        }
-    }
-    
-    console.log('📦 Route loading completed');
-};
-
-// --- Health check route (always available) ---
+// --- Health check route ---
 app.get('/health', (req, res) => {
     res.json({
         success: true,
@@ -145,20 +107,64 @@ app.get('/', (req, res) => {
     });
 });
 
-// --- API Routes test endpoint ---
+// --- Register Routes ---
+console.log('🔄 Registering routes...');
+
+// Auth routes
+if (authRoutes) {
+    app.use('/api/auth', authRoutes);
+    console.log('✅ Auth routes registered');
+} else {
+    console.error('❌ Auth routes failed to load');
+}
+
+// Jobs routes  
+if (jobsRoutes) {
+    app.use('/api/jobs', jobsRoutes);
+    console.log('✅ Jobs routes registered');
+} else {
+    console.error('❌ Jobs routes failed to load');
+}
+
+// Quotes routes
+if (quotesRoutes) {
+    app.use('/api/quotes', quotesRoutes);
+    console.log('✅ Quotes routes registered');
+} else {
+    console.error('❌ Quotes routes failed to load');
+}
+
+// Messages routes
+if (messagesRoutes) {
+    app.use('/api/messages', messagesRoutes);
+    console.log('✅ Messages routes registered');
+} else {
+    console.error('❌ Messages routes failed to load');
+}
+
+// Estimation routes (optional)
+if (estimationRoutes) {
+    app.use('/api/estimation', estimationRoutes);
+    console.log('✅ Estimation routes registered');
+}
+
+console.log('📦 Route registration completed');
+
+// --- API test endpoint ---
 app.get('/api', (req, res) => {
     res.json({
         message: 'SteelConnect API',
         version: '1.0.0',
         available_endpoints: [
-            'GET /api/auth/health',
+            'GET /health',
+            'GET /api',
+            'GET /api/auth/*',
             'POST /api/auth/register',
             'POST /api/auth/login',
-            'GET /api/jobs',
-            'GET /api/quotes', 
-            'GET /api/messages',
-            'GET /api/estimation/health',
-            'POST /api/estimation/test'
+            'GET /api/jobs/*',
+            'GET /api/quotes/*', 
+            'GET /api/messages/*',
+            'GET /api/estimation/*'
         ]
     });
 });
@@ -167,7 +173,6 @@ app.get('/api', (req, res) => {
 app.use((error, req, res, next) => {
     console.error('❌ Global Error Handler:', error);
     
-    // Handle multer errors
     if (error.code === 'LIMIT_FILE_SIZE') {
         return res.status(413).json({ 
             success: false, 
@@ -175,7 +180,6 @@ app.use((error, req, res, next) => {
         });
     }
     
-    // Handle CORS errors
     if (error.message === 'Not allowed by CORS') {
         return res.status(403).json({
             success: false,
@@ -183,7 +187,6 @@ app.use((error, req, res, next) => {
         });
     }
     
-    // Generic error response
     res.status(error.status || 500).json({ 
         success: false, 
         error: error.message || 'Internal Server Error',
@@ -209,9 +212,9 @@ app.use('*', (req, res) => {
     });
 });
 
-// --- Graceful shutdown handling ---
+// --- Graceful shutdown ---
 process.on('SIGTERM', () => {
-    console.log('📴 SIGTERM received, shutting down gracefully...');
+    console.log('🔴 SIGTERM received, shutting down gracefully...');
     if (mongoose.connection.readyState === 1) {
         mongoose.connection.close();
     }
@@ -219,7 +222,7 @@ process.on('SIGTERM', () => {
 });
 
 process.on('SIGINT', () => {
-    console.log('📴 SIGINT received, shutting down gracefully...');
+    console.log('🔴 SIGINT received, shutting down gracefully...');
     if (mongoose.connection.readyState === 1) {
         mongoose.connection.close();
     }
@@ -227,46 +230,20 @@ process.on('SIGINT', () => {
 });
 
 // --- Start Server ---
-const startServer = async () => {
-    try {
-        // Load routes first
-        await loadRoutes();
-        
-        // Start the server
-        app.listen(PORT, '0.0.0.0', () => {
-            console.log('🎉 SteelConnect Backend Server Started');
-            console.log(`📍 Server running on port ${PORT}`);
-            console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
-            console.log(`⏰ Started at: ${new Date().toISOString()}`);
-            
-            // Log environment status
-            console.log('\n📋 Environment Check:');
-            console.log(`   MongoDB: ${process.env.MONGODB_URI ? '✅ Configured' : '❌ Missing'}`);
-            console.log(`   Anthropic API: ${process.env.ANTHROPIC_API_KEY ? '✅ Configured' : '❌ Missing'}`);
-            console.log(`   Firebase: ${process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 ? '✅ Configured' : '❌ Missing'}`);
-            console.log(`   CORS Origins: ${process.env.CORS_ORIGIN ? '✅ Configured' : '⚠️ Using defaults'}`);
-            
-            console.log('\n🔗 Available endpoints:');
-            console.log(`   Health: http://localhost:${PORT}/health`);
-            console.log(`   API: http://localhost:${PORT}/api`);
-            console.log('');
-        });
-        
-    } catch (error) {
-        console.error('💥 Failed to start server:', error);
-        process.exit(1);
-    }
-};
-
-// Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-    console.error('💥 Uncaught Exception:', error);
-    process.exit(1);
+app.listen(PORT, '0.0.0.0', () => {
+    console.log('🎉 SteelConnect Backend Server Started');
+    console.log(`📍 Server running on port ${PORT}`);
+    console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`⏰ Started at: ${new Date().toISOString()}`);
+    
+    console.log('\n📋 Environment Check:');
+    console.log(`   MongoDB: ${process.env.MONGODB_URI ? '✅ Configured' : '❌ Missing'}`);
+    console.log(`   Anthropic API: ${process.env.ANTHROPIC_API_KEY ? '✅ Configured' : '❌ Missing'}`);
+    console.log(`   Firebase: ${process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 ? '✅ Configured' : '❌ Missing'}`);
+    console.log(`   CORS Origins: ${process.env.CORS_ORIGIN ? '✅ Configured' : '⚠️ Using defaults'}`);
+    
+    console.log('\n🔗 Available endpoints:');
+    console.log(`   Health: http://localhost:${PORT}/health`);
+    console.log(`   API: http://localhost:${PORT}/api`);
+    console.log('');
 });
-
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
-    process.exit(1);
-});
-
-startServer();

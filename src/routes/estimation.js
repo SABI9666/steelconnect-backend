@@ -1,12 +1,8 @@
-// src/routes/estimation.js - CORRECTED VERSION
+// src/routes/estimation.js - CORRECTED AND FINAL VERSION
 import express from 'express';
 import multer from 'multer';
-import path from 'path';
-import { fileURLToPath } from 'url';
 
 const router = express.Router();
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // Configure multer for file uploads
 const upload = multer({
@@ -22,7 +18,7 @@ const upload = multer({
 });
 
 // --- CORRECTED: Robust Service Initialization ---
-// Services are now imported dynamically to prevent the server from crashing if a file is missing.
+// Services are now imported dynamically and checked individually to prevent crashes.
 let pdfProcessor, aiAnalyzer, estimationEngine, reportGenerator;
 
 try {
@@ -32,30 +28,29 @@ try {
 
     pdfProcessor = new PdfProcessor();
     estimationEngine = new EstimationEngine();
-    reportGenerator = ReportGeneratorModule.default;
+    reportGenerator = new ReportGeneratorModule.default();
 
-    // Conditionally import and initialize the AI Analyzer only if the API key is present and the file exists.
+    // Conditionally import and initialize the AI Analyzer.
     if (process.env.ANTHROPIC_API_KEY) {
         try {
             const { EnhancedAIAnalyzer } = await import('../services/aiAnalyzer.js');
             aiAnalyzer = new EnhancedAIAnalyzer(process.env.ANTHROPIC_API_KEY);
-            console.log('✅ All estimation services initialized successfully');
         } catch (e) {
-            aiAnalyzer = null;
+            aiAnalyzer = null; // Set to null if missing, so the app doesn't crash.
             console.warn('⚠️ AI Analyzer service file could not be loaded. AI features will be disabled.');
         }
     } else {
         aiAnalyzer = null;
         console.warn('⚠️ ANTHROPIC_API_KEY not found. AI features disabled.');
     }
-
+    console.log('✅ Estimation services initialized.');
 } catch (error) {
-    console.error('❌ A critical service (PdfProcessor, EstimationEngine, or ReportGenerator) failed to initialize. Some endpoints may fail.', error.message);
+    console.error('❌ A critical service failed to initialize:', error.message);
 }
 
 /**
  * POST /api/estimation/generate-from-upload
- * Main endpoint for uploading a PDF and generating a full estimation.
+ * Main endpoint for PDF processing and estimation generation.
  */
 router.post('/generate-from-upload', upload.single('drawing'), async (req, res) => {
     try {
@@ -64,26 +59,28 @@ router.post('/generate-from-upload', upload.single('drawing'), async (req, res) 
         if (!req.file) {
             return res.status(400).json({ success: false, error: 'No PDF file uploaded' });
         }
-
+        
+        // Check for CORE services. The app can run without the AI Analyzer.
         if (!pdfProcessor || !estimationEngine) {
-            return res.status(503).json({ success: false, error: 'Core estimation services are not available. Check server logs.' });
+            console.error('❌ Core services (PDF Processor or Estimation Engine) are unavailable.');
+            return res.status(503).json({ success: false, error: 'A core estimation service is not available. Please check server logs.' });
         }
 
         const { location = 'Sydney' } = req.body;
         const projectId = `PROJ-${Date.now()}`;
 
-        // Step 1: Process PDF to extract text and basic structure
+        // Step 1: Process the PDF to extract structured data.
         console.log('🔍 Processing PDF...');
         const structuredData = await pdfProcessor.process(req.file.buffer);
 
         let analysisResult;
         
-        // Step 2: AI Analysis (if available) or Fallback
+        // Step 2: Use the AI Analyzer if it's available, otherwise use a reliable fallback.
         if (aiAnalyzer) {
             console.log('🤖 Starting AI analysis...');
             analysisResult = await aiAnalyzer.analyzeStructuralDrawings(structuredData, projectId);
         } else {
-            // Fallback analysis if AI service is disabled or failed to load
+            // This is the fallback logic when the AI service is missing.
             console.log('🔧 Using fallback analysis (no AI)...');
             analysisResult = {
                 projectId,
@@ -100,7 +97,7 @@ router.post('/generate-from-upload', upload.single('drawing'), async (req, res) 
             };
         }
 
-        // Step 3: Generate detailed cost estimation from the analysis
+        // Step 3: Generate the detailed cost estimation using the engine.
         console.log('💰 Generating cost estimation...');
         const estimationData = await estimationEngine.generateEstimation(analysisResult, location);
 
@@ -126,45 +123,8 @@ router.post('/generate-from-upload', upload.single('drawing'), async (req, res) 
 });
 
 /**
- * POST /api/estimation/generate-report
- * Generate detailed report from estimation data
- */
-router.post('/generate-report', async (req, res) => {
-    try {
-        const { estimationData, format = 'html', projectId } = req.body;
-
-        if (!estimationData || !projectId) {
-            return res.status(400).json({ success: false, error: 'Missing estimation data or project ID' });
-        }
-        if (!reportGenerator) {
-            return res.status(503).json({ success: false, error: 'Report generation service not available' });
-        }
-
-        console.log(`📊 Generating ${format.toUpperCase()} report for project ${projectId}...`);
-        const report = await reportGenerator.generateReport(estimationData, format, projectId);
-
-        let contentType = 'text/html';
-        if (format === 'json') contentType = 'application/json';
-        if (format === 'csv') contentType = 'text/csv';
-
-        res.set('Content-Type', contentType);
-        
-        if (format === 'html') {
-            res.send(report.content);
-        } else {
-            res.json({ success: true, data: report });
-        }
-
-    } catch (error) {
-        console.error('❌ Report generation error:', error.message);
-        res.status(500).json({ success: false, error: error.message || 'Failed to generate report' });
-    }
-});
-
-
-/**
  * GET /api/estimation/health
- * Health check endpoint for the estimation service and its sub-modules.
+ * Health check endpoint.
  */
 router.get('/health', (req, res) => {
     res.json({
@@ -173,16 +133,15 @@ router.get('/health', (req, res) => {
         timestamp: new Date().toISOString(),
         services: {
             pdf_processor: pdfProcessor ? 'ready' : 'unavailable',
-            ai_analyzer: aiAnalyzer ? 'ready' : 'unavailable',
             estimation_engine: estimationEngine ? 'ready' : 'unavailable',
             report_generator: reportGenerator ? 'ready' : 'unavailable',
+            ai_analyzer: aiAnalyzer ? 'ready' : 'unavailable',
             anthropic_api_key: process.env.ANTHROPIC_API_KEY ? 'configured' : 'missing'
         }
     });
 });
 
-// --- Helper Functions for Fallback Logic ---
-
+// Helper function to create fallback quantities from PDF data when AI is offline.
 function createFallbackQuantities(structuredData) {
     const steelSchedules = structuredData.steel_schedules || [];
     const members = [];
@@ -190,7 +149,7 @@ function createFallbackQuantities(structuredData) {
     
     steelSchedules.forEach(schedule => {
         const quantity = parseInt(schedule.quantity) || 1;
-        const length = parseFloat(schedule.length) / 1000 || 6.0;
+        const length = parseFloat(schedule.length) / 1000 || 6.0; // Convert mm to m
         const weightPerM = estimateWeightFromDesignation(schedule.designation);
         const totalMemberWeight = quantity * length * weightPerM;
         
@@ -206,10 +165,21 @@ function createFallbackQuantities(structuredData) {
         totalWeight += totalMemberWeight;
     });
 
+    const totalConcrete = Math.max(10, totalWeight / 1000 * 5);
+
     return {
-        steel_quantities: { members, summary: { total_steel_weight_tonnes: totalWeight / 1000, member_count: members.length } },
-        concrete_quantities: { elements: [], summary: { total_concrete_m3: 0 } },
-        reinforcement_quantities: { deformed_bars: {}, mesh: {} }
+        steel_quantities: {
+            members: members,
+            summary: { total_steel_weight_tonnes: totalWeight / 1000, member_count: steelSchedules.length }
+        },
+        concrete_quantities: {
+            elements: [{ element_type: "foundation", volume_m3: totalConcrete, grade: "N32" }],
+            summary: { total_concrete_m3: totalConcrete }
+        },
+        reinforcement_quantities: {
+            deformed_bars: { n16: Math.round(totalConcrete * 60) }, // 60kg/m³ ratio
+            mesh: { sl72: Math.round(totalConcrete * 10) } // 10m²/m³ ratio
+        }
     };
 }
 

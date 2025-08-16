@@ -107,7 +107,7 @@ export default class ComprehensiveSteelProcessor {
       lengths: /(\d{1,5})\s*(?:MM|M)\s*(?:LONG|LENGTH|LG)|L\s*=\s*(\d{1,5})\s*(?:MM|M)?/gi,
       
       // Weights
-      weights: /(\d{1,3}(?:\.\d+)?)\s*(?:KG\/M|KG|T\/M|TONNE)/gi
+    weights: /(\d{1,3}(?:\.\d+)?)\s*(?:KG\/M|KG|T\/M|TONNE)/gi
     };
 
     // Australian Steel Categories

@@ -11,11 +11,13 @@ import authRoutes from './src/routes/auth.js';
 import jobsRoutes from './src/routes/jobs.js';
 import quotesRoutes from './src/routes/quotes.js';
 import messagesRoutes from './src/routes/messages.js';
-// Optional route - use try/catch
+
+// Import estimation routes (now fixed)
 let estimationRoutes;
 try {
     const estimationModule = await import('./src/routes/estimation.js');
     estimationRoutes = estimationModule.default;
+    console.log('✅ Estimation routes imported successfully');
 } catch (error) {
     console.warn('⚠️ Estimation routes not available:', error.message);
 }
@@ -142,10 +144,12 @@ if (messagesRoutes) {
     console.error('❌ Messages routes failed to load');
 }
 
-// Estimation routes (optional)
+// Estimation routes
 if (estimationRoutes) {
     app.use('/api/estimation', estimationRoutes);
     console.log('✅ Estimation routes registered');
+} else {
+    console.warn('⚠️ Estimation routes unavailable - some services may be missing');
 }
 
 console.log('📦 Route registration completed');

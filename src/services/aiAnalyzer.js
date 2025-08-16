@@ -21,21 +21,24 @@ export class EnhancedAIAnalyzer {
         try {
             console.log('Starting enhanced AI analysis...');
             const summary = this._createSummaryForAI(structuredData);
-            const quantityTakeoff = await this._performSteelQuantityTakeoff(summary, structuredData);
+            let quantityTakeoff = await this._performSteelQuantityTakeoff(summary, structuredData);
             
-            // --- VALIDATION: If AI result is empty, ensure fallback is used ---
-            const finalTakeoff = (quantityTakeoff.main_members?.items?.length > 0 || quantityTakeoff.purlins?.items?.length > 0)
-                ? quantityTakeoff
-                : this._calculateFallbackQuantities(structuredData);
+            // --- FIX: If the primary AI result is empty, explicitly replace it with the fallback result ---
+            const hasAiResults = quantityTakeoff.main_members?.items?.length > 0 || quantityTakeoff.purlins?.items?.length > 0;
+
+            if (!hasAiResults) {
+                console.log("AI result was empty, relying solely on fallback calculation.");
+                quantityTakeoff = this._calculateFallbackQuantities(structuredData);
+            }
             
-            if (!finalTakeoff.main_members?.items?.length && !finalTakeoff.purlins?.items?.length) {
+            if (!quantityTakeoff.main_members?.items?.length && !quantityTakeoff.purlins?.items?.length) {
                 console.warn('AI analysis and fallback both resulted in empty quantities.');
             }
 
             return {
                 projectId,
                 confidence: 0.85,
-                quantityTakeoff: finalTakeoff,
+                quantityTakeoff: quantityTakeoff,
                 riskAssessment: this._assessProjectRisks(structuredData)
             };
         } catch (error) {
@@ -72,9 +75,11 @@ export class EnhancedAIAnalyzer {
             });
             const responseText = response.content[0]?.text || '';
             console.log('AI Response received, length:', responseText.length);
+            // The fallback here is a backup for a FAILED parse
             return this._parseJsonResponse(responseText, () => this._calculateFallbackQuantities(originalData));
         } catch (error) {
             console.error(`Quantity takeoff error: ${error.message}`);
+            // This fallback is a backup for a FAILED API call
             return this._calculateFallbackQuantities(originalData);
         }
     }
@@ -82,7 +87,10 @@ export class EnhancedAIAnalyzer {
     _parseJsonResponse(text, fallbackFn) {
         try {
             const jsonString = text.substring(text.indexOf('{'), text.lastIndexOf('}') + 1);
-            if (!jsonString) return fallbackFn();
+            if (!jsonString) {
+                console.log("No JSON object found in AI response, using fallback.");
+                return fallbackFn();
+            };
             return JSON.parse(jsonString);
         } catch (error) {
             console.error(`JSON parsing failed: ${error.message}. Using fallback.`);
@@ -100,7 +108,6 @@ export class EnhancedAIAnalyzer {
         };
         const defaultWeightPerM = 30; // Average kg/m for fallback
 
-        // --- FIX: Calculate fallback using the new 'mainMembers' and 'purlins' data structure ---
         (data.mainMembers || []).forEach(item => {
             const quantity = item.quantity || 1;
             const totalWeightKg = quantity * 6 * defaultWeightPerM;
@@ -143,3 +150,13 @@ export class EnhancedAIAnalyzer {
         };
     }
 }
+
+
+
+
+
+
+
+
+
+

@@ -4,70 +4,64 @@ import fs from 'fs/promises';
 
 export class PdfProcessor {
   constructor() {
-    this.steelPatterns = this.initializeSteelPatterns();
-    this.unitConversions = this.initializeUnitConversions();
-  }
-
-  initializeSteelPatterns() {
-    return {
-      // Australian Standard Steel Sections
+    // Patterns are now strings to be compiled later. This prevents server-crashing syntax errors.
+    this.steelPatternStrings = {
       universalBeam: {
-        pattern: /(\d+)\s*UB\s*(\d+\.?\d*)/gi,
+        pattern: '(\\d+)\\s*UB\\s*(\\d+\\.?\\d*)',
         type: 'Universal Beam',
         category: 'structural_beam'
       },
       universalColumn: {
-        pattern: /(\d+)\s*UC\s*(\d+\.?\d*)/gi,
+        pattern: '(\\d+)\\s*UC\\s*(\\d+\\.?\\d*)',
         type: 'Universal Column',
         category: 'structural_column'
       },
       parallelFlangeChannel: {
-        pattern: /(\d+)\s*PFC/gi,
+        pattern: '(\\d+)\\s*PFC',
         type: 'Parallel Flange Channel',
         category: 'structural_channel'
       },
       shs: {
-        pattern: /(\d{2,3})\s*[xX×]\s*(\d{2,3})\s*[xX×]\s*(\d{1,2}(?:\.\d+)?)\s*SHS/gi,
+        pattern: '(\\d{2,3})\\s*[xX×]\\s*(\\d{2,3})\\s*[xX×]\\s*(\\d{1,2}(?:\\.\\d+)?)s*SHS',
         type: 'Square Hollow Section',
         category: 'hollow_structural'
       },
       rhs: {
-        pattern: /(\d{2,3})\s*[xX×]\s*(\d{2,3})\s*[xX×]\s*(\d{1,2}(?:\.\d+)?)\s*RHS/gi,
+        pattern: '(\\d{2,3})\\s*[xX×]\\s*(\\d{2,3})\\s*[xX×]\\s*(\\d{1,2}(?:\\.\\d+)?)s*RHS',
         type: 'Rectangular Hollow Section',
         category: 'hollow_structural'
       },
       zPurlin: {
-        pattern: /[CZ](\d{3})\s*(\d{2}(?:\.\d+)?)/gi,
+        pattern: '[CZ](\\d{3})\\s*(\\d{2}(?:\\.\\d+)?)',
         type: 'Purlin',
         category: 'purlin'
       },
       plate: {
-        pattern: /PL\s*(\d+(?:\.\d+)?)\s*(?:[xX×]\s*(\d+(?:\.\d+)?))?/gi,
+        pattern: 'PL\\s*(\\d+(?:\\.\\d+)?)\\s*(?:[xX×]\\s*(\\d+(?:\\.\\d+)?))?',
         type: 'Steel Plate',
         category: 'plate'
       },
-       stiffenerPlate: {
-        // --- THIS LINE IS THE SOURCE OF THE ERROR AND IS NOW CORRECTED ---
-        pattern: /(\d+)\s*STIFFENER\s*PL/gi,
+      stiffenerPlate: {
+        pattern: '(\\d+)\\s*STIFFENER\\s*PL',
         type: 'Stiffener Plate',
         category: 'plate'
       },
       bolts: {
-          pattern: /(\d+)\s*-\s*M(12|16|20|24|30)\s*(?:bolts?)/gi,
-          type: 'Bolt',
-          category: 'connections'
+        pattern: '(\\d+)\\s*-\\s*M(12|16|20|24|30)\\s*(?:bolts?)',
+        type: 'Bolt',
+        category: 'connections'
       },
       angle: {
-        pattern: /L(\d{1,3})[xX×](\d{1,3})[xX×](\d{1,2}(?:\.\d+)?)/gi,
+        pattern: 'L(\\d{1,3})[xX×](\\d{1,3})[xX×](\\d{1,2}(?:\\.\\d+)?)',
         type: 'Angle',
         category: 'structural_angle'
       },
     };
+    this.unitConversions = this.initializeUnitConversions();
   }
 
   initializeUnitConversions() {
     return {
-      feetToMeters: (feet) => feet * 0.3048,
       fractionToDecimal: (fraction) => {
         if (!fraction || !fraction.includes('/')) return parseFloat(fraction) || 0;
         const [numerator, denominator] = fraction.split('/').map(Number);
@@ -112,8 +106,17 @@ export class PdfProcessor {
     const uniqueEntries = new Set();
 
     try {
-      Object.entries(this.steelPatterns).forEach(([key, config]) => {
-        const matches = [...text.matchAll(config.pattern)];
+      Object.entries(this.steelPatternStrings).forEach(([key, config]) => {
+        let regex;
+        try {
+          // Compile the regex at runtime, making it robust against syntax errors
+          regex = new RegExp(config.pattern, 'gi');
+        } catch (e) {
+          console.error(`❌ Invalid regex pattern for '${key}':`, e.message);
+          return; // Skip this pattern and continue
+        }
+
+        const matches = [...text.matchAll(regex)];
         matches.forEach(match => {
           const designation = this._normalizeDesignation(match[0]);
           if (uniqueEntries.has(designation)) return;
@@ -127,7 +130,6 @@ export class PdfProcessor {
             quantity: this._extractQuantityFromContext(text, match.index) || 1
           };
 
-          // --- Categorize extracted data ---
           if (config.category.includes('structural') || config.category.includes('hollow')) {
             steelData.structuralMembers.push(item);
           } else if (config.category === 'plate') {
@@ -146,7 +148,6 @@ export class PdfProcessor {
         });
       });
 
-      // --- Generate Summary ---
       steelData.summary.totalMembers = steelData.structuralMembers.length + steelData.purlins.length;
       steelData.summary.categories = {
           beams: steelData.structuralMembers.filter(m => m.category.includes('beam')).length,
@@ -176,10 +177,8 @@ export class PdfProcessor {
   
   parseFractionOrDecimal(value) {
       if(!value) return 0;
-      if (typeof value !== 'string') return parseFloat(value) || 0;
       return this.unitConversions.fractionToDecimal(value);
   }
 }
 
 export default PdfProcessor;
-

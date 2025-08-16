@@ -1,134 +1,190 @@
 // src/services/pdfprocessor.js
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
-import fs from 'fs/promises';
 
 export class PdfProcessor {
   constructor() {
-    // --- MODIFIED: Patterns are now strings to be safely compiled at runtime. ---
-    // This prevents the "missing /" syntax error from ever crashing the application.
-    this.steelPatternStrings = {
-      universalBeam: { pattern: '(\\d+)\\s*UB\\s*(\\d+\\.?\\d*)', type: 'Universal Beam', category: 'main_member' },
-      universalColumn: { pattern: '(\\d+)\\s*UC\\s*(\\d+\\.?\\d*)', type: 'Universal Column', category: 'main_member' },
-      parallelFlangeChannel: { pattern: '(\\d+)\\s*PFC', type: 'Parallel Flange Channel', category: 'main_member' },
-      shs: { pattern: '(\\d{2,3})\\s*[xX×]\\s*(\\d{2,3})\\s*[xX×]\\s*(\\d{1,2}(?:\\.\\d+)?)\\s*SHS', type: 'Square Hollow Section', category: 'main_member' },
-      rhs: { pattern: '(\\d{2,3})\\s*[xX×]\\s*(\\d{2,3})\\s*[xX×]\\s*(\\d{1,2}(?:\\.\\d+)?)\\s*RHS', type: 'Rectangular Hollow Section', category: 'main_member' },
-      angle: { pattern: 'L(\\d{1,3})[xX×](\\d{1,3})[xX×](\\d{1,2}(?:\\.\\d+)?)', type: 'Angle', category: 'main_member' },
-      purlin: { pattern: '[CZ](\\d{3})\\s*(\\d{2}(?:\\.\\d+)?)', type: 'Purlin', category: 'purlin' },
-      plateAndStiffeners: { pattern: '(\\d+)\\s*(?:MM)?\\s*(?:PL|PLATE|STIFFENER|FIN\\s*PL)', type: 'Plate/Stiffener', category: 'plate_fitting' },
-      bolts: { pattern: '(\\d+)\\s*-\\s*M(12|16|20|24|30)\\s*(?:BOLTS?)', type: 'Bolt', category: 'connection' },
-    };
-    this.unitConversions = this.initializeUnitConversions();
-  }
-
-  initializeUnitConversions() {
-    return {
-      feetToMeters: (feet) => feet * 0.3048,
-      fractionToDecimal: (fraction) => {
-        if (!fraction || !fraction.includes('/')) return parseFloat(fraction) || 0;
-        const [numerator, denominator] = fraction.split('/').map(Number);
-        return numerator / (denominator || 1);
-      }
+    // --- ENHANCED: More specific and comprehensive regex patterns for Australian steel ---
+    this.patterns = {
+      mainMember: /(\d+\s*(?:UB|UC|WB|WC)\s*\d+\.?\d*)|(\d+\s*PFC)|((\d{2,3})\s*[xX×]\s*(\d{2,3})\s*[xX×]\s*(\d{1,2}(?:\.\d+)?)\s*(?:SHS|RHS))|(L\d{1,3}[xX×]\d{1,3}[xX×]\d{1,2}(?:\.\d+)?)/,
+      purlin: /[CZ](\d{3})\s*(\d{2}(?:\.\d+)?)/,
+      plate: /(?:PL|STIFFENER)\s*(\d+)/,
+      bolts: /M(12|16|20|24|30)/,
+      quantity: /(?:(\d+)\s*NO)|(?:QTY\s*:\s*(\d+))|(?:(\d+)x)/
     };
   }
 
-  async extractTextFromPdf(pdfData) {
-    try {
-      console.log('Starting PDF text extraction...');
-      const pdf = await pdfjsLib.getDocument({ data: pdfData, useSystemFonts: true, verbosity: 0 }).promise;
-      let fullText = '';
-      const numPages = pdf.numPages;
-      console.log(`Processing ${numPages} pages...`);
-
-      for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-        const page = await pdf.getPage(pageNum);
-        const textContent = await page.getTextContent();
-        const pageText = textContent.items.map(item => item.str).join(' ').replace(/\s+/g, ' ').trim();
-        fullText += pageText + '\n';
-      }
-      console.log('✅ PDF text extraction completed');
-      return { text: fullText.trim(), pages: numPages, success: true };
-    } catch (error) {
-      console.error('❌ PDF processing error:', error);
-      return { text: '', pages: 0, success: false, error: error.message };
+  /**
+   * Primary method to extract all structured data from a PDF buffer.
+   * @param {Buffer} pdfBuffer The PDF file data.
+   * @returns {Promise<object>} A structured object with all extracted steel information.
+   */
+  async extractSteelInformation(pdfBuffer) {
+    console.log('🚀 Starting High-Accuracy PDF Steel Extraction...');
+    const pageTexts = await this._getTextWithLayout(pdfBuffer);
+    if (!pageTexts || pageTexts.length === 0) {
+      throw new Error("PDF text extraction failed or returned no content.");
     }
-  }
 
-  extractSteelInformation(text) {
-    console.log('🔍 Extracting all structural steel information...');
     const steelData = {
       mainMembers: [],
       purlins: [],
       platesAndFittings: [],
       connections: [],
-      summary: { totalItems: 0, categories: {} }
+      summary: {}
     };
 
     const uniqueEntries = new Set();
 
-    // --- MODIFIED: Loop through the string patterns and safely create RegExp objects ---
-    Object.entries(this.steelPatternStrings).forEach(([key, config]) => {
-      let regex;
-      try {
-        // This `new RegExp()` constructor prevents the startup crash.
-        regex = new RegExp(config.pattern, 'gi');
-      } catch (e) {
-        console.error(`Skipping invalid regex pattern for '${key}': ${e.message}`);
-        return; // Skips the bad pattern instead of crashing.
-      }
+    for (const page of pageTexts) {
+      console.log(`Analyzing Page ${page.pageNumber}...`);
+      // Find and process specific tables (schedules)
+      this._processSchedules(page.lines, "BEAM SCHEDULE", steelData.mainMembers, uniqueEntries);
+      this._processSchedules(page.lines, "COLUMN SCHEDULE", steelData.mainMembers, uniqueEntries);
+      this._processSchedules(page.lines, "PURLIN SCHEDULE", steelData.purlins, uniqueEntries);
 
-      const matches = [...text.matchAll(regex)];
-      matches.forEach(match => {
-        const designation = this._normalizeDesignation(match[0]);
-        if (uniqueEntries.has(designation)) return;
-        uniqueEntries.add(designation);
-
-        const item = {
-          type: config.type,
-          designation: designation,
-          rawMatch: match[0],
-          quantity: this._extractQuantityFromContext(text, match.index) || 1,
-        };
-
-        switch(config.category) {
-            case 'main_member':
-                steelData.mainMembers.push(item);
-                break;
-            case 'purlin':
-                steelData.purlins.push(item);
-                break;
-            case 'plate_fitting':
-                item.thickness = parseInt(match[1], 10);
-                steelData.platesAndFittings.push(item);
-                break;
-            case 'connection':
-                item.quantity = parseInt(match[1], 10);
-                item.size = `M${match[2]}`;
-                steelData.connections.push(item);
-                break;
-        }
-      });
-    });
-
-    steelData.summary.totalItems = steelData.mainMembers.length + steelData.purlins.length + steelData.platesAndFittings.length;
-    steelData.summary.categories = {
-      main_members: steelData.mainMembers.length,
-      purlins: steelData.purlins.length,
-      plates_and_fittings: steelData.platesAndFittings.length,
-      bolt_sets: steelData.connections.reduce((acc, conn) => acc + conn.quantity, 0)
-    };
+      // --- NEW: Search for plates and bolts in General Notes or connection details ---
+      this._findGeneralNotesItems(page.lines, this.patterns.plate, "Plate/Stiffener", steelData.platesAndFittings, uniqueEntries);
+      this._findGeneralNotesItems(page.lines, this.patterns.bolts, "Bolt", steelData.connections, uniqueEntries);
+    }
     
-    console.log(`✅ Extracted ${steelData.summary.totalItems} unique steel items.`);
+    steelData.summary = this._createSummary(steelData);
+    console.log(`✅ High-Accuracy Extraction Complete. Found ${steelData.summary.totalItems} unique steel items.`);
     return steelData;
+  }
+
+  /**
+   * Extracts text and preserves line-by-line structure using X/Y coordinates.
+   * This is the foundation of the high-accuracy approach.
+   * @param {Buffer} pdfBuffer The PDF file data.
+   * @returns {Promise<Array<object>>} An array of page objects, each containing structured lines of text.
+   */
+  async _getTextWithLayout(pdfBuffer) {
+    const uint8Array = new Uint8Array(pdfBuffer);
+    const pdf = await pdfjsLib.getDocument({ data: uint8Array, useSystemFonts: true, verbosity: 0 }).promise;
+    const pages = [];
+
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      const items = content.items;
+
+      items.sort((a, b) => { // Sort items top-to-bottom, then left-to-right
+        if (Math.abs(a.transform[5] - b.transform[5]) > 5) {
+          return b.transform[5] - a.transform[5];
+        }
+        return a.transform[4] - b.transform[4];
+      });
+
+      const lines = [];
+      let currentLine = { y: -1, text: '' };
+      for (const item of items) {
+        if (Math.abs(item.transform[5] - currentLine.y) > 5) {
+          if (currentLine.text) lines.push(currentLine);
+          currentLine = { y: item.transform[5], text: item.str };
+        } else {
+          currentLine.text += ' ' + item.str;
+        }
+      }
+      if (currentLine.text) lines.push(currentLine);
+      
+      pages.push({ pageNumber: i, lines });
+    }
+    return pages;
+  }
+
+  /**
+   * Locates and processes a table-like schedule on a page.
+   * @param {Array<object>} lines - The structured lines from a page.
+   * @param {string} scheduleTitle - The title to search for (e.g., "BEAM SCHEDULE").
+   * @param {Array<object>} targetArray - The array in steelData to push results into.
+   * @param {Set<string>} uniqueEntries - A set to prevent duplicate entries.
+   */
+  _processSchedules(lines, scheduleTitle, targetArray, uniqueEntries) {
+    const titleIndex = lines.findIndex(line => line.text.toUpperCase().includes(scheduleTitle));
+    if (titleIndex === -1) return; // Schedule not found on this page
+
+    console.log(`Found "${scheduleTitle}"...`);
+    // Assume the table content starts on the next few lines
+    for (let i = titleIndex + 1; i < lines.length; i++) {
+      const lineText = lines[i].text;
+      
+      // Stop if we hit another major section or a blank line
+      if (lineText.trim() === '' || lineText.toUpperCase().includes("SCHEDULE")) break;
+
+      const memberMatch = lineText.match(this.patterns.mainMember) || lineText.match(this.patterns.purlin);
+      if (memberMatch) {
+        const designation = this._normalizeDesignation(memberMatch[0]);
+        
+        if (!uniqueEntries.has(designation)) {
+          uniqueEntries.add(designation);
+          targetArray.push({
+            type: this._classifyMember(designation),
+            designation: designation,
+            quantity: this._findQuantityInLine(lineText) || 1,
+            source: scheduleTitle
+          });
+        }
+      }
+    }
+  }
+
+  /**
+   * Finds items like bolts and plates that are often listed in notes.
+   * @param {Array<object>} lines - The structured lines from a page.
+   * @param {RegExp} pattern - The regex pattern to search for.
+   * @param {string} type - The type of item being searched for.
+   * @param {Array<object>} targetArray - The array in steelData to push results into.
+   * @param {Set<string>} uniqueEntries - A set to prevent duplicate entries.
+   */
+  _findGeneralNotesItems(lines, pattern, type, targetArray, uniqueEntries) {
+      lines.forEach(line => {
+          const matches = [...line.text.matchAll(pattern)];
+          matches.forEach(match => {
+              const designation = this._normalizeDesignation(match[0]);
+              if (!uniqueEntries.has(designation)) {
+                  uniqueEntries.add(designation);
+                  targetArray.push({
+                      type: type,
+                      designation: designation,
+                      quantity: this._findQuantityInLine(line.text) || 1,
+                      source: "General Notes / Detail"
+                  });
+              }
+          });
+      });
+  }
+
+  _findQuantityInLine(lineText) {
+      const qtyMatch = lineText.match(this.patterns.quantity);
+      if (!qtyMatch) return null;
+      // Return the first captured group that is not undefined
+      return parseInt(qtyMatch[1] || qtyMatch[2] || qtyMatch[3]);
+  }
+
+  _classifyMember(designation) {
+    const d = designation.toUpperCase();
+    if (d.includes('UB') || d.includes('WB')) return 'Universal Beam';
+    if (d.includes('UC') || d.includes('WC')) return 'Universal Column';
+    if (d.includes('PFC')) return 'Parallel Flange Channel';
+    if (d.includes('SHS')) return 'Square Hollow Section';
+    if (d.includes('RHS')) return 'Rectangular Hollow Section';
+    if (d.includes('L')) return 'Angle';
+    if (d.startsWith('C') || d.startsWith('Z')) return 'Purlin';
+    return 'Unknown Member';
   }
 
   _normalizeDesignation(designation) {
     return designation.replace(/\s+/g, ' ').replace(/[×]/g, 'x').toUpperCase().trim();
   }
 
-  _extractQuantityFromContext(text, matchIndex) {
-    const context = text.substring(Math.max(0, matchIndex - 50), matchIndex);
-    const qtyMatch = context.match(/(\d+)\s*(?:NO|QTY|PCS|EA|X)\.?\s*$/i);
-    return qtyMatch ? parseInt(qtyMatch[1], 10) : 1;
+  _createSummary(steelData) {
+    return {
+      totalItems: steelData.mainMembers.length + steelData.purlins.length + steelData.platesAndFittings.length + steelData.connections.length,
+      mainMembersCount: steelData.mainMembers.length,
+      purlinCount: steelData.purlins.length,
+      plateAndFittingCount: steelData.platesAndFittings.length,
+      connectionCount: steelData.connections.length,
+    };
   }
 }
 

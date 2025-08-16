@@ -73,23 +73,17 @@ router.post('/generate-from-upload', upload.single('drawing'), async (req, res, 
         
         // --- Step 2: Extract PDF Content from Buffer ---
         console.log('[2/6] Extracting text from PDF...');
-        const uint8Array = new Uint8Array(fileBuffer);
-        const extractedContent = await pdfProcessor.extractTextFromPdf(uint8Array);
-        if (!extractedContent.success) {
-            throw new Error('PDF text extraction failed.');
-        }
-        const structuredData = pdfProcessor.extractSteelInformation(extractedContent.text);
 
-        // --- FIX: Update the log to correctly count members from the new data structure ---
-        const memberCount = (structuredData.mainMembers?.length || 0) + (structuredData.purlins?.length || 0);
+        // --- FIX: Call the new, all-in-one 'extractSteelInformation' method ---
+        // This single function now handles both text extraction and analysis.
+        const structuredData = await pdfProcessor.extractSteelInformation(fileBuffer);
+        
+        const memberCount = structuredData.summary.totalItems || 0;
         console.log(`[2/6] ✅ PDF Extraction Complete. Found ${memberCount} members.`);
 
         // --- Step 3: AI Analysis ---
         console.log('[3/6] Starting AI analysis...');
         const aiAnalyzer = new EnhancedAIAnalyzer(apiKey);
-
-        // --- FIX: Pass the new, detailed structuredData directly to the AI Analyzer ---
-        // The analyzer is now smart enough to create its own summary and use this data for its fallback calculation.
         const analysisResults = await aiAnalyzer.analyzeStructuralDrawings(structuredData, `PROJ_${Date.now()}`);
         console.log(`[3/6] ✅ AI Analysis Complete.`);
 
@@ -105,7 +99,7 @@ router.post('/generate-from-upload', upload.single('drawing'), async (req, res, 
             originalFilename: req.file.originalname,
             fileSize: req.file.size,
             storagePath,
-            structuredData: structuredData, // Save the full, detailed structure
+            structuredData: structuredData,
             analysisResults, estimationData,
             status: 'Draft', user: userId
         });

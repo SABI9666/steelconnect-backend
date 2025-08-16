@@ -1,153 +1,247 @@
+// src/routes/estimation.js
 import express from 'express';
 import multer from 'multer';
-import mongoose from 'mongoose';
-
-// Core Service Imports
-import { adminStorage } from '../config/firebase.js';
-import { PdfProcessor } from '../services/pdfprocessor.js';
+import path from 'path';
+import fs from 'fs/promises';
+import { fileURLToPath } from 'url';
+import { PdfProcessor } from '../services/pdfProcessor.js';
 import { EnhancedAIAnalyzer } from '../services/aiAnalyzer.js';
-import { EstimationEngine } from '../services/cost-estimation-engine.js';
-import Estimation from '../models/estimation.js';
+import { EstimationEngine } from '../services/costEstimationEngine.js';
+import ReportGenerator from '../services/reportGenerator.js';
 
 const router = express.Router();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-// --- Multer Configuration for In-Memory File Uploads ---
+// Configure multer for file uploads
 const upload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 15 * 1024 * 1024 }, // 15MB limit
+    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
     fileFilter: (req, file, cb) => {
-        if (file.mimetype !== 'application/pdf') {
-            return cb(new Error('Only PDF files are allowed.'), false);
+        if (file.mimetype === 'application/pdf') {
+            cb(null, true);
+        } else {
+            cb(new Error('Only PDF files are allowed'), false);
         }
-        cb(null, true);
     }
 });
 
-// --- Service Initialization ---
-let pdfProcessor, estimationEngine, aiAnalyzer;
-try {
-    pdfProcessor = new PdfProcessor();
-    estimationEngine = new EstimationEngine();
-    // Ensure you have ANTHROPIC_API_KEY set in your environment variables
-    aiAnalyzer = new EnhancedAIAnalyzer(process.env.ANTHROPIC_API_KEY);
-} catch (e) {
-    console.error("Fatal Error: Failed to initialize core services.", e);
-    process.exit(1);
-}
+// Initialize services
+const pdfProcessor = new PdfProcessor();
+const aiAnalyzer = new EnhancedAIAnalyzer(process.env.ANTHROPIC_API_KEY);
+const estimationEngine = new EstimationEngine();
+const reportGenerator = new ReportGenerator();
 
-// --- Firebase Upload Helper Function ---
-const uploadToFirebase = (buffer, originalname) => {
-    return new Promise((resolve, reject) => {
-        const bucket = adminStorage.bucket();
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        const destinationPath = `drawings/${uniqueSuffix}-${originalname}`;
-        const file = bucket.file(destinationPath);
-
-        const stream = file.createWriteStream({
-            metadata: {
-                contentType: 'application/pdf',
-            },
-        });
-
-        stream.on('error', (err) => {
-            reject(new Error(`Firebase upload failed: ${err.message}`));
-        });
-
-        stream.on('finish', () => {
-            const publicUrl = `https://storage.googleapis.com/${bucket.name}/${destinationPath}`;
-            resolve({ path: destinationPath, url: publicUrl });
-        });
-
-        stream.end(buffer);
-    });
-};
-
-// --- Main Route to Generate Estimation from PDF Upload ---
-router.post('/generate-from-upload', upload.single('drawing'), async (req, res, next) => {
+/**
+ * POST /api/estimation/upload
+ * Upload and analyze PDF drawings
+ */
+router.post('/upload', upload.single('drawing'), async (req, res) => {
     try {
+        console.log('📄 Starting PDF upload and analysis...');
+        
         if (!req.file) {
-            return res.status(400).json({ success: false, error: 'No PDF file uploaded.' });
+            return res.status(400).json({
+                success: false,
+                error: 'No PDF file uploaded'
+            });
         }
 
-        const { projectName = 'Untitled Project', location = 'Not Specified' } = req.body;
-        // Assuming user ID is available from an authentication middleware
-        const userId = req.user ? req.user.id : null; 
-        if (!userId) {
-             return res.status(401).json({ success: false, error: 'User not authenticated.' });
-        }
+        const { location = 'Sydney' } = req.body;
+        const projectId = `PROJ-${Date.now()}`;
 
-        // 1. Upload to Firebase
-        const { path: firebasePath, url: firebaseUrl } = await uploadToFirebase(req.file.buffer, req.file.originalname);
-
-        // 2. Process PDF to extract structured data
+        // Step 1: Process PDF
+        console.log('🔍 Processing PDF...');
         const structuredData = await pdfProcessor.process(req.file.buffer);
 
-        // 3. Analyze data with AI to get quantities and scope
-        const analysisResults = await aiAnalyzer.analyzeStructuralDrawings(structuredData, new mongoose.Types.ObjectId().toString());
+        // Step 2: AI Analysis
+        console.log('🤖 Starting AI analysis...');
+        const analysisResult = await aiAnalyzer.analyzeStructuralDrawings(structuredData, projectId);
 
-        // 4. Calculate cost estimation based on AI analysis
-        const costEstimation = await estimationEngine.generateEstimation(analysisResults, location);
+        // Step 3: Cost Estimation
+        console.log('💰 Generating cost estimation...');
+        const estimationData = await estimationEngine.generateEstimation(analysisResult, location);
 
-        // 5. Create a new estimation document
-        const newEstimation = new Estimation({
-            _id: new mongoose.Types.ObjectId(),
-            userId,
-            projectName,
-            location,
-            status: 'Completed',
-            drawingUrl: firebaseUrl,
-            drawingPath: firebasePath,
-            structuredData,
-            analysisResults,
-            costEstimation,
-        });
-
-        // 6. Save to MongoDB
-        await newEstimation.save();
-
-        // 7. Send successful response
-        res.status(201).json({
+        res.json({
             success: true,
-            message: 'Estimation generated successfully.',
-            estimationId: newEstimation._id,
-            data: newEstimation,
+            data: {
+                project_id: projectId,
+                analysis: analysisResult,
+                estimation: estimationData,
+                pdf_info: {
+                    filename: req.file.originalname,
+                    size: req.file.size,
+                    pages: structuredData.metadata?.pages || 0
+                }
+            }
         });
 
     } catch (error) {
-        console.error('Error in /generate-from-upload route:', error);
-        next(error); // Pass error to the global error handler
+        console.error('❌ Estimation upload error:', error.message);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to process PDF'
+        });
     }
 });
 
-// --- Route to Fetch a Specific Estimation Report ---
-router.get('/:id/report', async (req, res, next) => {
+/**
+ * POST /api/estimation/generate-report
+ * Generate detailed report from estimation data
+ */
+router.post('/generate-report', async (req, res) => {
     try {
-        const { id } = req.params;
-        if (!mongoose.Types.ObjectId.isValid(id)) {
-            return res.status(400).json({ success: false, error: 'Invalid estimation ID format.' });
+        const { estimationData, format = 'html', projectId } = req.body;
+
+        if (!estimationData || !projectId) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing estimation data or project ID'
+            });
         }
 
-        const estimation = await Estimation.findById(id);
-
-        if (!estimation) {
-            return res.status(404).json({ success: false, error: 'Estimation not found.' });
-        }
+        console.log(`📊 Generating ${format.toUpperCase()} report for project ${projectId}...`);
         
-        // Ensure the user requesting is the one who created it (requires auth middleware)
-        if (req.user && estimation.userId.toString() !== req.user.id) {
-            return res.status(403).json({ success: false, error: 'Forbidden: You do not have access to this resource.' });
+        const report = await reportGenerator.generateReport(estimationData, format, projectId);
+
+        // Set appropriate content type
+        let contentType = 'text/html';
+        if (format === 'json') contentType = 'application/json';
+        if (format === 'csv') contentType = 'text/csv';
+
+        res.set('Content-Type', contentType);
+        
+        if (format === 'html') {
+            res.send(report.content);
+        } else {
+            res.json({
+                success: true,
+                data: {
+                    content: report.content,
+                    format: format,
+                    project_id: projectId
+                }
+            });
         }
 
-        res.status(200).json({
-            success: true,
-            data: estimation,
-        });
-        
     } catch (error) {
-        console.error(`Error fetching report for ID ${req.params.id}:`, error);
-        next(error);
+        console.error('❌ Report generation error:', error.message);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to generate report'
+        });
     }
+});
+
+/**
+ * GET /api/estimation/reports/:projectId/download
+ * Download report file
+ */
+router.get('/reports/:projectId/download', async (req, res) => {
+    try {
+        const { projectId } = req.params;
+        const { format = 'html' } = req.query;
+
+        // This would typically retrieve stored report data
+        // For now, return a simple response
+        res.json({
+            success: true,
+            message: `Report download for project ${projectId} in ${format} format`,
+            project_id: projectId,
+            format: format
+        });
+
+    } catch (error) {
+        console.error('❌ Report download error:', error.message);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to download report'
+        });
+    }
+});
+
+/**
+ * POST /api/estimation/test
+ * Test endpoint for development
+ */
+router.post('/test', async (req, res) => {
+    try {
+        console.log('🧪 Running estimation test...');
+        
+        // Create test data structure
+        const testStructuredData = {
+            metadata: {
+                pages: 1,
+                character_count: 1000
+            },
+            steel_schedules: [
+                {
+                    designation: '250 UB 31.4',
+                    quantity: '8',
+                    length: '6000',
+                    notes: 'Main beam'
+                },
+                {
+                    designation: '200 UC 46.2',
+                    quantity: '4',
+                    length: '3000',
+                    notes: 'Column'
+                }
+            ],
+            general_notes: [
+                'All steel to be hot-dip galvanized',
+                'Standard connections as per AS 4100'
+            ],
+            specifications: {
+                steel_grade: '300PLUS',
+                concrete_grade: 'N32',
+                bolt_grade: '8.8/S'
+            },
+            confidence: 0.8
+        };
+
+        // Run AI analysis
+        const projectId = `TEST-${Date.now()}`;
+        const analysisResult = await aiAnalyzer.analyzeStructuralDrawings(testStructuredData, projectId);
+        
+        // Generate estimation
+        const estimationData = await estimationEngine.generateEstimation(analysisResult, 'Sydney');
+
+        res.json({
+            success: true,
+            message: 'Test completed successfully',
+            data: {
+                project_id: projectId,
+                analysis: analysisResult,
+                estimation: estimationData
+            }
+        });
+
+    } catch (error) {
+        console.error('❌ Test error:', error.message);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Test failed'
+        });
+    }
+});
+
+/**
+ * GET /api/estimation/health
+ * Health check endpoint
+ */
+router.get('/health', (req, res) => {
+    res.json({
+        success: true,
+        message: 'Estimation service is healthy',
+        timestamp: new Date().toISOString(),
+        services: {
+            pdf_processor: 'ready',
+            ai_analyzer: process.env.ANTHROPIC_API_KEY ? 'ready' : 'missing_api_key',
+            estimation_engine: 'ready',
+            report_generator: 'ready'
+        }
+    });
 });
 
 export default router;
-

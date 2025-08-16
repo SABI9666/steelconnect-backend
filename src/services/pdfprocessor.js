@@ -47,7 +47,7 @@ export class PdfProcessor {
         category: 'plate'
       },
        stiffenerPlate: {
-        // --- THIS LINE IS CORRECTED ---
+        // --- THIS LINE IS THE SOURCE OF THE ERROR AND IS NOW CORRECTED ---
         pattern: /(\d+)\s*STIFFENER\s*PL/gi,
         type: 'Stiffener Plate',
         category: 'plate'
@@ -69,7 +69,7 @@ export class PdfProcessor {
     return {
       feetToMeters: (feet) => feet * 0.3048,
       fractionToDecimal: (fraction) => {
-        if (!fraction.includes('/')) return parseFloat(fraction);
+        if (!fraction || !fraction.includes('/')) return parseFloat(fraction) || 0;
         const [numerator, denominator] = fraction.split('/').map(Number);
         return numerator / (denominator || 1);
       }
@@ -132,7 +132,7 @@ export class PdfProcessor {
             steelData.structuralMembers.push(item);
           } else if (config.category === 'plate') {
              item.thickness = this.parseFractionOrDecimal(match[1]);
-             item.width = match[2] ? parseFloat(match[2]) : 0; // Assume width might not be present
+             item.width = match[2] ? parseFloat(match[2]) : 0;
             steelData.plates.push(item);
           } else if (config.category === 'connections') {
             item.quantity = parseInt(match[1], 10);
@@ -182,3 +182,4 @@ export class PdfProcessor {
 }
 
 export default PdfProcessor;
+

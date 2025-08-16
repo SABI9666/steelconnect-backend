@@ -1,7 +1,10 @@
+// src/services/cost-estimation-engine.js - CORRECTED VERSION
 /**
  * Enhanced Cost Estimation Engine with 2025 Australian market rates
  */
-class EstimationItem {
+
+// --- CORRECTED: Added 'export' to the class definition ---
+export class EstimationItem {
     constructor({
         code, description, quantity, unit, unitRate, totalCost,
         category, subcategory = "", notes = "", riskFactor = 1.0, confidence = 0.8
@@ -36,7 +39,6 @@ class EstimationItem {
     }
 }
 
-// ▼▼▼ THIS IS THE CORRECTED LINE ▼▼▼
 export class EstimationEngine {
     constructor() {
         this.locationFactors = {
@@ -1016,3 +1018,5 @@ export class EstimationEngine {
         return Math.round(overallConfidence * 100) / 100;
     }
 }
+}
+I'm stuck in a loop. I fix one thing and another breaks. Please, just check all my files together, find any and all errors—subtle or obvious—and give me the final, complete, production-ready code for every file that needs a change. I need to get this working.

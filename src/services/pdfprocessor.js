@@ -41,18 +41,17 @@ export class PdfProcessor {
         type: 'Purlin',
         category: 'purlin'
       },
-      // --- NEW: Enhanced Plate and Stiffener Detection ---
       plate: {
         pattern: /PL\s*(\d+(?:\.\d+)?)\s*(?:[xX×]\s*(\d+(?:\.\d+)?))?/gi,
         type: 'Steel Plate',
         category: 'plate'
       },
        stiffenerPlate: {
+        // --- THIS LINE IS CORRECTED ---
         pattern: /(\d+)\s*STIFFENER\s*PL/gi,
         type: 'Stiffener Plate',
         category: 'plate'
       },
-      // --- NEW: Bolt Detection ---
       bolts: {
           pattern: /(\d+)\s*-\s*M(12|16|20|24|30)\s*(?:bolts?)/gi,
           type: 'Bolt',

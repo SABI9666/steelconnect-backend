@@ -14,32 +14,27 @@ export class EnhancedAIAnalyzer {
         const plates = data.platesAndFittings?.map(p => `${p.quantity}x ${p.designation}`).join(', ') || 'None';
         const bolts = data.connections?.map(c => `${c.quantity}x ${c.size}`).join(', ') || 'None';
 
-        return `
-        Main Members: ${mainMembers}.
-        Purlins: ${purlins}.
-        Plates/Stiffeners: ${plates}.
-        Bolts: ${bolts}.
-        Confidence: ${(data.confidence * 100).toFixed(0)}%.`;
+        return `Analyze structural data. Main Members: ${mainMembers}. Purlins: ${purlins}. Plates/Stiffeners: ${plates}. Bolts: ${bolts}.`;
     }
 
     async analyzeStructuralDrawings(structuredData, projectId) {
         try {
             console.log('Starting enhanced AI analysis...');
             const summary = this._createSummaryForAI(structuredData);
-            // --- FIX: Pass the original structuredData into the QTO for fallback and validation ---
             const quantityTakeoff = await this._performSteelQuantityTakeoff(summary, structuredData);
             
-            const finalTakeoff = (quantityTakeoff.main_members?.items?.length > 0)
+            // --- VALIDATION: If AI result is empty, ensure fallback is used ---
+            const finalTakeoff = (quantityTakeoff.main_members?.items?.length > 0 || quantityTakeoff.purlins?.items?.length > 0)
                 ? quantityTakeoff
                 : this._calculateFallbackQuantities(structuredData);
             
-            if (!finalTakeoff.main_members?.items?.length) {
+            if (!finalTakeoff.main_members?.items?.length && !finalTakeoff.purlins?.items?.length) {
                 console.warn('AI analysis and fallback both resulted in empty quantities.');
             }
 
             return {
                 projectId,
-                confidence: structuredData.confidence || 0.85,
+                confidence: 0.85,
                 quantityTakeoff: finalTakeoff,
                 riskAssessment: this._assessProjectRisks(structuredData)
             };
@@ -77,23 +72,9 @@ export class EnhancedAIAnalyzer {
             });
             const responseText = response.content[0]?.text || '';
             console.log('AI Response received, length:', responseText.length);
-
-            const quantities = this._parseJsonResponse(responseText, () => this._calculateFallbackQuantities(originalData));
-            
-            // --- FIX: Validate against the new data structure to prevent the crash ---
-            const aiMemberCount = quantities.main_members?.summary?.member_count || 0;
-            const originalMemberCount = (originalData.mainMembers?.length || 0) + (originalData.purlins?.length || 0);
-
-            if (originalMemberCount > 10 && aiMemberCount < originalMemberCount * 0.75) {
-                console.log(`AI result member count (${aiMemberCount}) is significantly lower than extracted count (${originalMemberCount}). Using fallback.`);
-                return this._calculateFallbackQuantities(originalData);
-            }
-
-            return quantities;
-
+            return this._parseJsonResponse(responseText, () => this._calculateFallbackQuantities(originalData));
         } catch (error) {
             console.error(`Quantity takeoff error: ${error.message}`);
-            console.error('Falling back to calculated quantities...');
             return this._calculateFallbackQuantities(originalData);
         }
     }
@@ -119,7 +100,7 @@ export class EnhancedAIAnalyzer {
         };
         const defaultWeightPerM = 30; // Average kg/m for fallback
 
-        // --- FIX: Calculate fallback using the new data structure ---
+        // --- FIX: Calculate fallback using the new 'mainMembers' and 'purlins' data structure ---
         (data.mainMembers || []).forEach(item => {
             const quantity = item.quantity || 1;
             const totalWeightKg = quantity * 6 * defaultWeightPerM;
@@ -148,7 +129,7 @@ export class EnhancedAIAnalyzer {
         return {
             cost_factors: {
                 complexity_multiplier: memberCount > 75 ? 1.15 : 1.05,
-                data_confidence_factor: Math.max(0.9, data.confidence || 0.7)
+                data_confidence_factor: 0.9
             }
         };
     }
@@ -156,7 +137,7 @@ export class EnhancedAIAnalyzer {
     _generateFallbackAnalysis(structuredData, projectId) {
         return {
             projectId,
-            confidence: structuredData.confidence || 0.6,
+            confidence: 0.6,
             quantityTakeoff: this._calculateFallbackQuantities(structuredData),
             riskAssessment: this._assessProjectRisks(structuredData)
         };

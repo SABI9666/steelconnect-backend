@@ -5,8 +5,8 @@ import { adminDb } from './src/config/firebase.js'; // Adjust this path to match
 
 async function createAdminUser() {
   try {
-    const adminEmail = 'admin@steelconnect.com'; // Change to your desired email
-    const adminPassword = 'AdminPass123!'; // Change to your desired password
+    const adminEmail = 'cn.sabin623@gmail.com'; // Change to your desired email
+    const adminPassword = 'Sabin@9666'; // Change to your desired password
     const adminName = 'System Administrator';
 
     // Check if admin already exists
@@ -49,4 +49,5 @@ async function createAdminUser() {
 }
 
 // Run the function
+
 createAdminUser();

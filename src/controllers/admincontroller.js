@@ -1,40 +1,108 @@
-const { db } = require('../config/firebase');
+// src/controllers/adminController.js
 
-const getDashboardStats = async (req, res, next) => {
+// IMPORTANT: You need to define these Mongoose models based on your database schema.
+// These are placeholder imports.
+import User from '../models/User.js';
+import Quote from '../models/Quote.js';
+import Message from '../models/Message.js';
+
+/**
+ * Fetches statistics for the admin dashboard.
+ * Counts total users, quotes, and messages.
+ */
+export const getDashboardStats = async (req, res, next) => {
     try {
-        const usersPromise = db.collection('users').get();
-        const jobsPromise = db.collection('jobs').get();
-        const quotesPromise = db.collection('quotes').get();
+        // Fetches the count of documents in each collection concurrently.
+        const [userCount, quoteCount, messageCount] = await Promise.all([
+            User.countDocuments(),
+            Quote.countDocuments(),
+            Message.countDocuments()
+        ]);
 
-        const [usersSnapshot, jobsSnapshot, quotesSnapshot] = await Promise.all([usersPromise, jobsPromise, quotesPromise]);
-
-        res.json({
+        res.status(200).json({
             success: true,
             stats: {
-                totalUsers: usersSnapshot.size,
-                totalJobs: jobsSnapshot.size,
-                totalQuotes: quotesSnapshot.size,
+                totalUsers: userCount,
+                totalQuotes: quoteCount,
+                totalMessages: messageCount,
             }
         });
     } catch (error) {
-        next(error);
+        console.error('Error fetching dashboard stats:', error);
+        next(error); // Pass error to the global error handler
     }
 };
 
-const getAllUsers = async (req, res, next) => {
+/**
+ * Retrieves a list of all users, excluding their passwords.
+ */
+export const getAllUsers = async (req, res, next) => {
     try {
-        const usersSnapshot = await db.collection('users').get();
-        const users = usersSnapshot.docs.map(doc => {
-            const { password, ...data } = doc.data();
-            return { id: doc.id, ...data };
-        });
-        res.json({ success: true, users });
+        // Finds all users and excludes the 'password' field from the result.
+        const users = await User.find().select('-password');
+        res.status(200).json({ success: true, users });
     } catch (error) {
+        console.error('Error fetching all users:', error);
         next(error);
     }
 };
 
-// Add more admin functions like deleteUser, deleteJob, etc. as needed.
+/**
+ * Updates the status of a specific user (e.g., 'active', 'suspended').
+ */
+export const updateUserStatus = async (req, res, next) => {
+    try {
+        const { userId } = req.params;
+        const { status } = req.body;
 
-module.exports = { getDashboardStats, getAllUsers };
+        if (!status) {
+            return res.status(400).json({ success: false, message: 'Status is required.' });
+        }
 
+        // Finds a user by their ID and updates their status.
+        const updatedUser = await User.findByIdAndUpdate(userId, { status }, { new: true }).select('-password');
+
+        if (!updatedUser) {
+            return res.status(404).json({ success: false, message: 'User not found.' });
+        }
+
+        res.status(200).json({ success: true, message: `User status updated to ${status}.`, user: updatedUser });
+    } catch (error) {
+        console.error('Error updating user status:', error);
+        next(error);
+    }
+};
+
+/**
+ * Deletes a user from the database.
+ */
+export const deleteUser = async (req, res, next) => {
+    try {
+        const { userId } = req.params;
+        const deletedUser = await User.findByIdAndDelete(userId);
+
+        if (!deletedUser) {
+            return res.status(404).json({ success: false, message: 'User not found.' });
+        }
+
+        res.status(200).json({ success: true, message: 'User deleted successfully.' });
+    } catch (error) {
+        console.error('Error deleting user:', error);
+        next(error);
+    }
+};
+
+/**
+ * Retrieves system statistics like Node.js version, platform, and memory usage.
+ */
+export const getSystemStats = (req, res) => {
+    res.status(200).json({
+        success: true,
+        stats: {
+            nodeVersion: process.version,
+            platform: process.platform,
+            serverUptime: process.uptime(),
+            memoryUsage: process.memoryUsage(),
+        }
+    });
+};

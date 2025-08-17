@@ -1,18 +1,16 @@
 // src/controllers/adminController.js
 
 // IMPORTANT: You need to define these Mongoose models based on your database schema.
-// These are placeholder imports.
+// These are placeholder imports. Make sure the path is correct.
 import User from '../models/User.js';
 import Quote from '../models/Quote.js';
 import Message from '../models/Message.js';
 
 /**
  * Fetches statistics for the admin dashboard.
- * Counts total users, quotes, and messages.
  */
 export const getDashboardStats = async (req, res, next) => {
     try {
-        // Fetches the count of documents in each collection concurrently.
         const [userCount, quoteCount, messageCount] = await Promise.all([
             User.countDocuments(),
             Quote.countDocuments(),
@@ -29,7 +27,7 @@ export const getDashboardStats = async (req, res, next) => {
         });
     } catch (error) {
         console.error('Error fetching dashboard stats:', error);
-        next(error); // Pass error to the global error handler
+        next(error);
     }
 };
 
@@ -38,7 +36,6 @@ export const getDashboardStats = async (req, res, next) => {
  */
 export const getAllUsers = async (req, res, next) => {
     try {
-        // Finds all users and excludes the 'password' field from the result.
         const users = await User.find().select('-password');
         res.status(200).json({ success: true, users });
     } catch (error) {
@@ -48,7 +45,7 @@ export const getAllUsers = async (req, res, next) => {
 };
 
 /**
- * Updates the status of a specific user (e.g., 'active', 'suspended').
+ * Updates the status of a specific user.
  */
 export const updateUserStatus = async (req, res, next) => {
     try {
@@ -59,13 +56,10 @@ export const updateUserStatus = async (req, res, next) => {
             return res.status(400).json({ success: false, message: 'Status is required.' });
         }
 
-        // Finds a user by their ID and updates their status.
         const updatedUser = await User.findByIdAndUpdate(userId, { status }, { new: true }).select('-password');
-
         if (!updatedUser) {
             return res.status(404).json({ success: false, message: 'User not found.' });
         }
-
         res.status(200).json({ success: true, message: `User status updated to ${status}.`, user: updatedUser });
     } catch (error) {
         console.error('Error updating user status:', error);
@@ -80,11 +74,9 @@ export const deleteUser = async (req, res, next) => {
     try {
         const { userId } = req.params;
         const deletedUser = await User.findByIdAndDelete(userId);
-
         if (!deletedUser) {
             return res.status(404).json({ success: false, message: 'User not found.' });
         }
-
         res.status(200).json({ success: true, message: 'User deleted successfully.' });
     } catch (error) {
         console.error('Error deleting user:', error);
@@ -93,7 +85,7 @@ export const deleteUser = async (req, res, next) => {
 };
 
 /**
- * Retrieves system statistics like Node.js version, platform, and memory usage.
+ * Retrieves system statistics.
  */
 export const getSystemStats = (req, res) => {
     res.status(200).json({

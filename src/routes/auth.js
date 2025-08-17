@@ -1,11 +1,12 @@
 import express from 'express';
-import bcrypt from 'bcrypt';  // Make sure this line is exactly like this
+import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { adminDb } from '../config/firebase.js';
 
 const router = express.Router();
 
-// --- User Registration ---
+// --- User Registration (Contractor & Designer) ---
+// Note: This route is for standard users only. Admin users should be created manually in the database.
 router.post('/register', async (req, res) => {
   try {
     const { email, password, name, type } = req.body;
@@ -105,7 +106,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
-// --- User Login ---
+// --- Standard User Login ---
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -131,6 +132,14 @@ router.post('/login', async (req, res) => {
 
     const userDoc = userSnapshot.docs[0];
     const userData = userDoc.data();
+    
+    // CRITICAL: Prevent admin accounts from logging in through this route
+    if (userData.type === 'admin') {
+      return res.status(403).json({
+        error: 'Unauthorized access. Please use the admin login.',
+        success: false
+      });
+    }
 
     // Check if user is active
     if (userData.isActive === false) {
@@ -155,7 +164,7 @@ router.post('/login', async (req, res) => {
       updatedAt: new Date().toISOString()
     });
     
-    // Create JWT payload (flat structure for middleware compatibility)
+    // Create JWT payload
     const payload = {
       userId: userDoc.id,
       email: userData.email,
@@ -193,10 +202,99 @@ router.post('/login', async (req, res) => {
   }
 });
 
+// --- Admin Login ---
+router.post('/login/admin', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ 
+        error: 'Email and password are required.',
+        success: false 
+      });
+    }
+
+    const usersRef = adminDb.collection('users');
+    const userSnapshot = await usersRef.where('email', '==', email.toLowerCase().trim()).limit(1).get();
+    
+    if (userSnapshot.empty) {
+      return res.status(401).json({ 
+        error: 'Invalid credentials.',
+        success: false 
+      });
+    }
+
+    const userDoc = userSnapshot.docs[0];
+    const userData = userDoc.data();
+
+    // CRITICAL: Deny access if the user is not an admin
+    if (userData.type !== 'admin') {
+      return res.status(403).json({ 
+        error: 'Access Denied: You do not have admin privileges.',
+        success: false 
+      });
+    }
+
+    if (userData.isActive === false) {
+      return res.status(401).json({ 
+        error: 'Account is deactivated. Please contact support.',
+        success: false 
+      });
+    }
+
+    const isMatch = await bcrypt.compare(password, userData.password);
+    if (!isMatch) {
+      return res.status(401).json({ 
+        error: 'Invalid credentials.',
+        success: false 
+      });
+    }
+
+    await userDoc.ref.update({
+      lastLoginAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    
+    const payload = {
+      userId: userDoc.id,
+      email: userData.email,
+      type: userData.type,
+      name: userData.name
+    };
+    
+    const token = jwt.sign(
+      payload, 
+      process.env.JWT_SECRET || 'your_default_secret_key_change_in_production', 
+      { expiresIn: '7d' }
+    );
+
+    res.status(200).json({
+      message: 'Admin login successful',
+      success: true,
+      token: token,
+      user: {
+        id: userDoc.id,
+        name: userData.name,
+        email: userData.email,
+        type: userData.type,
+        createdAt: userData.createdAt,
+        lastLoginAt: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('ADMIN LOGIN ERROR:', error);
+    res.status(500).json({ 
+      error: 'An error occurred during admin login. Please try again.',
+      success: false 
+    });
+  }
+});
+
+
 // --- Get Current User Profile ---
 router.get('/profile', async (req, res) => {
   try {
-    // This assumes you have authentication middleware that adds user info to req
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ 
@@ -205,12 +303,11 @@ router.get('/profile', async (req, res) => {
       });
     }
 
-    const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+    const token = authHeader.substring(7);
     
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_default_secret_key_change_in_production');
       
-      // Get fresh user data from database
       const userDoc = await adminDb.collection('users').doc(decoded.userId).get();
       
       if (!userDoc.exists) {

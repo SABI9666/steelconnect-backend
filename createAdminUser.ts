@@ -28,8 +28,8 @@ async function createAdminUser() {
     const db = getFirestore(app);
     console.log('✅ Firebase initialized successfully');
 
-    const adminEmail = 'cn.sabin623@gmail.com';
-    const adminPassword = 'Sabin@9666';
+    const adminEmail = 'pradeeksha798@gmail.com';
+    const adminPassword = '$2a$12$HrTMS7kM5Y.ABk0wKfqRyeVuukxVk1I1x1XX9VZITd5gYw9GOPoNm';
     const adminName = 'admin';
 
     console.log('🔍 Checking if admin user already exists...');
@@ -101,4 +101,5 @@ async function createAdminUser() {
 
 // Run the function
 createAdminUser();
+
 

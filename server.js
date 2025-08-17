@@ -20,19 +20,31 @@ import adminRoutes from './src/routes/admin.js';
 import authRoutes from './src/routes/auth.js';
 
 // --- Firebase Initialization (CRITICAL FIX) ---
-// Initialize the Firebase Admin SDK using the service account key from environment variables.
-// This must run before any other file attempts to use Firebase services.
+// Initialize the Firebase Admin SDK using the service account key from a Base64 encoded environment variable.
 try {
-  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+  // Get the Base64 string from the environment variable
+  const serviceAccountBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64;
+  
+  // Check if the variable is set and not empty
+  if (!serviceAccountBase64) {
+    throw new Error('FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 is not set.');
+  }
+
+  // Decode the Base64 string to a JSON string
+  const serviceAccountJson = Buffer.from(serviceAccountBase64, 'base64').toString('utf8');
+
+  // Parse the JSON string into an object
+  const serviceAccount = JSON.parse(serviceAccountJson);
+  
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
   });
   console.log('✅ Firebase Admin SDK initialized successfully');
   console.log('🔥 Using Firebase Firestore as database');
 } catch (error) {
-  console.error('❌ FATAL: Firebase initialization failed. Check FIREBASE_SERVICE_ACCOUNT_KEY environment variable.');
+  console.error('❌ FATAL: Firebase initialization failed. Check FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 environment variable.');
   console.error('Error details:', error.message);
-  process.exit(1); // Exit the process if Firebase initialization fails
+  process.exit(1);
 }
 
 // Create Express application

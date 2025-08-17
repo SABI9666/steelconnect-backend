@@ -1,109 +1,119 @@
 // server.js
-import express from 'express';
-import cors from 'cors';
-import helmet from 'helmet';
-import compression from 'compression';
-import dotenv from 'dotenv';
 
 // Load environment variables from .env file
+import dotenv from 'dotenv';
 dotenv.config();
 
+// Import necessary modules
+import express from 'express';
+import compression from 'compression';
+import helmet from 'helmet';
+import cors from 'cors';
+import admin from 'firebase-admin';
+
+// Import route modules
+import jobsRoutes from './src/routes/jobs.js';
+import quotesRoutes from './src/routes/quotes.js';
+import messagesRoutes from './src/routes/messages.js';
+import estimationRoutes from './src/routes/estimation.js';
+import adminRoutes from './src/routes/admin.js';
+import authRoutes from './src/routes/auth.js';
+
+// --- Firebase Initialization (CRITICAL FIX) ---
+// Initialize the Firebase Admin SDK using the service account key from environment variables.
+// This must run before any other file attempts to use Firebase services.
+try {
+  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+  });
+  console.log('✅ Firebase Admin SDK initialized successfully');
+  console.log('🔥 Using Firebase Firestore as database');
+} catch (error) {
+  console.error('❌ FATAL: Firebase initialization failed. Check FIREBASE_SERVICE_ACCOUNT_KEY environment variable.');
+  console.error('Error details:', error.message);
+  process.exit(1); // Exit the process if Firebase initialization fails
+}
+
+// Create Express application
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// --- Core Middleware ---
-const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',').filter(origin => origin.trim() !== '');
+// --- Middleware Configuration ---
 
-const corsOptions = {
-  origin: (origin, callback) => {
-    console.log(`🌐 CORS check for origin: "${origin}"`);
-    
-    // Allow requests with no origin (mobile apps, Postman, local HTML files, server-to-server)
-    if (!origin) {
-      console.log('✅ Allowing request with no origin');
-      return callback(null, true);
-    }
-    
-    // Check allowed origins
-    const isAllowed = 
-      allowedOrigins.includes(origin) ||
-      origin.endsWith('.vercel.app') || 
-      origin.endsWith('.onrender.com') ||
-      origin.startsWith('http://localhost') ||
-      origin.startsWith('https://localhost') ||
-      origin === 'null'; // Explicitly allow null origin for local files
-    
-    if (isAllowed) {
-      console.log('✅ Origin allowed');
-      callback(null, true);
-    } else {
-      console.error(`❌ CORS Error: Origin "${origin}" was not allowed.`);
-      callback(new Error('This origin is not allowed by CORS policy.'));
-    }
-  },
-  credentials: true,
-};
+// Security middleware
+app.use(helmet());
 
-app.use(cors(corsOptions));
-app.use(helmet({ contentSecurityPolicy: false }));
-app.use(compression());
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+// Enable CORS for all origins (for development)
+app.use(cors({ origin: '*' }));
+app.options('*', cors()); // Enable pre-flight OPTIONS requests
 
-// Add request logging middleware
+// Check and log CORS origin for incoming requests
 app.use((req, res, next) => {
-    console.log(`🌐 ${new Date().toISOString()} - ${req.method} ${req.path}`);
-    console.log('📥 Headers:', req.headers);
-    if (req.body && Object.keys(req.body).length > 0) {
-        console.log('📥 Body:', JSON.stringify(req.body, null, 2));
-    }
-    next();
+  const origin = req.headers.origin || 'undefined';
+  console.log(`🌐 CORS check for origin: "${origin}"`);
+  if (origin === 'undefined' || origin === 'https://admin-q4y7l6gxz-sabins-projects-02d8db3a.vercel.app') {
+    console.log('✅ Allowing request with no origin or allowed origin');
+  }
+  next();
 });
 
-// --- Dynamic Route Loading ---
-const loadRoutes = async () => {
-    console.log('🔄 Loading all application routes...');
-    const routesToLoad = [
-        { path: '/api/auth', file: './src/routes/auth.js', name: 'Auth' },
-        { path: '/api/jobs', file: './src/routes/jobs.js', name: 'Jobs' },
-        { path: '/api/quotes', file: './src/routes/quotes.js', name: 'Quotes' },
-        { path: '/api/messages', file: './src/routes/messages.js', name: 'Messages' },
-        { path: '/api/estimation', file: './src/routes/estimation.js', name: 'Estimation' },
-        { path: '/api/admin', file: './src/routes/admin.js', name: 'Admin' }
-    ];
+// JSON and URL-encoded body parser
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-    for (const route of routesToLoad) {
-        try {
-            const { default: routeModule } = await import(route.file);
-            app.use(route.path, routeModule);
-            console.log(`✅ ${route.name} routes loaded successfully at ${route.path}.`);
-        } catch (error) {
-            console.error(`❌ Fatal: Error loading ${route.name} routes from ${route.file}: ${error.message}`);
-        }
-    }
-};
+// Gzip compression for all responses
+app.use(compression());
 
-// --- Server Initialization ---
-const startServer = async () => {
-    await loadRoutes();
-    
-    app.get('/', (req, res) => res.status(200).json({ 
-        message: 'SteelConnect Backend API is running and healthy.',
-        database: 'Firebase Firestore'
-    }));
-    
-    app.use((error, req, res, next) => {
-        console.error('❌ Global Error Handler caught an error:', error);
-        res.status(500).json({ 
-            success: false, 
-            error: error.message || 'An unexpected internal server error occurred.' 
-        });
-    });
-    
-    app.listen(PORT, () => {
-        console.log(`✅ Server is live and listening on port ${PORT}`);
-        console.log(`🔥 Using Firebase Firestore as database`);
-    });
-};
+// --- Routes Configuration ---
 
-startServer();
+// Base route
+app.get('/', (req, res) => {
+  console.log(`🌐 ${new Date().toISOString()} - GET /`);
+  console.log('📥 Headers:', req.headers);
+  res.status(200).json({
+    message: 'Welcome to the SteelConnect API! 🎉',
+    status: 'Server is running',
+    version: '1.0.0'
+  });
+});
+
+// Dynamically load routes
+try {
+  console.log('🔄 Loading all application routes...');
+
+  // Auth routes (must be loaded after Firebase is initialized)
+  app.use('/api/auth', authRoutes);
+  console.log('✅ Auth routes loaded successfully at /api/auth.');
+
+  // Other routes
+  app.use('/api/jobs', jobsRoutes);
+  console.log('✅ Jobs routes loaded successfully at /api/jobs.');
+
+  app.use('/api/quotes', quotesRoutes);
+  console.log('✅ Quotes routes loaded successfully at /api/quotes.');
+
+  app.use('/api/messages', messagesRoutes);
+  console.log('✅ Messages routes loaded successfully at /api/messages.');
+
+  app.use('/api/estimation', estimationRoutes);
+  console.log('✅ Estimation routes loaded successfully at /api/estimation.');
+
+  app.use('/api/admin', adminRoutes);
+  console.log('✅ Admin routes loaded successfully at /api/admin.');
+
+} catch (error) {
+  console.error(`❌ Fatal: Error loading application routes: ${error.message}`);
+  process.exit(1); // Exit if routes fail to load
+}
+
+// Start the server
+app.listen(PORT, () => {
+  console.log(`✅ Server is live and listening on port ${PORT}`);
+  console.log(`==> Your service is live 🎉`);
+  console.log(`==> ///////////////////////////////////////////////////////////`);
+  console.log(`==> Available at your primary URL https://steelconnect-backend.onrender.com`);
+  console.log(`==> ///////////////////////////////////////////////////////////`);
+});
+
+export default app;

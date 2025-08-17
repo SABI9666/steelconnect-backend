@@ -1,12 +1,17 @@
 // src/controllers/adminController.js
 
-// FIX: Corrected import paths to include the .js extension.
 import User from '../models/User.js';
 import Quote from '../models/Quote.js';
 import Message from '../models/Message.js';
 
 /**
- * Fetches statistics for the admin dashboard.
+ * @async
+ * @function getDashboardStats
+ * @description Fetches aggregate statistics for the admin dashboard.
+ * @param {object} req - Express request object.
+ * @param {object} res - Express response object.
+ * @param {function} next - Express next middleware function.
+ * @returns {Promise<void>} A promise that resolves when the response is sent.
  */
 export const getDashboardStats = async (req, res, next) => {
     try {
@@ -25,26 +30,38 @@ export const getDashboardStats = async (req, res, next) => {
             }
         });
     } catch (error) {
-        console.error('Error fetching dashboard stats:', error);
+        console.error('Error in getDashboardStats:', error);
         next(error);
     }
 };
 
 /**
- * Retrieves a list of all users, excluding their passwords.
+ * @async
+ * @function getAllUsers
+ * @description Retrieves a list of all users, excluding their passwords.
+ * @param {object} req - Express request object.
+ * @param {object} res - Express response object.
+ * @param {function} next - Express next middleware function.
+ * @returns {Promise<void>} A promise that resolves when the response is sent.
  */
 export const getAllUsers = async (req, res, next) => {
     try {
         const users = await User.find().select('-password');
         res.status(200).json({ success: true, users });
     } catch (error) {
-        console.error('Error fetching all users:', error);
+        console.error('Error in getAllUsers:', error);
         next(error);
     }
 };
 
 /**
- * Updates the status of a specific user.
+ * @async
+ * @function updateUserStatus
+ * @description Updates the status of a specific user.
+ * @param {object} req - Express request object containing userId in params and status in body.
+ * @param {object} res - Express response object.
+ * @param {function} next - Express next middleware function.
+ * @returns {Promise<void>} A promise that resolves when the response is sent.
  */
 export const updateUserStatus = async (req, res, next) => {
     try {
@@ -61,13 +78,19 @@ export const updateUserStatus = async (req, res, next) => {
         }
         res.status(200).json({ success: true, message: `User status updated to ${status}.`, user: updatedUser });
     } catch (error) {
-        console.error('Error updating user status:', error);
+        console.error('Error in updateUserStatus:', error);
         next(error);
     }
 };
 
 /**
- * Deletes a user from the database.
+ * @async
+ * @function deleteUser
+ * @description Deletes a user from the database.
+ * @param {object} req - Express request object containing userId in params.
+ * @param {object} res - Express response object.
+ * @param {function} next - Express next middleware function.
+ * @returns {Promise<void>} A promise that resolves when the response is sent.
  */
 export const deleteUser = async (req, res, next) => {
     try {
@@ -77,23 +100,34 @@ export const deleteUser = async (req, res, next) => {
             return res.status(404).json({ success: false, message: 'User not found.' });
         }
         res.status(200).json({ success: true, message: 'User deleted successfully.' });
-    } catch (error) {
-        console.error('Error deleting user:', error);
+    } catch (error)
+        {
+        console.error('Error in deleteUser:', error);
         next(error);
     }
 };
 
 /**
- * Retrieves system statistics.
+ * @function getSystemStats
+ * @description Retrieves system statistics like Node.js version and memory usage.
+ * @param {object} req - Express request object.
+ * @param {object} res - Express response object.
+ * @returns {void}
  */
 export const getSystemStats = (req, res) => {
-    res.status(200).json({
-        success: true,
-        stats: {
-            nodeVersion: process.version,
-            platform: process.platform,
-            serverUptime: process.uptime(),
-            memoryUsage: process.memoryUsage(),
-        }
-    });
+    try {
+        res.status(200).json({
+            success: true,
+            stats: {
+                nodeVersion: process.version,
+                platform: process.platform,
+                serverUptime: process.uptime(),
+                memoryUsage: process.memoryUsage(),
+            }
+        });
+    } catch (error) {
+        console.error('Error in getSystemStats:', error);
+        // Although this is a sync function, calling next ensures consistency with async handlers
+        next(error);
+    }
 };

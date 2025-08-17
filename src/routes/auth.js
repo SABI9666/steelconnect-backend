@@ -1,377 +1,449 @@
 import express from 'express';
-import bcrypt from 'bcryptjs';
+import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import { admin, adminDb } from '../config/firebase.js'; // <-- CORRECT IMPORT
+import { adminDb } from '../config/firebase.js';
 
 const router = express.Router();
 
-// JWT Secret (MUST be set as an environment variable in production)
-const JWT_SECRET = process.env.JWT_SECRET;
-const SETUP_KEY = process.env.ADMIN_SETUP_KEY;
-
-// Hash password utility
-const hashPassword = async (password) => {
-  const saltRounds = 12;
-  return await bcrypt.hash(password, saltRounds);
-};
-
-// Compare password utility
-const comparePassword = async (plainPassword, hashedPassword) => {
-  return await bcrypt.compare(plainPassword, hashedPassword);
-};
-
-// Generate JWT token
-const generateToken = (user) => {
-  return jwt.sign(
-    { 
-      id: user.id, 
-      email: user.email, 
-      type: user.type 
-    },
-    JWT_SECRET,
-    { expiresIn: '24h' }
-  );
-};
-
-// 🔧 ADMIN SETUP ROUTE - Use this to create/reset admin user
-router.post('/setup/admin', async (req, res) => {
+// --- User Registration ---
+router.post('/register', async (req, res) => {
   try {
-    const { email, password, setupKey } = req.body;
-    
-    // Security check - only allow setup with the special key from env
-    if (setupKey !== SETUP_KEY) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Invalid setup key' 
+    const { email, password, name, type } = req.body;
+
+    // Validation
+    if (!email || !password || !name || !type) {
+      return res.status(400).json({ 
+        error: 'Email, password, name, and type are required.',
+        success: false 
       });
     }
 
-    // Validate input
-    if (!email || !password) {
-      return res.status(400).json({
-        success: false,
-        message: 'Email and password are required'
+    if (type !== 'contractor' && type !== 'designer' && type !== 'admin') {
+      return res.status(400).json({ 
+        error: 'User type must be either "contractor", "designer", or "admin".',
+        success: false 
       });
     }
 
-    // Check if admin already exists
-    const adminRef = adminDb.collection('users');
-    const existingAdmin = await adminRef
-      .where('email', '==', email)
-      .where('type', '==', 'admin')
-      .get();
-
-    if (!existingAdmin.empty) {
-      console.log('🔄 Admin user already exists, updating password...');
-      
-      // Update existing admin
-      const adminDoc = existingAdmin.docs[0];
-      const hashedPassword = await hashPassword(password);
-      
-      await adminDoc.ref.update({
-        password: hashedPassword,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      });
-
-      console.log('✅ Admin password updated successfully');
-      return res.json({
-        success: true,
-        message: 'Admin user updated successfully',
-        email: email
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ 
+        error: 'Please provide a valid email address.',
+        success: false 
       });
     }
 
-    // Create new admin user
-    console.log('🔄 Creating new admin user...');
-    const hashedPassword = await hashPassword(password);
-    
-    const adminUser = {
-      email: email,
+    // Password validation
+    if (password.length < 6) {
+      return res.status(400).json({ 
+        error: 'Password must be at least 6 characters long.',
+        success: false 
+      });
+    }
+
+    // Check if user already exists
+    const existingUser = await adminDb.collection('users').where('email', '==', email.toLowerCase()).get();
+    if (!existingUser.empty) {
+      return res.status(409).json({ 
+        error: 'User with this email already exists.',
+        success: false 
+      });
+    }
+
+    // Hash password
+    const saltRounds = 12;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+    // Create new user object
+    const newUser = {
+      email: email.toLowerCase().trim(),
       password: hashedPassword,
-      type: 'admin',
-      isActive: true,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      name: name.trim(),
+      type,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      isActive: true
     };
 
-    const docRef = await adminRef.add(adminUser);
-    console.log('✅ Admin user created with ID:', docRef.id);
-
-    res.json({
-      success: true,
-      message: 'Admin user created successfully',
-      email: email,
-      id: docRef.id
-    });
-
-  } catch (error) {
-    console.error('❌ Error in admin setup:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-});
-
-// 🔐 ADMIN LOGIN ROUTE
-router.post('/login/admin', async (req, res) => {
-  try {
-    const { email, password } = req.body;
+    // Save user to database
+    const userRef = await adminDb.collection('users').add(newUser);
     
-    console.log('🔍 Admin login attempt:', { 
-      email, 
-      passwordExists: !!password,
-      timestamp: new Date().toISOString()
-    });
-
-    // Validate input
-    if (!email || !password) {
-      console.log('❌ Missing email or password');
-      return res.status(400).json({
-        success: false,
-        message: 'Email and password are required'
-      });
-    }
-
-    // Query database for admin user
-    console.log('🔍 Querying database for admin user...');
-    const adminRef = adminDb.collection('users');
-    const adminQuery = await adminRef
-      .where('email', '==', email)
-      .where('type', '==', 'admin')
-      .get();
-
-    console.log('🔍 Database query result:', { 
-      empty: adminQuery.empty, 
-      size: adminQuery.size 
-    });
-
-    if (adminQuery.empty) {
-      console.log('❌ Admin user not found');
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid credentials'
-      });
-    }
-
-    const adminDoc = adminQuery.docs[0];
-    const adminData = adminDoc.data();
-    
-    console.log('🔍 Found user:', {
-      id: adminDoc.id,
-      email: adminData.email,
-      type: adminData.type,
-      isActive: adminData.isActive,
-      hasPassword: !!adminData.password
-    });
-
-    // Check if account is active
-    if (adminData.isActive === false) {
-      console.log('❌ Admin account is inactive');
-      return res.status(401).json({
-        success: false,
-        message: 'Account is inactive'
-      });
-    }
-
-    // Compare passwords
-    console.log('🔍 Comparing passwords...');
-    const isPasswordValid = await comparePassword(password, adminData.password);
-    console.log('🔍 Password match result:', isPasswordValid);
-
-    if (!isPasswordValid) {
-      console.log('❌ Password does not match for admin user');
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid credentials'
-      });
-    }
+    // Remove password from response
+    const { password: _, ...userToReturn } = newUser;
 
     // Generate JWT token
-    const user = {
-      id: adminDoc.id,
-      email: adminData.email,
-      type: adminData.type
+    const payload = {
+      userId: userRef.id,
+      email: newUser.email,
+      type: newUser.type,
+      name: newUser.name
     };
 
-    const token = generateToken(user);
+    const token = jwt.sign(
+      payload,
+      process.env.JWT_SECRET || 'your_default_secret_key_change_in_production',
+      { expiresIn: '7d' }
+    );
 
-    // Update last login
-    await adminDoc.ref.update({
-      lastLogin: admin.firestore.FieldValue.serverTimestamp()
-    });
-
-    console.log('✅ Admin login successful');
-
-    res.json({
+    res.status(201).json({
+      message: 'User registered successfully.',
       success: true,
-      message: 'Login successful',
-      token: token,
-      user: {
-        id: user.id,
-        email: user.email,
-        type: user.type
+      token,
+      user: { 
+        id: userRef.id, 
+        ...userToReturn 
       }
     });
 
   } catch (error) {
-    console.error('❌ Error in admin login:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    console.error('REGISTRATION ERROR:', error);
+    res.status(500).json({ 
+      error: 'An error occurred during registration. Please try again.',
+      success: false 
     });
   }
 });
 
-// 🔓 REGULAR USER LOGIN (if needed)
+// --- User Login ---
+// This route can be used for any user type, including 'admin'.
+// The user's type is fetched from the database and included in the JWT payload.
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
+    // Validation
     if (!email || !password) {
-      return res.status(400).json({
-        success: false,
-        message: 'Email and password are required'
+      return res.status(400).json({ 
+        error: 'Email and password are required.',
+        success: false 
       });
     }
 
-    // Query for regular user
-    const userRef = adminDb.collection('users');
-    const userQuery = await userRef
-      .where('email', '==', email)
-      .where('type', '==', 'user')
-      .get();
-
-    if (userQuery.empty) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid credentials'
+    // Find user by email
+    const usersRef = adminDb.collection('users');
+    const userSnapshot = await usersRef.where('email', '==', email.toLowerCase().trim()).limit(1).get();
+    
+    if (userSnapshot.empty) {
+      return res.status(401).json({ 
+        error: 'Invalid credentials.',
+        success: false 
       });
     }
 
-    const userDoc = userQuery.docs[0];
+    const userDoc = userSnapshot.docs[0];
     const userData = userDoc.data();
 
+    // Check if user is active
     if (userData.isActive === false) {
-      return res.status(401).json({
-        success: false,
-        message: 'Account is inactive'
+      return res.status(401).json({ 
+        error: 'Account is deactivated. Please contact support.',
+        success: false 
       });
     }
 
-    const isPasswordValid = await comparePassword(password, userData.password);
-
-    if (!isPasswordValid) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid credentials'
+    // Verify password
+    const isMatch = await bcrypt.compare(password, userData.password);
+    if (!isMatch) {
+      return res.status(401).json({ 
+        error: 'Invalid credentials.',
+        success: false 
       });
     }
 
-    const user = {
-      id: userDoc.id,
-      email: userData.email,
-      type: userData.type
-    };
-
-    const token = generateToken(user);
-
+    // Update last login
     await userDoc.ref.update({
-      lastLogin: admin.firestore.FieldValue.serverTimestamp()
+      lastLoginAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     });
+    
+    // Create JWT payload (flat structure for middleware compatibility)
+    // The user's 'type' (e.g., 'contractor', 'designer', 'admin') is included here.
+    const payload = {
+      userId: userDoc.id,
+      email: userData.email,
+      type: userData.type,
+      name: userData.name
+    };
+    
+    // Generate JWT token
+    const token = jwt.sign(
+      payload, 
+      process.env.JWT_SECRET || 'your_default_secret_key_change_in_production', 
+      { expiresIn: '7d' }
+    );
 
-    res.json({
-      success: true,
+    res.status(200).json({
       message: 'Login successful',
-      token: token,
-      user: user
-    });
-
-  } catch (error) {
-    console.error('❌ Error in user login:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error'
-    });
-  }
-});
-
-// 🔑 MIDDLEWARE - Verify JWT Token
-export const verifyToken = (req, res, next) => {
-  const token = req.header('Authorization')?.replace('Bearer ', '');
-
-  if (!token) {
-    return res.status(401).json({
-      success: false,
-      message: 'Access denied. No token provided.'
-    });
-  }
-
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
-    next();
-  } catch (error) {
-    res.status(400).json({
-      success: false,
-      message: 'Invalid token'
-    });
-  }
-};
-
-// 🔑 MIDDLEWARE - Verify Admin
-export const verifyAdmin = (req, res, next) => {
-  if (req.user.type !== 'admin') {
-    return res.status(403).json({
-      success: false,
-      message: 'Access denied. Admin privileges required.'
-    });
-  }
-  next();
-};
-
-// 📊 GET CURRENT USER INFO
-router.get('/me', verifyToken, async (req, res) => {
-  try {
-    const userDoc = await adminDb.collection('users').doc(req.user.id).get();
-    
-    if (!userDoc.exists) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    const userData = userDoc.data();
-    
-    res.json({
       success: true,
+      token: token,
       user: {
         id: userDoc.id,
+        name: userData.name,
         email: userData.email,
         type: userData.type,
-        isActive: userData.isActive,
         createdAt: userData.createdAt,
-        lastLogin: userData.lastLogin
+        lastLoginAt: new Date().toISOString()
       }
     });
+
   } catch (error) {
-    console.error('❌ Error getting user info:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error'
+    console.error('LOGIN ERROR:', error);
+    res.status(500).json({ 
+      error: 'An error occurred during login. Please try again.',
+      success: false 
     });
   }
 });
 
-// 🚪 LOGOUT (Optional - mainly for token blacklisting if implemented)
-router.post('/logout', verifyToken, (req, res) => {
-  res.json({
-    success: true,
-    message: 'Logged out successfully'
-  });
+// --- Get Current User Profile ---
+// This route can be used by any authenticated user.
+router.get('/profile', async (req, res) => {
+  try {
+    // This assumes you have authentication middleware that adds user info to req
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ 
+        error: 'Authorization token required.',
+        success: false 
+      });
+    }
+
+    const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+    
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_default_secret_key_change_in_production');
+      
+      // Get fresh user data from database
+      const userDoc = await adminDb.collection('users').doc(decoded.userId).get();
+      
+      if (!userDoc.exists) {
+        return res.status(404).json({ 
+          error: 'User not found.',
+          success: false 
+        });
+      }
+
+      const userData = userDoc.data();
+      const { password, ...userProfile } = userData;
+
+      res.status(200).json({
+        success: true,
+        user: {
+          id: userDoc.id,
+          ...userProfile
+        }
+      });
+
+    } catch (jwtError) {
+      return res.status(401).json({ 
+        error: 'Invalid or expired token.',
+        success: false 
+      });
+    }
+
+  } catch (error) {
+    console.error('PROFILE ERROR:', error);
+    res.status(500).json({ 
+      error: 'An error occurred while fetching profile.',
+      success: false 
+    });
+  }
+});
+
+// --- Update User Profile ---
+// This route can be used by any authenticated user.
+router.put('/profile', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ 
+        error: 'Authorization token required.',
+        success: false 
+      });
+    }
+
+    const token = authHeader.substring(7);
+    
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_default_secret_key_change_in_production');
+      const { name, email } = req.body;
+
+      if (!name && !email) {
+        return res.status(400).json({ 
+          error: 'At least one field (name or email) is required for update.',
+          success: false 
+        });
+      }
+
+      const updateData = {
+        updatedAt: new Date().toISOString()
+      };
+
+      if (name) {
+        updateData.name = name.trim();
+      }
+
+      if (email) {
+        // Validate email format
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+          return res.status(400).json({ 
+            error: 'Please provide a valid email address.',
+            success: false 
+          });
+        }
+
+        // Check if email is already taken by another user
+        const existingUser = await adminDb.collection('users')
+          .where('email', '==', email.toLowerCase())
+          .get();
+        
+        if (!existingUser.empty && existingUser.docs[0].id !== decoded.userId) {
+          return res.status(409).json({ 
+            error: 'Email is already taken by another user.',
+            success: false 
+          });
+        }
+
+        updateData.email = email.toLowerCase().trim();
+      }
+
+      // Update user document
+      await adminDb.collection('users').doc(decoded.userId).update(updateData);
+
+      // Get updated user data
+      const userDoc = await adminDb.collection('users').doc(decoded.userId).get();
+      const userData = userDoc.data();
+      const { password, ...userProfile } = userData;
+
+      res.status(200).json({
+        message: 'Profile updated successfully.',
+        success: true,
+        user: {
+          id: userDoc.id,
+          ...userProfile
+        }
+      });
+
+    } catch (jwtError) {
+      return res.status(401).json({ 
+        error: 'Invalid or expired token.',
+        success: false 
+      });
+    }
+
+  } catch (error) {
+    console.error('PROFILE UPDATE ERROR:', error);
+    res.status(500).json({ 
+      error: 'An error occurred while updating profile.',
+      success: false 
+    });
+  }
+});
+
+// --- Change Password ---
+// This route can be used by any authenticated user.
+router.put('/change-password', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ 
+        error: 'Authorization token required.',
+        success: false 
+      });
+    }
+
+    const token = authHeader.substring(7);
+    
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_default_secret_key_change_in_production');
+      const { currentPassword, newPassword } = req.body;
+
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ 
+          error: 'Current password and new password are required.',
+          success: false 
+        });
+      }
+
+      if (newPassword.length < 6) {
+        return res.status(400).json({ 
+          error: 'New password must be at least 6 characters long.',
+          success: false 
+        });
+      }
+
+      // Get user document
+      const userDoc = await adminDb.collection('users').doc(decoded.userId).get();
+      
+      if (!userDoc.exists) {
+        return res.status(404).json({ 
+          error: 'User not found.',
+          success: false 
+        });
+      }
+
+      const userData = userDoc.data();
+
+      // Verify current password
+      const isMatch = await bcrypt.compare(currentPassword, userData.password);
+      if (!isMatch) {
+        return res.status(401).json({ 
+          error: 'Current password is incorrect.',
+          success: false 
+        });
+      }
+
+      // Hash new password
+      const saltRounds = 12;
+      const hashedNewPassword = await bcrypt.hash(newPassword, saltRounds);
+
+      // Update password
+      await adminDb.collection('users').doc(decoded.userId).update({
+        password: hashedNewPassword,
+        updatedAt: new Date().toISOString()
+      });
+
+      res.status(200).json({
+        message: 'Password changed successfully.',
+        success: true
+      });
+
+    } catch (jwtError) {
+      return res.status(401).json({ 
+        error: 'Invalid or expired token.',
+        success: false 
+      });
+    }
+
+  } catch (error) {
+    console.error('CHANGE PASSWORD ERROR:', error);
+    res.status(500).json({ 
+      error: 'An error occurred while changing password.',
+      success: false 
+    });
+  }
+});
+
+// --- Logout (Optional - mainly for token blacklisting if implemented) ---
+router.post('/logout', async (req, res) => {
+  try {
+    // In a JWT-based system, logout is typically handled client-side by removing the token
+    // However, you can implement token blacklisting here if needed
+    
+    res.status(200).json({
+      message: 'Logout successful. Please remove the token from client storage.',
+      success: true
+    });
+
+  } catch (error) {
+    console.error('LOGOUT ERROR:', error);
+    res.status(500).json({ 
+      error: 'An error occurred during logout.',
+      success: false 
+    });
+  }
 });
 
 export default router;

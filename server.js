@@ -1,17 +1,23 @@
-// server.js - UPDATED VERSION with Admin Routes
+// server.js - WITH STATIC FILE SERVING
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+// Get __dirname equivalent for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Import routes directly
 import authRoutes from './src/routes/auth.js';
 import jobsRoutes from './src/routes/jobs.js';
 import quotesRoutes from './src/routes/quotes.js';
 import messagesRoutes from './src/routes/messages.js';
-import adminRoutes from './src/routes/admin.js'; // Add admin routes
+import adminRoutes from './src/routes/admin.js';
 
 // Import estimation routes (now fixed)
 let estimationRoutes;
@@ -66,13 +72,28 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
+
+// Updated helmet configuration for serving HTML files
 app.use(helmet({ 
-    contentSecurityPolicy: false,
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            styleSrc: ["'self'", "'unsafe-inline'", "https://cdnjs.cloudflare.com"],
+            scriptSrc: ["'self'", "'unsafe-inline'"],
+            fontSrc: ["'self'", "https://cdnjs.cloudflare.com"],
+            imgSrc: ["'self'", "data:", "https:"],
+        },
+    },
     crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
+
 app.use(compression());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// --- Static file serving ---
+// Serve static files from public directory
+app.use(express.static(path.join(__dirname, 'public')));
 
 // --- Request logging middleware ---
 app.use((req, res, next) => {
@@ -106,13 +127,25 @@ app.get('/', (req, res) => {
             quotes: '/api/quotes',
             messages: '/api/messages',
             estimation: '/api/estimation',
-            admin: '/api/admin'
+            admin: '/api/admin',
+            adminPanel: '/admin' // Frontend admin panel
         }
     });
 });
 
-// --- Register Routes ---
-console.log('🔄 Registering routes...');
+// --- Frontend Routes ---
+// Serve admin panel
+app.get('/admin', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+// Serve main app (if you have index.html)
+app.get('/app', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// --- Register API Routes ---
+console.log('🔄 Registering API routes...');
 
 // Auth routes
 if (authRoutes) {
@@ -172,6 +205,7 @@ app.get('/api', (req, res) => {
         available_endpoints: [
             'GET /health',
             'GET /api',
+            'GET /admin (Frontend)',
             'GET /api/auth/*',
             'POST /api/auth/register',
             'POST /api/auth/login',
@@ -181,6 +215,30 @@ app.get('/api', (req, res) => {
             'GET /api/estimation/*',
             'GET /api/admin/*'
         ]
+    });
+});
+
+// --- SPA fallback for frontend routes ---
+app.get('*', (req, res, next) => {
+    // Only handle non-API routes
+    if (req.path.startsWith('/api/')) {
+        return next();
+    }
+    
+    // For frontend routes, try to serve the requested file or fallback to index.html
+    const requestedFile = path.join(__dirname, 'public', req.path);
+    res.sendFile(requestedFile, (err) => {
+        if (err) {
+            // If file not found, send 404
+            res.status(404).json({
+                success: false,
+                error: `Page ${req.originalUrl} not found`,
+                available_pages: [
+                    '/admin - Admin Panel',
+                    '/app - Main Application'
+                ]
+            });
+        }
     });
 });
 
@@ -206,25 +264,6 @@ app.use((error, req, res, next) => {
         success: false, 
         error: error.message || 'Internal Server Error',
         timestamp: new Date().toISOString()
-    });
-});
-
-// --- 404 handler ---
-app.use('*', (req, res) => {
-    res.status(404).json({
-        success: false,
-        error: `Route ${req.originalUrl} not found`,
-        available_routes: [
-            '/',
-            '/health',
-            '/api',
-            '/api/auth/*',
-            '/api/jobs/*',
-            '/api/quotes/*',
-            '/api/messages/*',
-            '/api/estimation/*',
-            '/api/admin/*'
-        ]
     });
 });
 
@@ -262,6 +301,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log('\n🔗 Available endpoints:');
     console.log(`   Health: http://localhost:${PORT}/health`);
     console.log(`   API: http://localhost:${PORT}/api`);
-    console.log(`   Admin: http://localhost:${PORT}/api/admin`);
+    console.log(`   Admin Panel: http://localhost:${PORT}/admin`);
+    console.log(`   Static Files: http://localhost:${PORT}/`);
     console.log('');
 });

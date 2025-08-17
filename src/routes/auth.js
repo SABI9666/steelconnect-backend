@@ -1,27 +1,13 @@
-// src/routes/auth.js
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import admin from 'firebase-admin';
+import { db, admin } from '../config/firebase.js'; // <-- CORRECT IMPORT
 
 const router = express.Router();
-
-// Initialize Firestore
-const db = admin.firestore();
 
 // JWT Secret (MUST be set as an environment variable in production)
 const JWT_SECRET = process.env.JWT_SECRET;
 const SETUP_KEY = process.env.ADMIN_SETUP_KEY;
-
-// Fail-fast checks for critical environment variables
-if (!JWT_SECRET) {
-  console.error('❌ FATAL: JWT_SECRET environment variable is not set!');
-  process.exit(1); 
-}
-if (!SETUP_KEY) {
-  console.error('❌ FATAL: ADMIN_SETUP_KEY environment variable is not set!');
-  process.exit(1);
-}
 
 // Hash password utility
 const hashPassword = async (password) => {
@@ -189,7 +175,7 @@ router.post('/login/admin', async (req, res) => {
       });
     }
 
-    // Compare passwords (this will handle the case of a missing password)
+    // Compare passwords
     console.log('🔍 Comparing passwords...');
     const isPasswordValid = await comparePassword(password, adminData.password);
     console.log('🔍 Password match result:', isPasswordValid);

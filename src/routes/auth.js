@@ -106,7 +106,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
-// --- Standard User Login ---
+// --- Standard User Login (Contractors & Designers) ---
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -202,22 +202,32 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// --- Admin Login ---
+// --- Admin Login with Debug Logging ---
 router.post('/login/admin', async (req, res) => {
   try {
     const { email, password } = req.body;
+    
+    console.log('🔍 Admin login attempt:', { email, passwordExists: !!password });
 
     if (!email || !password) {
+      console.log('❌ Missing email or password');
       return res.status(400).json({ 
         error: 'Email and password are required.',
         success: false 
       });
     }
 
+    console.log('🔍 Querying database for admin user...');
     const usersRef = adminDb.collection('users');
     const userSnapshot = await usersRef.where('email', '==', email.toLowerCase().trim()).limit(1).get();
     
+    console.log('🔍 Database query result:', { 
+      empty: userSnapshot.empty,
+      size: userSnapshot.size 
+    });
+    
     if (userSnapshot.empty) {
+      console.log('❌ No user found with email:', email);
       return res.status(401).json({ 
         error: 'Invalid credentials.',
         success: false 
@@ -226,9 +236,18 @@ router.post('/login/admin', async (req, res) => {
 
     const userDoc = userSnapshot.docs[0];
     const userData = userDoc.data();
+    
+    console.log('🔍 Found user:', { 
+      id: userDoc.id,
+      email: userData.email,
+      type: userData.type,
+      isActive: userData.isActive,
+      hasPassword: !!userData.password
+    });
 
     // CRITICAL: Deny access if the user is not an admin
     if (userData.type !== 'admin') {
+      console.log('❌ User is not admin, type:', userData.type);
       return res.status(403).json({ 
         error: 'Access Denied: You do not have admin privileges.',
         success: false 
@@ -236,20 +255,26 @@ router.post('/login/admin', async (req, res) => {
     }
 
     if (userData.isActive === false) {
+      console.log('❌ User account is deactivated');
       return res.status(401).json({ 
         error: 'Account is deactivated. Please contact support.',
         success: false 
       });
     }
 
+    console.log('🔍 Comparing passwords...');
     const isMatch = await bcrypt.compare(password, userData.password);
+    console.log('🔍 Password match result:', isMatch);
+    
     if (!isMatch) {
+      console.log('❌ Password does not match for admin user');
       return res.status(401).json({ 
         error: 'Invalid credentials.',
         success: false 
       });
     }
 
+    console.log('🔍 Updating admin last login timestamp...');
     await userDoc.ref.update({
       lastLoginAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
@@ -262,11 +287,14 @@ router.post('/login/admin', async (req, res) => {
       name: userData.name
     };
     
+    console.log('🔍 Generating JWT token for admin...');
     const token = jwt.sign(
       payload, 
       process.env.JWT_SECRET || 'your_default_secret_key_change_in_production', 
       { expiresIn: '7d' }
     );
+
+    console.log('✅ Admin login successful for:', userData.email);
 
     res.status(200).json({
       message: 'Admin login successful',
@@ -283,14 +311,13 @@ router.post('/login/admin', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('ADMIN LOGIN ERROR:', error);
+    console.error('❌ ADMIN LOGIN ERROR:', error);
     res.status(500).json({ 
       error: 'An error occurred during admin login. Please try again.',
       success: false 
     });
   }
 });
-
 
 // --- Get Current User Profile ---
 router.get('/profile', async (req, res) => {

@@ -6,7 +6,7 @@ import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
 
 // Import services
-import { PdfProcessor } from '../services/pdfProcessor.js';
+import { PdfProcessor } from '../services/pdfprocessor.js';
 import { EnhancedAIAnalyzer } from '../services/aiAnalyzer.js';
 import { EstimationEngine } from '../services/cost-estimation-engine.js';
 import ReportGenerator from '../services/reportGenerator.js';

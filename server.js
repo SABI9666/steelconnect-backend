@@ -1,3 +1,4 @@
+
 // server.js
 import express from 'express';
 import cors from 'cors';
@@ -30,6 +31,16 @@ app.use(helmet({ contentSecurityPolicy: false }));
 app.use(compression());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Add request logging middleware
+app.use((req, res, next) => {
+    console.log(`🌐 ${new Date().toISOString()} - ${req.method} ${req.path}`);
+    console.log('📥 Headers:', req.headers);
+    if (req.body && Object.keys(req.body).length > 0) {
+        console.log('📥 Body:', JSON.stringify(req.body, null, 2));
+    }
+    next();
+});
 
 // --- Dynamic Route Loading ---
 const loadRoutes = async () => {

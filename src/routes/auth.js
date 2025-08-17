@@ -9,8 +9,19 @@ const router = express.Router();
 // Initialize Firestore
 const db = admin.firestore();
 
-// JWT Secret (use environment variable in production)
-const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-key-change-in-production';
+// JWT Secret (MUST be set as an environment variable in production)
+const JWT_SECRET = process.env.JWT_SECRET;
+const SETUP_KEY = process.env.ADMIN_SETUP_KEY;
+
+// Fail-fast checks for critical environment variables
+if (!JWT_SECRET) {
+  console.error('❌ FATAL: JWT_SECRET environment variable is not set!');
+  process.exit(1); 
+}
+if (!SETUP_KEY) {
+  console.error('❌ FATAL: ADMIN_SETUP_KEY environment variable is not set!');
+  process.exit(1);
+}
 
 // Hash password utility
 const hashPassword = async (password) => {
@@ -41,8 +52,7 @@ router.post('/setup/admin', async (req, res) => {
   try {
     const { email, password, setupKey } = req.body;
     
-    // Security check - only allow setup with special key
-    const SETUP_KEY = process.env.ADMIN_SETUP_KEY || 'setup-admin-2024';
+    // Security check - only allow setup with the special key from env
     if (setupKey !== SETUP_KEY) {
       return res.status(403).json({ 
         success: false, 
@@ -179,16 +189,7 @@ router.post('/login/admin', async (req, res) => {
       });
     }
 
-    // Check if password exists in database
-    if (!adminData.password) {
-      console.log('❌ No password found in database');
-      return res.status(500).json({
-        success: false,
-        message: 'Account setup incomplete. Please contact administrator.'
-      });
-    }
-
-    // Compare passwords
+    // Compare passwords (this will handle the case of a missing password)
     console.log('🔍 Comparing passwords...');
     const isPasswordValid = await comparePassword(password, adminData.password);
     console.log('🔍 Password match result:', isPasswordValid);

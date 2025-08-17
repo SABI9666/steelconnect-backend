@@ -1,133 +1,437 @@
 // src/controllers/adminController.js
+import admin from 'firebase-admin';
 
-import User from '../models/User.js';
-import Quote from '../models/Quote.js';
-import Message from '../models/Message.js';
+// Initialize Firestore
+const db = admin.firestore();
 
-/**
- * @async
- * @function getDashboardStats
- * @description Fetches aggregate statistics for the admin dashboard.
- * @param {object} req - Express request object.
- * @param {object} res - Express response object.
- * @param {function} next - Express next middleware function.
- * @returns {Promise<void>} A promise that resolves when the response is sent.
- */
-export const getDashboardStats = async (req, res, next) => {
-    try {
-        const [userCount, quoteCount, messageCount] = await Promise.all([
-            User.countDocuments(),
-            Quote.countDocuments(),
-            Message.countDocuments()
-        ]);
+// 📊 GET DASHBOARD STATS
+export const getDashboardStats = async (req, res) => {
+  try {
+    console.log('📊 Admin dashboard stats requested by:', req.user.email);
 
-        res.status(200).json({
-            success: true,
-            stats: {
-                totalUsers: userCount,
-                totalQuotes: quoteCount,
-                totalMessages: messageCount,
-            }
+    // Get counts from different collections
+    const [usersSnapshot, jobsSnapshot, quotesSnapshot, messagesSnapshot] = await Promise.all([
+      db.collection('users').get(),
+      db.collection('jobs').get(),
+      db.collection('quotes').get(),
+      db.collection('messages').get()
+    ]);
+
+    // Calculate more detailed stats
+    const users = [];
+    const jobs = [];
+    const quotes = [];
+    const messages = [];
+
+    usersSnapshot.forEach(doc => users.push({ id: doc.id, ...doc.data() }));
+    jobsSnapshot.forEach(doc => jobs.push({ id: doc.id, ...doc.data() }));
+    quotesSnapshot.forEach(doc => quotes.push({ id: doc.id, ...doc.data() }));
+    messagesSnapshot.forEach(doc => messages.push({ id: doc.id, ...doc.data() }));
+
+    // Get current date for recent activity calculations
+    const now = new Date();
+    const last7Days = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const last30Days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    const stats = {
+      totalUsers: usersSnapshot.size,
+      totalJobs: jobsSnapshot.size,
+      totalQuotes: quotesSnapshot.size,
+      totalMessages: messagesSnapshot.size,
+      
+      // User stats
+      activeUsers: users.filter(user => user.isActive !== false).length,
+      adminUsers: users.filter(user => user.type === 'admin').length,
+      regularUsers: users.filter(user => user.type === 'user').length,
+      
+      // Job stats
+      pendingJobs: jobs.filter(job => job.status === 'pending').length,
+      completedJobs: jobs.filter(job => job.status === 'completed').length,
+      inProgressJobs: jobs.filter(job => job.status === 'in-progress').length,
+      
+      // Quote stats
+      pendingQuotes: quotes.filter(quote => quote.status === 'pending').length,
+      approvedQuotes: quotes.filter(quote => quote.status === 'approved').length,
+      
+      // Message stats
+      unreadMessages: messages.filter(msg => !msg.isRead).length,
+      readMessages: messages.filter(msg => msg.isRead).length,
+      
+      // Recent activity (last 7 days)
+      recentActivity: {
+        newUsers: users.filter(user => {
+          const createdAt = user.createdAt?.toDate?.() || new Date(user.createdAt);
+          return createdAt >= last7Days;
+        }).length,
+        newJobs: jobs.filter(job => {
+          const createdAt = job.createdAt?.toDate?.() || new Date(job.createdAt);
+          return createdAt >= last7Days;
+        }).length,
+        newQuotes: quotes.filter(quote => {
+          const createdAt = quote.createdAt?.toDate?.() || new Date(quote.createdAt);
+          return createdAt >= last7Days;
+        }).length,
+        newMessages: messages.filter(msg => {
+          const createdAt = msg.createdAt?.toDate?.() || new Date(msg.createdAt);
+          return createdAt >= last7Days;
+        }).length
+      },
+      
+      // Monthly activity (last 30 days)
+      monthlyActivity: {
+        newUsers: users.filter(user => {
+          const createdAt = user.createdAt?.toDate?.() || new Date(user.createdAt);
+          return createdAt >= last30Days;
+        }).length,
+        newJobs: jobs.filter(job => {
+          const createdAt = job.createdAt?.toDate?.() || new Date(job.createdAt);
+          return createdAt >= last30Days;
+        }).length,
+        newQuotes: quotes.filter(quote => {
+          const createdAt = quote.createdAt?.toDate?.() || new Date(quote.createdAt);
+          return createdAt >= last30Days;
+        }).length
+      }
+    };
+
+    res.json({
+      success: true,
+      stats: stats,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ Error fetching dashboard stats:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching dashboard statistics',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// 👥 GET ALL USERS
+export const getAllUsers = async (req, res) => {
+  try {
+    const { 
+      limit = 50, 
+      offset = 0, 
+      sortBy = 'createdAt', 
+      sortOrder = 'desc',
+      userType,
+      isActive 
+    } = req.query;
+    
+    console.log('👥 Admin fetching users list:', { limit, offset, sortBy, sortOrder });
+
+    let query = db.collection('users');
+    
+    // Apply filters
+    if (userType) {
+      query = query.where('type', '==', userType);
+    }
+    
+    if (isActive !== undefined) {
+      query = query.where('isActive', '==', isActive === 'true');
+    }
+    
+    // Apply sorting
+    const validSortFields = ['createdAt', 'email', 'lastLogin', 'updatedAt'];
+    if (validSortFields.includes(sortBy)) {
+      query = query.orderBy(sortBy, sortOrder === 'asc' ? 'asc' : 'desc');
+    } else {
+      query = query.orderBy('createdAt', 'desc');
+    }
+    
+    // Apply pagination
+    if (offset && parseInt(offset) > 0) {
+      query = query.offset(parseInt(offset));
+    }
+    
+    if (limit && parseInt(limit) > 0) {
+      query = query.limit(parseInt(limit));
+    }
+
+    const snapshot = await query.get();
+    const users = [];
+
+    snapshot.forEach(doc => {
+      const userData = doc.data();
+      users.push({
+        id: doc.id,
+        email: userData.email,
+        type: userData.type,
+        isActive: userData.isActive,
+        createdAt: userData.createdAt,
+        lastLogin: userData.lastLogin,
+        updatedAt: userData.updatedAt
+        // Don't include password hash
+      });
+    });
+
+    // Get total count for pagination
+    const totalQuery = db.collection('users');
+    const totalSnapshot = await totalQuery.get();
+
+    res.json({
+      success: true,
+      users: users,
+      pagination: {
+        total: totalSnapshot.size,
+        limit: parseInt(limit),
+        offset: parseInt(offset),
+        hasMore: (parseInt(offset) + parseInt(limit)) < totalSnapshot.size
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error fetching users:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching users',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// 🔄 UPDATE USER STATUS
+export const updateUserStatus = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { isActive, notes } = req.body;
+
+    console.log('🔄 Admin updating user status:', { 
+      userId, 
+      isActive, 
+      admin: req.user.email 
+    });
+
+    // Validate input
+    if (typeof isActive !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        message: 'isActive must be a boolean value'
+      });
+    }
+
+    const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
+
+    if (!userDoc.exists) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    const userData = userDoc.data();
+
+    // Don't allow admin to deactivate themselves
+    if (userId === req.user.id && !isActive) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot deactivate your own account'
+      });
+    }
+
+    // Don't allow deactivating the last admin
+    if (userData.type === 'admin' && !isActive) {
+      const adminSnapshot = await db.collection('users')
+        .where('type', '==', 'admin')
+        .where('isActive', '==', true)
+        .get();
+      
+      if (adminSnapshot.size <= 1) {
+        return res.status(400).json({
+          success: false,
+          message: 'Cannot deactivate the last active admin user'
         });
-    } catch (error) {
-        console.error('Error in getDashboardStats:', error);
-        next(error);
+      }
     }
+
+    const updateData = {
+      isActive: isActive,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedBy: req.user.id
+    };
+
+    if (notes) {
+      updateData.adminNotes = notes;
+    }
+
+    await userRef.update(updateData);
+
+    res.json({
+      success: true,
+      message: `User ${isActive ? 'activated' : 'deactivated'} successfully`,
+      user: {
+        id: userId,
+        email: userData.email,
+        isActive: isActive
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error updating user status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error updating user status',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
 };
 
-/**
- * @async
- * @function getAllUsers
- * @description Retrieves a list of all users, excluding their passwords.
- * @param {object} req - Express request object.
- * @param {object} res - Express response object.
- * @param {function} next - Express next middleware function.
- * @returns {Promise<void>} A promise that resolves when the response is sent.
- */
-export const getAllUsers = async (req, res, next) => {
-    try {
-        const users = await User.find().select('-password');
-        res.status(200).json({ success: true, users });
-    } catch (error) {
-        console.error('Error in getAllUsers:', error);
-        next(error);
+// 🗑️ DELETE USER
+export const deleteUser = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { confirmEmail } = req.body;
+
+    console.log('🗑️ Admin attempting to delete user:', { 
+      userId, 
+      confirmEmail,
+      admin: req.user.email 
+    });
+
+    const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
+
+    if (!userDoc.exists) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
     }
-};
 
-/**
- * @async
- * @function updateUserStatus
- * @description Updates the status of a specific user.
- * @param {object} req - Express request object containing userId in params and status in body.
- * @param {object} res - Express response object.
- * @param {function} next - Express next middleware function.
- * @returns {Promise<void>} A promise that resolves when the response is sent.
- */
-export const updateUserStatus = async (req, res, next) => {
-    try {
-        const { userId } = req.params;
-        const { status } = req.body;
+    const userData = userDoc.data();
 
-        if (!status) {
-            return res.status(400).json({ success: false, message: 'Status is required.' });
-        }
-
-        const updatedUser = await User.findByIdAndUpdate(userId, { status }, { new: true }).select('-password');
-        if (!updatedUser) {
-            return res.status(404).json({ success: false, message: 'User not found.' });
-        }
-        res.status(200).json({ success: true, message: `User status updated to ${status}.`, user: updatedUser });
-    } catch (error) {
-        console.error('Error in updateUserStatus:', error);
-        next(error);
+    // Don't allow admin to delete themselves
+    if (userId === req.user.id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete your own account'
+      });
     }
-};
 
-/**
- * @async
- * @function deleteUser
- * @description Deletes a user from the database.
- * @param {object} req - Express request object containing userId in params.
- * @param {object} res - Express response object.
- * @param {function} next - Express next middleware function.
- * @returns {Promise<void>} A promise that resolves when the response is sent.
- */
-export const deleteUser = async (req, res, next) => {
-    try {
-        const { userId } = req.params;
-        const deletedUser = await User.findByIdAndDelete(userId);
-        if (!deletedUser) {
-            return res.status(404).json({ success: false, message: 'User not found.' });
-        }
-        res.status(200).json({ success: true, message: 'User deleted successfully.' });
-    } catch (error)
-        {
-        console.error('Error in deleteUser:', error);
-        next(error);
+    // Email confirmation check for safety
+    if (confirmEmail !== userData.email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email confirmation does not match user email'
+      });
     }
-};
 
-/**
- * @function getSystemStats
- * @description Retrieves system statistics like Node.js version and memory usage.
- * @param {object} req - Express request object.
- * @param {object} res - Express response object.
- * @returns {void}
- */
-export const getSystemStats = (req, res) => {
-    try {
-        res.status(200).json({
-            success: true,
-            stats: {
-                nodeVersion: process.version,
-                platform: process.platform,
-                serverUptime: process.uptime(),
-                memoryUsage: process.memoryUsage(),
-            }
+    // Don't allow deleting the last admin
+    if (userData.type === 'admin') {
+      const adminSnapshot = await db.collection('users')
+        .where('type', '==', 'admin')
+        .get();
+      
+      if (adminSnapshot.size <= 1) {
+        return res.status(400).json({
+          success: false,
+          message: 'Cannot delete the last admin user'
         });
-    } catch (error) {
-        console.error('Error in getSystemStats:', error);
-        // Although this is a sync function, calling next ensures consistency with async handlers
-        next(error);
+      }
     }
+
+    // Soft delete - mark as deleted instead of actually deleting
+    await userRef.update({
+      isDeleted: true,
+      deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+      deletedBy: req.user.id,
+      isActive: false
+    });
+
+    res.json({
+      success: true,
+      message: 'User deleted successfully',
+      deletedUser: {
+        id: userId,
+        email: userData.email,
+        type: userData.type
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error deleting user:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting user',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// 📈 GET SYSTEM STATS
+export const getSystemStats = async (req, res) => {
+  try {
+    console.log('📈 Admin requesting system stats');
+
+    // Get database stats
+    const collections = ['users', 'jobs', 'quotes', 'messages', 'estimations'];
+    const collectionStats = {};
+
+    for (const collection of collections) {
+      try {
+        const snapshot = await db.collection(collection).get();
+        collectionStats[collection] = {
+          total: snapshot.size,
+          lastUpdated: new Date().toISOString()
+        };
+      } catch (error) {
+        collectionStats[collection] = {
+          total: 0,
+          error: 'Collection may not exist',
+          lastUpdated: new Date().toISOString()
+        };
+      }
+    }
+
+    // System information
+    const systemInfo = {
+      nodeVersion: process.version,
+      platform: process.platform,
+      uptime: process.uptime(),
+      memoryUsage: process.memoryUsage(),
+      environment: process.env.NODE_ENV || 'development',
+      timestamp: new Date().toISOString()
+    };
+
+    // Calculate storage usage (approximate)
+    let totalDocuments = 0;
+    Object.values(collectionStats).forEach(stat => {
+      if (typeof stat.total === 'number') {
+        totalDocuments += stat.total;
+      }
+    });
+
+    const stats = {
+      database: {
+        collections: collectionStats,
+        totalDocuments: totalDocuments,
+        estimatedSize: `${(totalDocuments * 2).toFixed(2)} KB` // Rough estimate
+      },
+      system: systemInfo,
+      performance: {
+        averageResponseTime: '< 100ms', // You can implement actual monitoring
+        uptime: `${Math.floor(process.uptime() / 3600)}h ${Math.floor((process.uptime() % 3600) / 60)}m`,
+        status: 'healthy'
+      }
+    };
+
+    res.json({
+      success: true,
+      stats: stats,
+      generatedAt: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ Error fetching system stats:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching system statistics',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
 };

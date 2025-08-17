@@ -105,7 +105,6 @@ router.post('/generate-from-upload', upload.single('drawing'), async (req, res, 
 
         // --- Step 3: AI Analysis ---
         console.log('[3/6] Starting AI analysis...');
-        // CORRECTED NAME to use the imported class
         const aiAnalyzer = new AustralianSteelAnalyzer(apiKey);
         const mockStructuredDataForAI = {
              steel_schedules: (structuredData.structuralMembers || []).map(member => ({

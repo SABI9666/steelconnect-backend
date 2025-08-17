@@ -1,7 +1,7 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { db, admin } from '../config/firebase.js'; // <-- CORRECT IMPORT
+import { admin, adminDb } from '../config/firebase.js'; // <-- CORRECT IMPORT
 
 const router = express.Router();
 
@@ -55,7 +55,7 @@ router.post('/setup/admin', async (req, res) => {
     }
 
     // Check if admin already exists
-    const adminRef = db.collection('users');
+    const adminRef = adminDb.collection('users');
     const existingAdmin = await adminRef
       .where('email', '==', email)
       .where('type', '==', 'admin')
@@ -136,7 +136,7 @@ router.post('/login/admin', async (req, res) => {
 
     // Query database for admin user
     console.log('🔍 Querying database for admin user...');
-    const adminRef = db.collection('users');
+    const adminRef = adminDb.collection('users');
     const adminQuery = await adminRef
       .where('email', '==', email)
       .where('type', '==', 'admin')
@@ -238,7 +238,7 @@ router.post('/login', async (req, res) => {
     }
 
     // Query for regular user
-    const userRef = db.collection('users');
+    const userRef = adminDb.collection('users');
     const userQuery = await userRef
       .where('email', '==', email)
       .where('type', '==', 'user')
@@ -335,7 +335,7 @@ export const verifyAdmin = (req, res, next) => {
 // 📊 GET CURRENT USER INFO
 router.get('/me', verifyToken, async (req, res) => {
   try {
-    const userDoc = await db.collection('users').doc(req.user.id).get();
+    const userDoc = await adminDb.collection('users').doc(req.user.id).get();
     
     if (!userDoc.exists) {
       return res.status(404).json({

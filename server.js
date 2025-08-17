@@ -52,14 +52,14 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' })); // Parse URL-enc
 // --- Dynamic Route Loading ---
 const loadRoutes = async () => {
     console.log('🔄 Loading all application routes...');
-    // --- FIX: Corrected file paths to be relative to the project root ---
+    // --- FIX: Removed './' prefix to prevent path duplication on Render ---
     const routesToLoad = [
-        { path: '/api/auth', file: './src/routes/auth.js', name: 'Auth' },
-        { path: '/api/jobs', file: './src/routes/jobs.js', name: 'Jobs' },
-        { path: '/api/quotes', file: './src/routes/quotes.js', name: 'Quotes' },
-        { path: '/api/messages', file: './src/routes/messages.js', name: 'Messages' },
-        { path: '/api/estimation', file: './src/routes/estimation.js', name: 'Estimation' },
-        { path: '/api/admin', file: './src/routes/admin.js', name: 'Admin' } // Admin routes
+        { path: '/api/auth', file: 'src/routes/auth.js', name: 'Auth' },
+        { path: '/api/jobs', file: 'src/routes/jobs.js', name: 'Jobs' },
+        { path: '/api/quotes', file: 'src/routes/quotes.js', name: 'Quotes' },
+        { path: '/api/messages', file: 'src/routes/messages.js', name: 'Messages' },
+        { path: '/api/estimation', file: 'src/routes/estimation.js', name: 'Estimation' },
+        { path: '/api/admin', file: 'src/routes/admin.js', name: 'Admin' } // Admin routes
     ];
 
     for (const route of routesToLoad) {

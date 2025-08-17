@@ -1,8 +1,8 @@
 // Australian Steel Standards AI Analyzer
 import Anthropic from '@anthropic-ai/sdk';
 
-// RENAMED CLASS to be compatible with estimation.js
-export class EnhancedAIAnalyzer {
+// CORRECTED CLASS NAME to match the import in estimation.js
+export class AustralianSteelAnalyzer {
     constructor(apiKey) {
         this.client = new Anthropic({ apiKey });
         this.maxTokens = 4000;
@@ -10,7 +10,7 @@ export class EnhancedAIAnalyzer {
         
         // Australian Steel Weight Database (AS/NZS Standards)
         this.ausWeights = this._initializeAusWeights();
-    }
+         }
 
     _initializeAusWeights() {
         return {

@@ -24,9 +24,10 @@ const upload = multer({
 });
 
 // --- Initialize Services ---
+let pdfProcessor, estimationEngine;
 try {
-    var pdfProcessor = new PdfProcessor();
-    var estimationEngine = new EstimationEngine();
+    pdfProcessor = new PdfProcessor();
+    estimationEngine = new EstimationEngine();
 } catch (e) {
     console.error("Failed to initialize core services:", e);
 }
@@ -34,9 +35,6 @@ try {
 
 /**
  * Helper function to upload a file buffer to Firebase Storage.
- * @param {Buffer} buffer The file buffer from multer.
- * @param {string} originalname The original name of the file.
- * @returns {Promise<string>} The destination path of the uploaded file in the bucket.
  */
 const uploadToFirebase = (buffer, originalname) => {
     return new Promise((resolve, reject) => {
@@ -67,7 +65,7 @@ const uploadToFirebase = (buffer, originalname) => {
 /**
  * =================================================================
  * POST /api/estimation/generate-from-upload
- * Main route to upload a PDF to Firebase and generate a cost estimation.
+ * Main route to upload a PDF and generate a cost estimation.
  * =================================================================
  */
 router.post('/generate-from-upload', upload.single('drawing'), async (req, res, next) => {
@@ -93,13 +91,10 @@ router.post('/generate-from-upload', upload.single('drawing'), async (req, res, 
         console.log(`[1/6] ✅ File uploaded to: ${storagePath}`);
         
         // --- Step 2: Extract PDF Content from Buffer ---
-        console.log('[2/6] Extracting text from PDF...');
+        console.log('[2/6] Extracting steel information from PDF...');
         const uint8Array = new Uint8Array(fileBuffer);
+        // FIXED: Declare 'structuredData' once and call the correct processing method
         const structuredData = await pdfProcessor.extractSteelInformation(uint8Array);
-        if (!extractedContent.success) {
-            throw new Error('PDF text extraction failed.');
-        }
-        const structuredData = pdfProcessor.extractSteelInformation(extractedContent.text);
         console.log(`[2/6] ✅ PDF Extraction Complete. Found ${structuredData.structuralMembers?.length || 0} members.`);
 
         // --- Step 3: AI Analysis ---
@@ -126,7 +121,7 @@ router.post('/generate-from-upload', upload.single('drawing'), async (req, res, 
             projectName, projectLocation: location, clientName,
             originalFilename: req.file.originalname,
             fileSize: req.file.size,
-            storagePath, // <-- Path to file in Firebase Storage
+            storagePath,
             structuredData: { schedules: structuredData.structuralMembers || [] },
             analysisResults, estimationData,
             status: 'Draft', user: userId
@@ -154,7 +149,6 @@ router.get('/:id/report', async (req, res, next) => {
     try {
         const estimation = await Estimation.findById(req.params.id);
         if (!estimation) return res.status(404).json({ success: false, error: 'Estimation not found.' });
-        // Assuming ReportGenerator works with data from DB
         res.json({ success: true, message: "Report generation logic goes here." });
     } catch (error) {
         next(error);

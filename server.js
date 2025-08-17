@@ -4,12 +4,14 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+// Import the Firebase configuration to run the initialization
+import './src/config/firebase.js';
+
 // Import necessary modules
 import express from 'express';
 import compression from 'compression';
 import helmet from 'helmet';
 import cors from 'cors';
-import admin from 'firebase-admin';
 
 // Import route modules
 import jobsRoutes from './src/routes/jobs.js';
@@ -18,34 +20,6 @@ import messagesRoutes from './src/routes/messages.js';
 import estimationRoutes from './src/routes/estimation.js';
 import adminRoutes from './src/routes/admin.js';
 import authRoutes from './src/routes/auth.js';
-
-// --- Firebase Initialization (CRITICAL FIX) ---
-// Initialize the Firebase Admin SDK using the service account key from a Base64 encoded environment variable.
-try {
-  // Get the Base64 string from the environment variable
-  const serviceAccountBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64;
-  
-  // Check if the variable is set and not empty
-  if (!serviceAccountBase64) {
-    throw new Error('FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 is not set.');
-  }
-
-  // Decode the Base64 string to a JSON string
-  const serviceAccountJson = Buffer.from(serviceAccountBase64, 'base64').toString('utf8');
-
-  // Parse the JSON string into an object
-  const serviceAccount = JSON.parse(serviceAccountJson);
-  
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
-  });
-  console.log('✅ Firebase Admin SDK initialized successfully');
-  console.log('🔥 Using Firebase Firestore as database');
-} catch (error) {
-  console.error('❌ FATAL: Firebase initialization failed. Check FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 environment variable.');
-  console.error('Error details:', error.message);
-  process.exit(1);
-}
 
 // Create Express application
 const app = express();
@@ -94,7 +68,7 @@ app.get('/', (req, res) => {
 try {
   console.log('🔄 Loading all application routes...');
 
-  // Auth routes (must be loaded after Firebase is initialized)
+  // Auth routes
   app.use('/api/auth', authRoutes);
   console.log('✅ Auth routes loaded successfully at /api/auth.');
 

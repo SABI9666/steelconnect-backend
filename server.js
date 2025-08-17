@@ -1,4 +1,3 @@
-
 // server.js
 import express from 'express';
 import cors from 'cors';
@@ -16,7 +15,17 @@ const PORT = process.env.PORT || 10000;
 const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',');
 const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1 || origin.endsWith('.vercel.app') || origin.endsWith('.onrender.com')) {
+    // Allow requests with no origin (like mobile apps, Postman, local files)
+    if (!origin) return callback(null, true);
+    
+    if (
+      allowedOrigins.indexOf(origin) !== -1 || 
+      origin.endsWith('.vercel.app') || 
+      origin.endsWith('.onrender.com') ||
+      origin.startsWith('file://') || // Allow local HTML files
+      origin.startsWith('http://localhost') || // Allow localhost
+      origin.startsWith('https://localhost')
+    ) {
       callback(null, true);
     } else {
       console.error(`CORS Error: The origin "${origin}" was not allowed.`);

@@ -1,5 +1,5 @@
 // createAdminUser.js - Run this script once to create an admin user
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 
 // Load environment variables
@@ -101,3 +101,4 @@ async function createAdminUser() {
 
 // Run the function
 createAdminUser();
+

@@ -4,18 +4,12 @@ import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import dotenv from 'dotenv';
-import mongoose from 'mongoose';
 
 // Load environment variables from .env file
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 10000;
-
-// --- Database Connection ---
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('✅ MongoDB connected successfully.'))
-  .catch(err => console.error('❌ MongoDB connection error:', err));
 
 // --- Core Middleware ---
 const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',');
@@ -51,7 +45,6 @@ const loadRoutes = async () => {
 
     for (const route of routesToLoad) {
         try {
-            // --- FIX: Using a direct dynamic import which is more reliable ---
             const { default: routeModule } = await import(route.file);
             app.use(route.path, routeModule);
             console.log(`✅ ${route.name} routes loaded successfully at ${route.path}.`);
@@ -64,12 +57,24 @@ const loadRoutes = async () => {
 // --- Server Initialization ---
 const startServer = async () => {
     await loadRoutes();
-    app.get('/', (req, res) => res.status(200).json({ message: 'SteelConnect Backend API is running and healthy.' }));
+    
+    app.get('/', (req, res) => res.status(200).json({ 
+        message: 'SteelConnect Backend API is running and healthy.',
+        database: 'Firebase Firestore'
+    }));
+    
     app.use((error, req, res, next) => {
         console.error('❌ Global Error Handler caught an error:', error);
-        res.status(500).json({ success: false, error: error.message || 'An unexpected internal server error occurred.' });
+        res.status(500).json({ 
+            success: false, 
+            error: error.message || 'An unexpected internal server error occurred.' 
+        });
     });
-    app.listen(PORT, () => console.log(`✅ Server is live and listening on port ${PORT}`));
+    
+    app.listen(PORT, () => {
+        console.log(`✅ Server is live and listening on port ${PORT}`);
+        console.log(`🔥 Using Firebase Firestore as database`);
+    });
 };
 
 startServer();

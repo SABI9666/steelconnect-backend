@@ -1,4 +1,4 @@
-// server.js
+/ server.js
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -12,23 +12,32 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 
 // --- Core Middleware ---
-const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',');
+const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',').filter(origin => origin.trim() !== '');
+
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps, Postman, local files)
-    if (!origin) return callback(null, true);
+    console.log(`🌐 CORS check for origin: "${origin}"`);
     
-    if (
-      allowedOrigins.indexOf(origin) !== -1 || 
+    // Allow requests with no origin (mobile apps, Postman, local HTML files, server-to-server)
+    if (!origin) {
+      console.log('✅ Allowing request with no origin');
+      return callback(null, true);
+    }
+    
+    // Check allowed origins
+    const isAllowed = 
+      allowedOrigins.includes(origin) ||
       origin.endsWith('.vercel.app') || 
       origin.endsWith('.onrender.com') ||
-      origin.startsWith('file://') || // Allow local HTML files
-      origin.startsWith('http://localhost') || // Allow localhost
-      origin.startsWith('https://localhost')
-    ) {
+      origin.startsWith('http://localhost') ||
+      origin.startsWith('https://localhost') ||
+      origin === 'null'; // Explicitly allow null origin for local files
+    
+    if (isAllowed) {
+      console.log('✅ Origin allowed');
       callback(null, true);
     } else {
-      console.error(`CORS Error: The origin "${origin}" was not allowed.`);
+      console.error(`❌ CORS Error: Origin "${origin}" was not allowed.`);
       callback(new Error('This origin is not allowed by CORS policy.'));
     }
   },

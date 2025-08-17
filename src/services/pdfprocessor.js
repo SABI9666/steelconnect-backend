@@ -14,7 +14,9 @@ export class PdfProcessor {
             zPurlins: /Z\s*(\d{2,3})\s*[\/-]\s*(\d{1,2}(?:\.\d+)?)/gi,
             plates: /(?:PL|PLATE)\s*(\d{1,3})/gi,
             bolts: /M(\d{1,2})\s*(?:BOLT|B)?/gi,
-            quantities: /(?:(\d+)\s*(?:NO|NOS|OFF|QTY)\b)|(?:QTY\s*:?\s*(\d+))|(?:\b(\d{1,3})\s+(?:PCS|ITEMS)\b)/gi,
+            
+            // FIXED: More robust regex to find quantities at the start of a line OR with keywords.
+            quantities: /(?:(\d+)\s*(?:NO|NOS|OFF|QTY)\b)|(?:QTY\s*:?\s*(\d+))|(?:\b(\d{1,3})\s+(?:PCS|ITEMS)\b)|(?:^(\d{1,4})(?=\s+[A-Z]))/gi,
         };
         this.categories = {
             mainMembers: ['universalBeams', 'universalColumns', 'pfcChannels'],
@@ -43,11 +45,13 @@ export class PdfProcessor {
             for (const line of page.lines) {
                 const foundItems = this._extractSteelFromLine(line.text);
                 foundItems.forEach(item => {
-                    const uniqueKey = `${item.designation}-${item.category}`;
+                    const uniqueKey = `${item.designation}-${item.quantity}`;
                     if (!uniqueEntries.has(uniqueKey)) {
                         uniqueEntries.add(uniqueKey);
                         if (steelData[item.category]) {
                             steelData[item.category].push(item);
+                        } else {
+                            steelData.miscellaneous.push(item);
                         }
                     }
                 });
@@ -66,9 +70,14 @@ export class PdfProcessor {
             for (const patternName of this.categories[categoryName]) {
                 const regex = this.patterns[patternName];
                 if (regex) {
+                    // Reset regex index for global searches
+                    regex.lastIndex = 0;
                     const matches = [...lineText.matchAll(regex)];
                     for (const match of matches) {
                         const designation = match[0].trim();
+                        // Avoid matching quantities as designations
+                        if (/^\d+$/.test(designation)) continue;
+
                         foundItems.push({
                             designation: this._normalizeDesignation(designation),
                             quantity: quantity,
@@ -100,6 +109,7 @@ export class PdfProcessor {
             let currentLine = null;
             
             for (const item of items) {
+                if (item.str.trim().length === 0) continue;
                 if (!currentLine || Math.abs(item.transform[5] - currentLine.y) > 5) {
                     if (currentLine) lines.push({ text: currentLine.text.trim() });
                     currentLine = { y: item.transform[5], text: item.str };
@@ -116,9 +126,9 @@ export class PdfProcessor {
 
     _extractQuantity(text) {
         this.patterns.quantities.lastIndex = 0;
-        const match = this.patterns.quantities.exec(text);
+        const match = this.patterns.quantities.exec(text.trim());
         if (!match) return null;
-        const qty = parseInt(match[1] || match[2] || match[3]);
+        const qty = parseInt(match[1] || match[2] || match[3] || match[4]);
         return isNaN(qty) ? null : qty;
     }
 

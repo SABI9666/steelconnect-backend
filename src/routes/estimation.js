@@ -5,14 +5,14 @@ import mongoose from 'mongoose';
 // --- Firebase and Service Imports ---
 import { adminStorage } from '../config/firebase.js'; // Assuming firebase config is in src/config
 import { PdfProcessor } from '../services/pdfprocessor.js';
-import { EnhancedAIAnalyzer } from '../services/aiAnalyzer.js';
+// CORRECTED NAME to match the class exported from aiAnalyzer.js
+import { AustralianSteelAnalyzer } from '../services/aiAnalyzer.js';
 import { EstimationEngine } from '../services/cost-estimation-engine.js';
 import Estimation from '../models/estimation.js';
 
 const router = express.Router();
 
 // --- Multer Configuration for In-Memory File Uploads ---
-// Switched to memoryStorage to handle the file as a buffer instead of saving it to disk.
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 15 * 1024 * 1024 }, // 15MB limit
@@ -105,7 +105,8 @@ router.post('/generate-from-upload', upload.single('drawing'), async (req, res, 
 
         // --- Step 3: AI Analysis ---
         console.log('[3/6] Starting AI analysis...');
-        const aiAnalyzer = new EnhancedAIAnalyzer(apiKey);
+        // CORRECTED NAME to use the imported class
+        const aiAnalyzer = new AustralianSteelAnalyzer(apiKey);
         const mockStructuredDataForAI = {
              steel_schedules: (structuredData.structuralMembers || []).map(member => ({
                 designation: member.designation || 'Unknown', quantity: member.quantity || 1,
@@ -148,22 +149,17 @@ router.post('/generate-from-upload', upload.single('drawing'), async (req, res, 
         console.error('❌ An error occurred during the estimation process:', error);
         next(error);
     }
-    // The 'finally' block for cleanup is no longer needed as no local file is created.
 });
 
 // Other routes like GET /:id/report remain unchanged...
 router.get('/:id/report', async (req, res, next) => {
-    // This route does not need changes unless reports are also stored in Firebase.
-    // For now, it fetches data from MongoDB, which is correct.
     try {
         const estimation = await Estimation.findById(req.params.id);
         if (!estimation) return res.status(404).json({ success: false, error: 'Estimation not found.' });
-        // Assuming ReportGenerator works with data from DB
         res.json({ success: true, message: "Report generation logic goes here." });
     } catch (error) {
         next(error);
     }
 });
-
 
 export default router;

@@ -1,7 +1,6 @@
 // src/controllers/adminController.js
 
-// IMPORTANT: You need to define these Mongoose models based on your database schema.
-// These are placeholder imports. Make sure the path is correct.
+// FIX: Corrected import paths to include the .js extension.
 import User from '../models/User.js';
 import Quote from '../models/Quote.js';
 import Message from '../models/Message.js';

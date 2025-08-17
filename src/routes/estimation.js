@@ -93,21 +93,31 @@ router.post('/generate-from-upload', upload.single('drawing'), async (req, res, 
         // --- Step 2: Extract PDF Content from Buffer ---
         console.log('[2/6] Extracting steel information from PDF...');
         const uint8Array = new Uint8Array(fileBuffer);
-        // FIXED: Declare 'structuredData' once and call the correct processing method
-        const structuredData = await pdfProcessor.extractSteelInformation(uint8Array);
-        console.log(`[2/6] ✅ PDF Extraction Complete. Found ${structuredData.structuralMembers?.length || 0} members.`);
+        
+        // FIXED: Call the processor once to get the categorized data object
+        const extractedData = await pdfProcessor.extractSteelInformation(uint8Array);
+        
+        // FIXED: Combine all found member arrays into a single list to get an accurate count
+        const allMembers = [
+            ...(extractedData.mainMembers || []),
+            ...(extractedData.hollowSections || []),
+            ...(extractedData.angles || []),
+            ...(extractedData.purlins || []),
+            ...(extractedData.plates || []),
+            ...(extractedData.bars || []),
+            ...(extractedData.connections || []),
+            ...(extractedData.hardware || []),
+            ...(extractedData.miscellaneous || [])
+        ];
+        
+        console.log(`[2/6] ✅ PDF Extraction Complete. Found ${allMembers.length} total members.`);
 
         // --- Step 3: AI Analysis ---
         console.log('[3/6] Starting AI analysis...');
         const aiAnalyzer = new AustralianSteelAnalyzer(apiKey);
-        const mockStructuredDataForAI = {
-             steel_schedules: (structuredData.structuralMembers || []).map(member => ({
-                designation: member.designation || 'Unknown', quantity: member.quantity || 1,
-                length: member.length || 6, weight: member.weight || 0
-            })),
-            confidence: 0.85
-        };
-        const analysisResults = await aiAnalyzer.analyzeStructuralDrawings(mockStructuredDataForAI, `PROJ_${Date.now()}`);
+
+        // FIXED: Pass the complete extractedData object to the AI analyzer, which is designed to handle it
+        const analysisResults = await aiAnalyzer.analyzeStructuralDrawings(extractedData, `PROJ_${Date.now()}`);
         console.log(`[3/6] ✅ AI Analysis Complete.`);
 
         // --- Step 4: Cost Estimation ---
@@ -122,7 +132,8 @@ router.post('/generate-from-upload', upload.single('drawing'), async (req, res, 
             originalFilename: req.file.originalname,
             fileSize: req.file.size,
             storagePath,
-            structuredData: { schedules: structuredData.structuralMembers || [] },
+            // FIXED: Save the full, categorized data object from the PDF processor
+            structuredData: extractedData,
             analysisResults, estimationData,
             status: 'Draft', user: userId
         });

@@ -255,74 +255,6 @@ export class ComprehensiveSteelEstimationEngine {
             specification: "AS/NZS 4680 Galvanizing"
         }));
         
-        // Erection - FIXED: Should reference main_members, not hollow_sections
-        const erectRate = this.baseRates.erection.main_members.elevated.rate;
-        items.push(new ComprehensiveEstimationItem({
-            code: "MM-ERECT", 
-            description: "Main Members Erection", 
-            quantity: totalTonnes, 
-            unit: "tonne", 
-            unitRate: erectRate, 
-            totalCost: totalTonnes * erectRate, 
-            category: "Main Members", 
-            subcategory: "Installation"
-        }));
-        
-        console.log(`   ✅ Main Members: ${totalTonnes.toFixed(2)}T, ${items.length} line items`);
-        return items;
-    }
-
-    _estimateHollowSections(data, location) {
-        if (!data || !data.summary?.total_weight_tonnes || data.summary.total_weight_tonnes <= 0) return [];
-        
-        console.log('🔧 Estimating Hollow Sections...');
-        const items = [];
-        const totalTonnes = data.summary.total_weight_tonnes;
-        const totalKilos = totalTonnes * 1000;
-        const memberCount = data.summary.member_count || 0;
-        const locationFactor = this.locationFactors[location] || 1.0;
-        
-        // Supply
-        const supplyRate = this.baseRates.material_supply.hollow_sections.shs.rate;
-        items.push(new ComprehensiveEstimationItem({
-            code: "HS-SUP", 
-            description: `Hollow Sections Supply (${memberCount} sections)`, 
-            quantity: totalKilos, 
-            unit: "kg", 
-            unitRate: supplyRate * locationFactor, 
-            totalCost: totalKilos * supplyRate * locationFactor, 
-            category: "Hollow Sections", 
-            subcategory: "Material Supply",
-            specification: "AS/NZS 1163 Grade C450"
-        }));
-        
-        // Fabrication
-        const fabRate = this.baseRates.fabrication.hollow_sections.simple.rate;
-        items.push(new ComprehensiveEstimationItem({
-            code: "HS-FAB", 
-            description: "Hollow Sections Fabrication", 
-            quantity: totalTonnes, 
-            unit: "tonne", 
-            unitRate: fabRate, 
-            totalCost: totalTonnes * fabRate, 
-            category: "Hollow Sections", 
-            subcategory: "Fabrication"
-        }));
-        
-        // Galvanizing
-        const galvRate = this.baseRates.surface_treatment.galvanizing.rate;
-        const galvCost = totalTonnes * galvRate;
-        items.push(new ComprehensiveEstimationItem({
-            code: "HS-GALV", 
-            description: "Hollow Sections Galvanizing", 
-            quantity: totalTonnes, 
-            unit: "tonne", 
-            unitRate: galvRate, 
-            totalCost: galvCost, 
-            category: "Hollow Sections", 
-            subcategory: "Surface Treatment"
-        }));
-        
         // Erection
         const erectRate = this.baseRates.erection.hollow_sections.rate;
         items.push(new ComprehensiveEstimationItem({
@@ -761,55 +693,212 @@ export class ComprehensiveSteelEstimationEngine {
             "Site storage, security, or weather protection"
         ];
     }
-
-    // Additional enhancement: Smart rate selection based on member complexity
-    _getSmartFabricationRate(memberData, category) {
-        // Example of more intelligent rate selection
-        if (!memberData || !memberData.items) return this.baseRates.fabrication[category].simple.rate;
+}main_members.elevated.rate;
+        items.push(new ComprehensiveEstimationItem({
+            code: "MM-ERECT", 
+            description: "Main Members Erection", 
+            quantity: totalTonnes, 
+            unit: "tonne", 
+            unitRate: erectRate, 
+            totalCost: totalTonnes * erectRate, 
+            category: "Main Members", 
+            subcategory: "Installation"
+        }));
         
-        const complexItems = memberData.items.filter(item => {
-            // Define complexity criteria
-            return item.section?.includes('UC') || 
-                   item.section?.includes('WB') || 
-                   (item.connections && item.connections > 4) ||
-                   (item.length && item.length > 12000); // >12m lengths
-        });
-        
-        const complexityRatio = complexItems.length / memberData.items.length;
-        
-        if (complexityRatio > 0.3) {
-            return this.baseRates.fabrication[category].complex?.rate || 
-                   this.baseRates.fabrication[category].simple.rate * 1.4;
-        }
-        
-        return this.baseRates.fabrication[category].simple.rate;
+        console.log(`   ✅ Main Members: ${totalTonnes.toFixed(2)}T, ${items.length} line items`);
+        return items;
     }
 
-    // Add input validation method
-    validateEstimationInput(analysisResult) {
-        const errors = [];
+    _estimateHollowSections(data, location) {
+        if (!data || !data.summary?.total_weight_tonnes || data.summary.total_weight_tonnes <= 0) return [];
         
-        if (!analysisResult) {
-            errors.push("Analysis result is required");
-            return errors;
-        }
+        console.log('🔧 Estimating Hollow Sections...');
+        const items = [];
+        const totalTonnes = data.summary.total_weight_tonnes;
+        const totalKilos = totalTonnes * 1000;
+        const memberCount = data.summary.member_count || 0;
+        const locationFactor = this.locationFactors[location] || 1.0;
         
-        if (!analysisResult.quantityTakeoff) {
-            errors.push("Quantity takeoff data is missing");
-        }
+        // Supply
+        const supplyRate = this.baseRates.material_supply.hollow_sections.shs.rate;
+        items.push(new ComprehensiveEstimationItem({
+            code: "HS-SUP", 
+            description: `Hollow Sections Supply (${memberCount} sections)`, 
+            quantity: totalKilos, 
+            unit: "kg", 
+            unitRate: supplyRate * locationFactor, 
+            totalCost: totalKilos * supplyRate * locationFactor, 
+            category: "Hollow Sections", 
+            subcategory: "Material Supply",
+            specification: "AS/NZS 1163 Grade C450"
+        }));
         
-        const requiredCategories = [
-            'main_members', 'hollow_sections', 'angles', 
-            'purlins', 'plates_fittings', 'connections'
-        ];
+        // Fabrication
+        const fabRate = this.baseRates.fabrication.hollow_sections.simple.rate;
+        items.push(new ComprehensiveEstimationItem({
+            code: "HS-FAB", 
+            description: "Hollow Sections Fabrication", 
+            quantity: totalTonnes, 
+            unit: "tonne", 
+            unitRate: fabRate, 
+            totalCost: totalTonnes * fabRate, 
+            category: "Hollow Sections", 
+            subcategory: "Fabrication"
+        }));
         
-        requiredCategories.forEach(category => {
-            const data = analysisResult.quantityTakeoff?.[category];
-            if (data && data.summary?.total_weight_tonnes > 0) {
-                // At least one category has data - validation passes
-            }
-        });
+        // Galvanizing
+        const galvRate = this.baseRates.surface_treatment.galvanizing.rate;
+        const galvCost = totalTonnes * galvRate;
+        items.push(new ComprehensiveEstimationItem({
+            code: "HS-GALV", 
+            description: "Hollow Sections Galvanizing", 
+            quantity: totalTonnes, 
+            unit: "tonne", 
+            unitRate: galvRate, 
+            totalCost: galvCost, 
+            category: "Hollow Sections", 
+            subcategory: "Surface Treatment"
+        }));
         
+        // Erection
+        const erectRate = this.baseRates.erection.
+            // Fix for the _estimateMainMembers method (erection section)
+_estimateMainMembers(data, location) {
+    // ... existing code until erection section ...
+    
+    // Erection - FIXED: Should reference main_members, not hollow_sections
+    const erectRate = this.baseRates.erection.main_members.elevated.rate;
+    items.push(new ComprehensiveEstimationItem({
+        code: "MM-ERECT", 
+        description: "Main Members Erection", 
+        quantity: totalTonnes, 
+        unit: "tonne", 
+        unitRate: erectRate, 
+        totalCost: totalTonnes * erectRate, 
+        category: "Main Members",  // FIXED: Was "Hollow Sections"
+        subcategory: "Installation"
+    }));
+    
+    console.log(`   ✅ Main Members: ${totalTonnes.toFixed(2)}T, ${items.length} line items`);
+    return items;
+}
+
+// Complete the _estimateHollowSections method
+_estimateHollowSections(data, location) {
+    if (!data || !data.summary?.total_weight_tonnes || data.summary.total_weight_tonnes <= 0) return [];
+    
+    console.log('🔧 Estimating Hollow Sections...');
+    const items = [];
+    const totalTonnes = data.summary.total_weight_tonnes;
+    const totalKilos = totalTonnes * 1000;
+    const memberCount = data.summary.member_count || 0;
+    const locationFactor = this.locationFactors[location] || 1.0;
+    
+    // Supply
+    const supplyRate = this.baseRates.material_supply.hollow_sections.shs.rate;
+    items.push(new ComprehensiveEstimationItem({
+        code: "HS-SUP", 
+        description: `Hollow Sections Supply (${memberCount} sections)`, 
+        quantity: totalKilos, 
+        unit: "kg", 
+        unitRate: supplyRate * locationFactor, 
+        totalCost: totalKilos * supplyRate * locationFactor, 
+        category: "Hollow Sections", 
+        subcategory: "Material Supply",
+        specification: "AS/NZS 1163 Grade C450"
+    }));
+    
+    // Fabrication
+    const fabRate = this.baseRates.fabrication.hollow_sections.simple.rate;
+    items.push(new ComprehensiveEstimationItem({
+        code: "HS-FAB", 
+        description: "Hollow Sections Fabrication", 
+        quantity: totalTonnes, 
+        unit: "tonne", 
+        unitRate: fabRate, 
+        totalCost: totalTonnes * fabRate, 
+        category: "Hollow Sections", 
+        subcategory: "Fabrication"
+    }));
+    
+    // Galvanizing
+    const galvRate = this.baseRates.surface_treatment.galvanizing.rate;
+    const galvCost = totalTonnes * galvRate;
+    items.push(new ComprehensiveEstimationItem({
+        code: "HS-GALV", 
+        description: "Hollow Sections Galvanizing", 
+        quantity: totalTonnes, 
+        unit: "tonne", 
+        unitRate: galvRate, 
+        totalCost: galvCost, 
+        category: "Hollow Sections", 
+        subcategory: "Surface Treatment"
+    }));
+    
+    // Erection
+    const erectRate = this.baseRates.erection.hollow_sections.rate;
+    items.push(new ComprehensiveEstimationItem({
+        code: "HS-ERECT", 
+        description: "Hollow Sections Erection", 
+        quantity: totalTonnes, 
+        unit: "tonne", 
+        unitRate: erectRate, 
+        totalCost: totalTonnes * erectRate, 
+        category: "Hollow Sections", 
+        subcategory: "Installation"
+    }));
+    
+    console.log(`   ✅ Hollow Sections: ${totalTonnes.toFixed(2)}T, ${items.length} line items`);
+    return items;
+}
+
+// Additional enhancement: Smart rate selection based on member complexity
+_getSmartFabricationRate(memberData, category) {
+    // Example of more intelligent rate selection
+    if (!memberData || !memberData.items) return this.baseRates.fabrication[category].simple.rate;
+    
+    const complexItems = memberData.items.filter(item => {
+        // Define complexity criteria
+        return item.section?.includes('UC') || 
+               item.section?.includes('WB') || 
+               (item.connections && item.connections > 4) ||
+               (item.length && item.length > 12000); // >12m lengths
+    });
+    
+    const complexityRatio = complexItems.length / memberData.items.length;
+    
+    if (complexityRatio > 0.3) {
+        return this.baseRates.fabrication[category].complex?.rate || 
+               this.baseRates.fabrication[category].simple.rate * 1.4;
+    }
+    
+    return this.baseRates.fabrication[category].simple.rate;
+}
+
+// Add input validation method
+validateEstimationInput(analysisResult) {
+    const errors = [];
+    
+    if (!analysisResult) {
+        errors.push("Analysis result is required");
         return errors;
     }
+    
+    if (!analysisResult.quantityTakeoff) {
+        errors.push("Quantity takeoff data is missing");
+    }
+    
+    const requiredCategories = [
+        'main_members', 'hollow_sections', 'angles', 
+        'purlins', 'plates_fittings', 'connections'
+    ];
+    
+    requiredCategories.forEach(category => {
+        const data = analysisResult.quantityTakeoff?.[category];
+        if (data && data.summary?.total_weight_tonnes > 0) {
+            // At least one category has data - validation passes
+        }
+    });
+    
+    return errors;
 }

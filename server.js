@@ -26,17 +26,12 @@ const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',');
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) {
       return callback(null, true);
     }
-
-    // Check if the origin is in the whitelisted array OR if it's a Vercel URL.
-    // Vercel preview URLs are dynamic, so checking the suffix is a robust strategy.
     if (allowedOrigins.indexOf(origin) !== -1 || origin.endsWith('.vercel.app')) {
       callback(null, true);
     } else {
-      // Log the blocked origin for easier debugging
       console.error(`CORS Error: The origin "${origin}" was not allowed.`);
       callback(new Error('Not allowed by CORS'));
     }
@@ -58,7 +53,9 @@ const loadRoutes = async () => {
         { path: '/api/jobs', file: './src/routes/jobs.js', name: 'Jobs' },
         { path: '/api/quotes', file: './src/routes/quotes.js', name: 'Quotes' },
         { path: '/api/messages', file: './src/routes/messages.js', name: 'Messages' },
-        { path: '/api/estimation', file: './src/routes/estimation.js', name: 'Estimation' }
+        { path: '/api/estimation', file: './src/routes/estimation.js', name: 'Estimation' },
+        // --- ADD THIS LINE ---
+        { path: '/api/admin', file: './src/routes/admin.js', name: 'Admin' }
     ];
 
     for (const route of routesToLoad) {

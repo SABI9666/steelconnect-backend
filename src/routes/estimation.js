@@ -95,7 +95,7 @@ router.post('/generate-from-upload', upload.single('drawing'), async (req, res, 
         // --- Step 2: Extract PDF Content from Buffer ---
         console.log('[2/6] Extracting text from PDF...');
         const uint8Array = new Uint8Array(fileBuffer);
-        const extractedContent = await pdfProcessor.extractTextFromPdf(uint8Array);
+        const structuredData = await pdfProcessor.extractSteelInformation(uint8Array);
         if (!extractedContent.success) {
             throw new Error('PDF text extraction failed.');
         }

@@ -1,133 +1,89 @@
 // server.js
-
-// Load environment variables from .env file
-import dotenv from 'dotenv';
-dotenv.config();
-
-// Import the Firebase configuration to run the initialization
-import './src/config/firebase.js';
-
-// Import necessary modules
 import express from 'express';
-import compression from 'compression';
-import helmet from 'helmet';
 import cors from 'cors';
+import helmet from 'helmet';
+import compression from 'compression';
+import dotenv from 'dotenv';
+import mongoose from 'mongoose';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { pathToFileURL } from 'url';
 
-// Import route modules
-import jobsRoutes from './src/routes/jobs.js';
-import quotesRoutes from './src/routes/quotes.js';
-import messagesRoutes from './src/routes/messages.js';
-import estimationRoutes from './src/routes/estimation.js';
-import adminRoutes from './src/routes/admin.js';
-import authRoutes from './src/routes/auth.js';
-
-// Create Express application
+dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 10000;
+const __filename = fileURLToPath(import.meta.url);
+const projectRoot = path.dirname(__filename);
 
-// --- Middleware Configuration ---
+// --- Database Connection ---
+mongoose.connect(process.env.MONGODB_URI)
+  .then(() => console.log('✅ MongoDB connected'))
+  .catch(err => console.error('❌ MongoDB connection error:', err));
 
-// Security middleware
-app.use(helmet());
+// --- Middleware ---
+// Split the allowed origins from the environment variable.
+const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',');
 
-// List of allowed origins for CORS
-const allowedOrigins = [
-  // Admin Frontend Domains
-  'https://admin-pink-nine.vercel.app',
-  'https://admin-git-main-sabins-projects-02d8db3a.vercel.app',
-  'https://admin-q4y7l6gxz-sabins-projects-02d8db3a.vercel.app',
-  
-  // User Frontend Domains
-  'https://steelconnect-frontend.vercel.app',
-  'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
-  'https://steelconnect-frontend-jlnaa22o7-sabins-projects-02d8db3a.vercel.app',
-
-  // Local development origins
-  'http://localhost:3000',
-  'http://localhost:3001',
-];
-
-// Configure CORS to allow only specific origins
-app.use(cors({
-  origin: function (origin, callback) {
+const corsOptions = {
+  origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-      return callback(new Error(msg), false);
+    if (!origin) {
+      return callback(null, true);
     }
-    return callback(null, true);
+
+    // Check if the origin is in the whitelisted array OR if it's a Vercel URL.
+    // Vercel preview URLs are dynamic, so checking the suffix is a robust strategy.
+    if (allowedOrigins.indexOf(origin) !== -1 || origin.endsWith('.vercel.app')) {
+      callback(null, true);
+    } else {
+      // Log the blocked origin for easier debugging
+      console.error(`CORS Error: The origin "${origin}" was not allowed.`);
+      callback(new Error('Not allowed by CORS'));
+    }
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+  credentials: true,
+};
 
-// Check and log CORS origin for incoming requests (for debugging)
-app.use((req, res, next) => {
-  const origin = req.headers.origin || 'undefined';
-  console.log(`🌐 CORS check for origin: "${origin}"`);
-  if (allowedOrigins.includes(origin) || origin === 'undefined') {
-    console.log('✅ Allowing request with no origin or allowed origin');
-  }
-  next();
-});
-
-// JSON and URL-encoded body parser
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Gzip compression for all responses
+app.use(cors(corsOptions));
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(compression());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// --- Routes Configuration ---
+// --- Dynamic Route Loading ---
+const loadRoutes = async () => {
+    console.log('🔄 Loading all application routes...');
+    const routesToLoad = [
+        { path: '/api/auth', file: './src/routes/auth.js', name: 'Auth' },
+        { path: '/api/jobs', file: './src/routes/jobs.js', name: 'Jobs' },
+        { path: '/api/quotes', file: './src/routes/quotes.js', name: 'Quotes' },
+        { path: '/api/messages', file: './src/routes/messages.js', name: 'Messages' },
+        { path: '/api/estimation', file: './src/routes/estimation.js', name: 'Estimation' },
+        // Add the new admin route here.
+        { path: '/api/admin', file: './src/routes/admin.js', name: 'Admin' } 
+    ];
 
-// Base route
-app.get('/', (req, res) => {
-  console.log(`🌐 ${new Date().toISOString()} - GET /`);
-  console.log('📥 Headers:', req.headers);
-  res.status(200).json({
-    message: 'Welcome to the SteelConnect API! 🎉',
-    status: 'Server is running',
-    version: '1.0.0'
-  });
-});
+    for (const route of routesToLoad) {
+        try {
+            const routeUrl = pathToFileURL(path.join(projectRoot, route.file)).href;
+            const { default: routeModule } = await import(routeUrl);
+            app.use(route.path, routeModule);
+            console.log(`✅ ${route.name} routes loaded.`);
+        } catch (error) {
+            console.error(`❌ Error loading ${route.name} routes from ${route.file}: ${error.message}`);
+        }
+    }
+};
 
-// Dynamically load routes
-try {
-  console.log('🔄 Loading all application routes...');
+// --- Start Server ---
+const startServer = async () => {
+    await loadRoutes();
+    app.get('/', (req, res) => res.json({ message: 'SteelConnect Backend API is running' }));
+    app.use((error, req, res, next) => {
+        console.error('❌ Global Error Handler:', error);
+        res.status(500).json({ success: false, error: error.message || 'Internal Server Error' });
+    });
+    app.listen(PORT, () => console.log(`✅ Server is live on port ${PORT}`));
+};
 
-  // Auth routes
-  app.use('/api/auth', authRoutes);
-  console.log('✅ Auth routes loaded successfully at /api/auth.');
-
-  // Other routes
-  app.use('/api/jobs', jobsRoutes);
-  console.log('✅ Jobs routes loaded successfully at /api/jobs.');
-
-  app.use('/api/quotes', quotesRoutes);
-  console.log('✅ Quotes routes loaded successfully at /api/quotes.');
-
-  app.use('/api/messages', messagesRoutes);
-  console.log('✅ Messages routes loaded successfully at /api/messages.');
-
-  app.use('/api/estimation', estimationRoutes);
-  console.log('✅ Estimation routes loaded successfully at /api/estimation.');
-
-  app.use('/api/admin', adminRoutes);
-  console.log('✅ Admin routes loaded successfully at /api/admin.');
-
-} catch (error) {
-  console.error(`❌ Fatal: Error loading application routes: ${error.message}`);
-  process.exit(1); // Exit if routes fail to load
-}
-
-// Start the server
-app.listen(PORT, () => {
-  console.log(`✅ Server is live and listening on port ${PORT}`);
-  console.log(`==> Your service is live 🎉`);
-  console.log(`==> ///////////////////////////////////////////////////////////`);
-  console.log(`==> Available at your primary URL https://steelconnect-backend.onrender.com`);
-  console.log(`==> ///////////////////////////////////////////////////////////`);
-});
-
-export default app;
+startServer();

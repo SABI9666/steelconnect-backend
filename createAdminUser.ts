@@ -1,4 +1,4 @@
-/ createAdminUser.js - Run this script once to create an admin user
+// createAdminUser.js - Run this script once to create an admin user
 import bcrypt from 'bcrypt';
 import dotenv from 'dotenv';
 
@@ -12,6 +12,9 @@ import { getFirestore } from 'firebase-admin/firestore';
 async function createAdminUser() {
   try {
     console.log('🔥 Initializing Firebase...');
+    console.log('Project ID:', process.env.FIREBASE_PROJECT_ID);
+    console.log('Client Email:', process.env.FIREBASE_CLIENT_EMAIL);
+    console.log('Private Key exists:', !!process.env.FIREBASE_PRIVATE_KEY);
     
     // Initialize Firebase Admin SDK
     const app = initializeApp({
@@ -27,7 +30,7 @@ async function createAdminUser() {
 
     const adminEmail = 'cn.sabin623@gmail.com';
     const adminPassword = 'Sabin@9666';
-    const adminName = 'System Administrator';
+    const adminName = 'admin';
 
     console.log('🔍 Checking if admin user already exists...');
 
@@ -45,6 +48,7 @@ async function createAdminUser() {
         console.log(`   Email: ${data.email}`);
         console.log(`   Type: ${data.type}`);
         console.log(`   Active: ${data.isActive}`);
+        console.log(`   Created: ${data.createdAt}`);
       });
       return;
     }
@@ -53,6 +57,7 @@ async function createAdminUser() {
     // Hash the password
     const saltRounds = 12;
     const hashedPassword = await bcrypt.hash(adminPassword, saltRounds);
+    console.log('✅ Password hashed successfully');
 
     // Create admin user object
     const adminUser = {
@@ -75,6 +80,7 @@ async function createAdminUser() {
     console.log('   Password:', adminPassword);
     console.log('   Firebase ID:', adminRef.id);
     console.log('   Type: admin');
+    console.log('   Active: true');
     console.log('⚠️  Please change the password after first login!');
 
   } catch (error) {
@@ -82,8 +88,14 @@ async function createAdminUser() {
     console.error('🔍 Error details:', {
       message: error.message,
       code: error.code,
-      stack: error.stack
     });
+    
+    if (error.code === 'auth/invalid-credential') {
+      console.error('🔥 Firebase credentials are invalid. Check your environment variables:');
+      console.error('   - FIREBASE_PROJECT_ID');
+      console.error('   - FIREBASE_CLIENT_EMAIL'); 
+      console.error('   - FIREBASE_PRIVATE_KEY');
+    }
   }
 }
 

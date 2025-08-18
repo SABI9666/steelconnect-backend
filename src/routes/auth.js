@@ -5,6 +5,188 @@ import { adminDb } from '../config/firebase.js';
 
 const router = express.Router();
 
+// --- Admin Login Route ---
+router.post('/login/admin', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    console.log('Admin login attempt for:', email);
+
+    // Validation
+    if (!email || !password) {
+      return res.status(400).json({ 
+        error: 'Email and password are required.',
+        success: false 
+      });
+    }
+
+    // Method 1: Environment Variable Admin (Recommended for simple setup)
+    const adminEmail = process.env.ADMIN_EMAIL;
+    const adminPassword = process.env.ADMIN_PASSWORD;
+
+    if (adminEmail && adminPassword) {
+      if (email.toLowerCase().trim() === adminEmail.toLowerCase() && password === adminPassword) {
+        // Generate JWT token for admin
+        const payload = {
+          userId: 'admin',
+          email: adminEmail,
+          type: 'admin',
+          name: 'Administrator',
+          role: 'admin'
+        };
+
+        const token = jwt.sign(
+          payload,
+          process.env.JWT_SECRET || 'your_default_secret_key_change_in_production',
+          { expiresIn: '24h' }
+        );
+
+        return res.status(200).json({
+          message: 'Admin login successful',
+          success: true,
+          token: token,
+          user: {
+            id: 'admin',
+            name: 'Administrator',
+            email: adminEmail,
+            type: 'admin',
+            role: 'admin',
+            loginAt: new Date().toISOString()
+          }
+        });
+      } else {
+        return res.status(401).json({ 
+          error: 'Invalid admin credentials.',
+          success: false 
+        });
+      }
+    }
+
+    // Method 2: Database Admin (if you want to store admin in Firebase)
+    // Check for admin in database with admin role
+    const adminRef = adminDb.collection('admins'); // or use 'users' with role filter
+    const adminSnapshot = await adminRef.where('email', '==', email.toLowerCase().trim()).limit(1).get();
+    
+    if (adminSnapshot.empty) {
+      // Also check users collection with admin role
+      const usersRef = adminDb.collection('users');
+      const userSnapshot = await usersRef
+        .where('email', '==', email.toLowerCase().trim())
+        .where('type', '==', 'admin')
+        .limit(1).get();
+      
+      if (userSnapshot.empty) {
+        return res.status(401).json({ 
+          error: 'Invalid admin credentials.',
+          success: false 
+        });
+      }
+
+      const adminDoc = userSnapshot.docs[0];
+      const adminData = adminDoc.data();
+
+      // Verify password
+      const isMatch = await bcrypt.compare(password, adminData.password);
+      if (!isMatch) {
+        return res.status(401).json({ 
+          error: 'Invalid admin credentials.',
+          success: false 
+        });
+      }
+
+      // Update last login
+      await adminDoc.ref.update({
+        lastLoginAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+
+      // Create JWT payload
+      const payload = {
+        userId: adminDoc.id,
+        email: adminData.email,
+        type: 'admin',
+        name: adminData.name,
+        role: 'admin'
+      };
+
+      const token = jwt.sign(
+        payload,
+        process.env.JWT_SECRET || 'your_default_secret_key_change_in_production',
+        { expiresIn: '24h' }
+      );
+
+      return res.status(200).json({
+        message: 'Admin login successful',
+        success: true,
+        token: token,
+        user: {
+          id: adminDoc.id,
+          name: adminData.name,
+          email: adminData.email,
+          type: 'admin',
+          role: 'admin',
+          lastLoginAt: new Date().toISOString()
+        }
+      });
+    } else {
+      // Admin found in admins collection
+      const adminDoc = adminSnapshot.docs[0];
+      const adminData = adminDoc.data();
+
+      // Verify password
+      const isMatch = await bcrypt.compare(password, adminData.password);
+      if (!isMatch) {
+        return res.status(401).json({ 
+          error: 'Invalid admin credentials.',
+          success: false 
+        });
+      }
+
+      // Update last login
+      await adminDoc.ref.update({
+        lastLoginAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+
+      // Create JWT payload
+      const payload = {
+        userId: adminDoc.id,
+        email: adminData.email,
+        type: 'admin',
+        name: adminData.name || 'Administrator',
+        role: 'admin'
+      };
+
+      const token = jwt.sign(
+        payload,
+        process.env.JWT_SECRET || 'your_default_secret_key_change_in_production',
+        { expiresIn: '24h' }
+      );
+
+      return res.status(200).json({
+        message: 'Admin login successful',
+        success: true,
+        token: token,
+        user: {
+          id: adminDoc.id,
+          name: adminData.name || 'Administrator',
+          email: adminData.email,
+          type: 'admin',
+          role: 'admin',
+          lastLoginAt: new Date().toISOString()
+        }
+      });
+    }
+
+  } catch (error) {
+    console.error('ADMIN LOGIN ERROR:', error);
+    res.status(500).json({ 
+      error: 'An error occurred during admin login. Please try again.',
+      success: false 
+    });
+  }
+});
+
 // --- User Registration ---
 router.post('/register', async (req, res) => {
   try {
@@ -18,9 +200,9 @@ router.post('/register', async (req, res) => {
       });
     }
 
-    if (type !== 'contractor' && type !== 'designer' && type !== 'admin') {
+    if (type !== 'contractor' && type !== 'designer') {
       return res.status(400).json({ 
-        error: 'User type must be either "contractor", "designer", or "admin".',
+        error: 'User type must be either "contractor" or "designer".',
         success: false 
       });
     }
@@ -106,8 +288,6 @@ router.post('/register', async (req, res) => {
 });
 
 // --- User Login ---
-// This route can be used for any user type, including 'admin'.
-// The user's type is fetched from the database and included in the JWT payload.
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -158,7 +338,6 @@ router.post('/login', async (req, res) => {
     });
     
     // Create JWT payload (flat structure for middleware compatibility)
-    // The user's 'type' (e.g., 'contractor', 'designer', 'admin') is included here.
     const payload = {
       userId: userDoc.id,
       email: userData.email,
@@ -197,7 +376,6 @@ router.post('/login', async (req, res) => {
 });
 
 // --- Get Current User Profile ---
-// This route can be used by any authenticated user.
 router.get('/profile', async (req, res) => {
   try {
     // This assumes you have authentication middleware that adds user info to req
@@ -213,6 +391,20 @@ router.get('/profile', async (req, res) => {
     
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_default_secret_key_change_in_production');
+      
+      // Handle admin profile
+      if (decoded.userId === 'admin' || decoded.type === 'admin') {
+        return res.status(200).json({
+          success: true,
+          user: {
+            id: decoded.userId,
+            name: decoded.name,
+            email: decoded.email,
+            type: 'admin',
+            role: 'admin'
+          }
+        });
+      }
       
       // Get fresh user data from database
       const userDoc = await adminDb.collection('users').doc(decoded.userId).get();
@@ -252,7 +444,6 @@ router.get('/profile', async (req, res) => {
 });
 
 // --- Update User Profile ---
-// This route can be used by any authenticated user.
 router.put('/profile', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -267,6 +458,15 @@ router.put('/profile', async (req, res) => {
     
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_default_secret_key_change_in_production');
+      
+      // Prevent admin profile updates via this route
+      if (decoded.userId === 'admin' || decoded.type === 'admin') {
+        return res.status(403).json({ 
+          error: 'Admin profile updates not allowed via this route.',
+          success: false 
+        });
+      }
+      
       const { name, email } = req.body;
 
       if (!name && !email) {
@@ -343,7 +543,6 @@ router.put('/profile', async (req, res) => {
 });
 
 // --- Change Password ---
-// This route can be used by any authenticated user.
 router.put('/change-password', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -358,6 +557,15 @@ router.put('/change-password', async (req, res) => {
     
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_default_secret_key_change_in_production');
+      
+      // Handle admin password change differently if needed
+      if (decoded.userId === 'admin' || decoded.type === 'admin') {
+        return res.status(403).json({ 
+          error: 'Admin password changes not allowed via this route.',
+          success: false 
+        });
+      }
+      
       const { currentPassword, newPassword } = req.body;
 
       if (!currentPassword || !newPassword) {

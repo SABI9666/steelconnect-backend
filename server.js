@@ -8,6 +8,7 @@ import mongoose from 'mongoose';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { pathToFileURL } from 'url';
+import jwt from 'jsonwebtoken';  // Add this import
 
 dotenv.config();
 
@@ -109,6 +110,78 @@ app.use((req, res, next) => {
   const timestamp = new Date().toISOString();
   console.log(`[${timestamp}] ${req.method} ${req.path} - Origin: ${req.get('Origin') || 'No Origin'}`);
   next();
+});
+
+// --- EMERGENCY ADMIN LOGIN ROUTE (Temporary Fix) ---
+app.post('/api/auth/login/admin', (req, res) => {
+  console.log('🚨 EMERGENCY Admin login route hit!');
+  console.log('Request body:', { email: req.body.email, hasPassword: !!req.body.password });
+  console.log('Environment vars:', { 
+    hasAdminEmail: !!process.env.ADMIN_EMAIL, 
+    hasAdminPassword: !!process.env.ADMIN_PASSWORD,
+    adminEmail: process.env.ADMIN_EMAIL 
+  });
+
+  const { email, password } = req.body;
+  
+  if (!email || !password) {
+    return res.status(400).json({ 
+      success: false, 
+      error: 'Email and password are required' 
+    });
+  }
+
+  // Check against environment variables
+  const adminEmail = process.env.ADMIN_EMAIL;
+  const adminPassword = process.env.ADMIN_PASSWORD;
+
+  if (email.toLowerCase() === adminEmail?.toLowerCase() && password === adminPassword) {
+    const token = jwt.sign(
+      { 
+        userId: 'admin', 
+        email: adminEmail, 
+        type: 'admin', 
+        name: 'Administrator',
+        role: 'admin'
+      },
+      process.env.JWT_SECRET || 'temporary-secret-key',
+      { expiresIn: '24h' }
+    );
+    
+    console.log('✅ Emergency admin login successful');
+    return res.json({
+      success: true,
+      message: 'Admin login successful',
+      token,
+      user: { 
+        id: 'admin', 
+        email: adminEmail, 
+        type: 'admin', 
+        name: 'Administrator',
+        role: 'admin',
+        loginAt: new Date().toISOString()
+      }
+    });
+  }
+  
+  console.log('❌ Emergency admin login failed');
+  res.status(401).json({ 
+    success: false, 
+    error: 'Invalid admin credentials' 
+  });
+});
+
+// Test route to check if emergency route works
+app.get('/api/auth/emergency-test', (req, res) => {
+  res.json({ 
+    message: 'Emergency route is working!', 
+    timestamp: new Date().toISOString(),
+    env: {
+      hasAdminEmail: !!process.env.ADMIN_EMAIL,
+      hasAdminPassword: !!process.env.ADMIN_PASSWORD,
+      adminEmail: process.env.ADMIN_EMAIL
+    }
+  });
 });
 
 // --- Dynamic Route Loading ---
@@ -228,10 +301,15 @@ const startServer = async () => {
       console.log('   GET  /          - API status');
       console.log('   GET  /health    - Health check');
       console.log('   GET  /api       - API information');
+      console.log('   POST /api/auth/login/admin - EMERGENCY Admin login');
+      console.log('   GET  /api/auth/emergency-test - Test emergency route');
       console.log('   *    /api/*     - Application routes');
       console.log('\n🌐 Allowed Origins:');
       allowedOrigins.forEach(origin => console.log(`   ${origin}`));
       console.log('   + All *.vercel.app domains');
+      console.log('\n🚨 EMERGENCY ADMIN ROUTE ACTIVE');
+      console.log(`   Email: ${process.env.ADMIN_EMAIL || 'NOT SET'}`);
+      console.log(`   Password: ${process.env.ADMIN_PASSWORD ? 'SET' : 'NOT SET'}`);
       console.log('\n' + '='.repeat(60) + '\n');
     });
   } catch (error) {

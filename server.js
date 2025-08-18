@@ -11,9 +11,8 @@ import authRoutes from './src/routes/auth.js';
 import jobsRoutes from './src/routes/jobs.js';
 import quotesRoutes from './src/routes/quotes.js';
 import messagesRoutes from './src/routes/messages.js';
-// --- FIX START: Import Admin Routes ---
+// --- FIX: Import Admin Routes ---
 import adminRoutes from './src/routes/admin.js';
-// --- FIX END ---
 
 // Import estimation routes (now fixed)
 let estimationRoutes;
@@ -50,8 +49,8 @@ const corsOptions = {
     origin: (origin, callback) => {
         if (!origin) return callback(null, true);
 
-        if (allowedOrigins.includes(origin) || 
-            origin.endsWith('.vercel.app') || 
+        if (allowedOrigins.includes(origin) ||
+            origin.endsWith('.vercel.app') ||
             origin.includes('localhost') ||
             origin.includes('127.0.0.1')) {
             callback(null, true);
@@ -68,7 +67,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.use(helmet({ 
+app.use(helmet({
     contentSecurityPolicy: false,
     crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
@@ -97,7 +96,7 @@ app.get('/health', (req, res) => {
 
 // --- Root route ---
 app.get('/', (req, res) => {
-    res.json({ 
+    res.json({
         message: 'SteelConnect Backend API is running',
         version: '1.0.0',
         status: 'healthy',
@@ -108,9 +107,8 @@ app.get('/', (req, res) => {
             quotes: '/api/quotes',
             messages: '/api/messages',
             estimation: '/api/estimation',
-            // --- FIX START: Added admin endpoint to list ---
+            // --- FIX: Added admin endpoint to list ---
             admin: '/api/admin'
-            // --- FIX END ---
         }
     });
 });
@@ -126,16 +124,15 @@ if (authRoutes) {
     console.error('❌ Auth routes failed to load');
 }
 
-// --- FIX START: Register Admin Routes ---
+// --- FIX: Register Admin Routes ---
 if (adminRoutes) {
     app.use('/api/admin', adminRoutes);
     console.log('✅ Admin routes registered');
 } else {
     console.error('❌ Admin routes failed to load');
 }
-// --- FIX END ---
 
-// Jobs routes  
+// Jobs routes
 if (jobsRoutes) {
     app.use('/api/jobs', jobsRoutes);
     console.log('✅ Jobs routes registered');
@@ -181,7 +178,7 @@ app.get('/api', (req, res) => {
             'POST /api/auth/register',
             'POST /api/auth/login',
             'GET /api/jobs/*',
-            'GET /api/quotes/*', 
+            'GET /api/quotes/*',
             'GET /api/messages/*',
             'GET /api/estimation/*',
             'GET /api/admin/*'
@@ -192,23 +189,23 @@ app.get('/api', (req, res) => {
 // --- Error handling middleware ---
 app.use((error, req, res, next) => {
     console.error('❌ Global Error Handler:', error);
-    
+
     if (error.code === 'LIMIT_FILE_SIZE') {
-        return res.status(413).json({ 
-            success: false, 
-            error: 'File too large. Maximum size is 50MB.' 
+        return res.status(413).json({
+            success: false,
+            error: 'File too large. Maximum size is 50MB.'
         });
     }
-    
+
     if (error.message === 'Not allowed by CORS') {
         return res.status(403).json({
             success: false,
             error: 'CORS policy violation'
         });
     }
-    
-    res.status(error.status || 500).json({ 
-        success: false, 
+
+    res.status(error.status || 500).json({
+        success: false,
         error: error.message || 'Internal Server Error',
         timestamp: new Date().toISOString()
     });
@@ -256,13 +253,13 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`📍 Server running on port ${PORT}`);
     console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`⏰ Started at: ${new Date().toISOString()}`);
-    
+
     console.log('\n📋 Environment Check:');
     console.log(`   MongoDB: ${process.env.MONGODB_URI ? '✅ Configured' : '❌ Missing'}`);
     console.log(`   Anthropic API: ${process.env.ANTHROPIC_API_KEY ? '✅ Configured' : '❌ Missing'}`);
     console.log(`   Firebase: ${process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 ? '✅ Configured' : '❌ Missing'}`);
     console.log(`   CORS Origins: ${process.env.CORS_ORIGIN ? '✅ Configured' : '⚠️ Using defaults'}`);
-    
+
     console.log('\n🔗 Available endpoints:');
     console.log(`   Health: http://localhost:${PORT}/health`);
     console.log(`   API: http://localhost:${PORT}/api`);

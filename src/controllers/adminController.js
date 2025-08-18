@@ -2,23 +2,40 @@ import admin from 'firebase-admin';
 
 const db = admin.firestore();
 
-// --- DASHBOARD & SYSTEM STATS ---
-
-// 📊 GET DASHBOARD STATS (HARDCODED TEST VERSION)
+// 📊 GET DASHBOARD STATS (FINAL, SEQUENTIAL VERSION)
 export const getDashboardStats = async (req, res) => {
-    console.log('📊 Serving hardcoded dashboard stats for testing.');
-    // This function now sends back instant placeholder data without querying the database.
-    // This is to test if the dashboard loads at all.
-    res.json({
-        success: true,
-        stats: {
-            totalUsers: 99,
-            totalQuotes: 99,
-            totalMessages: 99,
-            totalJobs: 99,
-            activeSubscriptions: 99
-        }
-    });
+    try {
+        const getCollectionCount = async (collectionName) => {
+            try {
+                const snapshot = await db.collection(collectionName).get();
+                return snapshot.size || 0;
+            } catch (error) {
+                console.warn(`⚠️ Could not get count for collection: ${collectionName}`);
+                return 0; // Return 0 if collection doesn't exist or fails
+            }
+        };
+
+        // --- FIX: Fetched counts one-by-one to prevent timeouts ---
+        const userCount = await getCollectionCount('users');
+        const quoteCount = await getCollectionCount('quotes');
+        const messageCount = await getCollectionCount('messages');
+        const jobsCount = await getCollectionCount('jobs');
+        const subsCount = await getCollectionCount('subscriptions');
+
+        res.json({
+            success: true,
+            stats: {
+                totalUsers: userCount,
+                totalQuotes: quoteCount,
+                totalMessages: messageCount,
+                totalJobs: jobsCount,
+                activeSubscriptions: subsCount
+            }
+        });
+    } catch (error) {
+        console.error('❌ Error fetching dashboard stats:', error);
+        res.status(500).json({ success: false, message: 'Error fetching dashboard statistics' });
+    }
 };
 
 // 📈 GET SYSTEM STATS
@@ -39,9 +56,6 @@ export const getSystemStats = async (req, res) => {
         res.status(500).json({ success: false, message: 'Error fetching system statistics' });
     }
 };
-
-
-// --- USERS ---
 
 // 👥 GET ALL USERS
 export const getAllUsers = async (req, res) => {
@@ -82,9 +96,6 @@ export const deleteUser = async (req, res) => {
         res.status(500).json({ success: false, message: 'Error deleting user' });
     }
 };
-
-
-// --- QUOTES, JOBS, MESSAGES, SUBSCRIPTIONS ---
 
 // 🗂️ GET ALL QUOTES
 export const getAllQuotes = async (req, res) => {
@@ -133,3 +144,49 @@ export const getAllSubscriptions = async (req, res) => {
         res.status(500).json({ success: false, message: 'Error fetching subscriptions' });
     }
 };
+## 2. Final Router (src/routes/admin.js)
+This router file correctly connects your API URLs to the final controller functions above.
+
+JavaScript
+
+import express from 'express';
+import { isAdmin } from '../middleware/authMiddleware.js';
+
+// Import all the controller functions
+import {
+    getDashboardStats,
+    getAllUsers,
+    updateUserStatus,
+    deleteUser,
+    getSystemStats,
+    getAllQuotes,
+    getAllJobs,
+    getAllMessages,
+    getAllSubscriptions
+} from '../controllers/adminController.js';
+
+const router = express.Router();
+
+// Apply the 'isAdmin' security check to ALL routes in this file
+router.use(isAdmin);
+
+
+// --- DEFINE THE API ROUTES ---
+
+// Dashboard & System
+router.get('/dashboard', getDashboardStats);
+router.get('/system-stats', getSystemStats);
+
+// Users
+router.get('/users', getAllUsers);
+router.put('/users/:userId/status', updateUserStatus);
+router.delete('/users/:userId', deleteUser);
+
+// Quotes, Jobs, Messages, Subscriptions
+router.get('/quotes', getAllQuotes);
+router.get('/jobs', getAllJobs);
+router.get('/messages', getAllMessages);
+router.get('/subscriptions', getAllSubscriptions);
+
+
+export default router;

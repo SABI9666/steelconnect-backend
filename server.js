@@ -1,4 +1,4 @@
-// server.js - Updated Version
+// server.js - Estimation Feature Temporarily Disabled
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -12,7 +12,7 @@ import jobsRoutes from './src/routes/jobs.js';
 import quotesRoutes from './src/routes/quotes.js';
 import messagesRoutes from './src/routes/messages.js';
 import adminRoutes from './src/routes/admin.js';
-import estimationRoutes from './src/routes/estimation.js';
+// Estimation routes are removed for now
 
 dotenv.config();
 
@@ -24,12 +24,11 @@ mongoose.connect(process.env.MONGODB_URI)
     .then(() => console.log('✅ MongoDB connected'))
     .catch(err => console.error('❌ MongoDB connection error:', err));
 
-// --- ✅ ENHANCED CORS Middleware ---
-// Read allowed origins from the environment variable. This is the key change.
+// --- CORS Middleware ---
 const allowedOrigins = (process.env.CORS_ORIGIN || '')
     .split(',')
-    .map(origin => origin.trim()) // Trim whitespace
-    .filter(Boolean); // Remove any empty strings
+    .map(origin => origin.trim())
+    .filter(Boolean);
 
 if (allowedOrigins.length > 0) {
     console.log('✅ CORS is configured for the following origins:', allowedOrigins);
@@ -39,10 +38,7 @@ if (allowedOrigins.length > 0) {
 
 const corsOptions = {
     origin: (origin, callback) => {
-        // Allow requests with no origin (like mobile apps or curl requests)
         if (!origin) return callback(null, true);
-
-        // Allow if the origin is in our explicit list or if it's a local development request
         if (allowedOrigins.includes(origin) || origin.includes('localhost') || origin.includes('127.0.0.1')) {
             callback(null, true);
         } else {
@@ -81,9 +77,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/jobs', jobsRoutes);
 app.use('/api/quotes', quotesRoutes);
 app.use('/api/messages', messagesRoutes);
-if (estimationRoutes) {
-    app.use('/api/estimation', estimationRoutes);
-}
+// app.use('/api/estimation', estimationRoutes); // Line removed
 
 // --- Error handling middleware ---
 app.use((error, req, res, next) => {

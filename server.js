@@ -28,7 +28,8 @@ const allowedOrigins = [
   'https://admin-pink-nine.vercel.app',
   'https://admin-git-main-sabins-projects-02d8db3a.vercel.app',
   'https://admin-6j5gozq46-sabins-projects-02d8db3a.vercel.app',
-  'https://admin-ixovjylrn-sabins-projects-02d8db3a.vercel.app', // New URL added
+  'https://admin-ixovjylrn-sabins-projects-02d8db3a.vercel.app',
+  'https://admin-piqsiucmh-sabins-projects-02d8db3a.vercel.app', // New URL added
 
   // Frontend URLs
   'https://steelconnect-frontend.vercel.app',

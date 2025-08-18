@@ -1,26 +1,29 @@
 import admin from 'firebase-admin';
 
-let adminDb;
-const serviceAccountKeyBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64;
-
-if (!serviceAccountKeyBase64) {
-  console.error('🔴 FATAL ERROR: FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 environment variable is not set.');
-} else {
-  try {
-    const serviceAccountJson = Buffer.from(serviceAccountKeyBase64, 'base64').toString('utf8');
-    const serviceAccount = JSON.parse(serviceAccountJson);
-
-    if (!admin.apps.length) {
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
-        storageBucket: 'steelconnect-backend-3f684.firebasestorage.app',
-        databaseURL: 'https://steelconnect-backend-3f684.firebaseio.com'
-      });
-      console.log('✅ Firebase Admin SDK initialized successfully.');
-    }
-    adminDb = admin.firestore();
-  } catch (error) {
-    console.error('🔴 FATAL ERROR: Failed to initialize Firebase Admin SDK.', error.message);
-  }
+// Check for the required environment variable
+if (!process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64) {
+  throw new Error('FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 is not set in environment variables.');
 }
-export { adminDb };
+
+// Decode the Base64 service account key from environment variables
+const serviceAccountJson = Buffer.from(
+  process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64,
+  'base64'
+).toString('utf8');
+
+const serviceAccount = JSON.parse(serviceAccountJson);
+
+// Initialize Firebase Admin SDK if not already initialized
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+    // --- FIX: The bucket name should not include 'firebasestorage.' ---
+    storageBucket: 'steelconnect-backend-3f684.firebasestorage.app'
+  });
+}
+
+// Export the initialized services
+const adminDb = admin.firestore();
+const adminStorage = admin.storage();
+
+export { admin, adminDb, adminStorage };

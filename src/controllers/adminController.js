@@ -2,39 +2,23 @@ import admin from 'firebase-admin';
 
 const db = admin.firestore();
 
-// 📊 GET DASHBOARD STATS (SEQUENTIAL VERSION)
+// --- DASHBOARD & SYSTEM STATS ---
+
+// 📊 GET DASHBOARD STATS (HARDCODED TEST VERSION)
 export const getDashboardStats = async (req, res) => {
-    try {
-        const getCollectionCount = async (collectionName) => {
-            try {
-                const snapshot = await db.collection(collectionName).get();
-                return snapshot.size || 0;
-            } catch (error) {
-                console.warn(`⚠️ Could not get count for collection: ${collectionName}`);
-                return 0;
-            }
-        };
-
-        const userCount = await getCollectionCount('users');
-        const quoteCount = await getCollectionCount('quotes');
-        const messageCount = await getCollectionCount('messages');
-        const jobsCount = await getCollectionCount('jobs');
-        const subsCount = await getCollectionCount('subscriptions');
-
-        res.json({
-            success: true,
-            stats: {
-                totalUsers: userCount,
-                totalQuotes: quoteCount,
-                totalMessages: messageCount,
-                totalJobs: jobsCount,
-                activeSubscriptions: subsCount
-            }
-        });
-    } catch (error) {
-        console.error('❌ Error fetching dashboard stats:', error);
-        res.status(500).json({ success: false, message: 'Error fetching dashboard statistics' });
-    }
+    console.log('📊 Serving hardcoded dashboard stats for testing.');
+    // This function now sends back instant placeholder data without querying the database.
+    // This is to test if the dashboard loads at all.
+    res.json({
+        success: true,
+        stats: {
+            totalUsers: 99,
+            totalQuotes: 99,
+            totalMessages: 99,
+            totalJobs: 99,
+            activeSubscriptions: 99
+        }
+    });
 };
 
 // 📈 GET SYSTEM STATS
@@ -55,6 +39,9 @@ export const getSystemStats = async (req, res) => {
         res.status(500).json({ success: false, message: 'Error fetching system statistics' });
     }
 };
+
+
+// --- USERS ---
 
 // 👥 GET ALL USERS
 export const getAllUsers = async (req, res) => {
@@ -84,7 +71,6 @@ export const updateUserStatus = async (req, res) => {
     }
 };
 
-// --- THIS FUNCTION WAS MISSING ---
 // 🗑️ DELETE USER
 export const deleteUser = async (req, res) => {
     try {
@@ -96,7 +82,9 @@ export const deleteUser = async (req, res) => {
         res.status(500).json({ success: false, message: 'Error deleting user' });
     }
 };
-// --------------------------------
+
+
+// --- QUOTES, JOBS, MESSAGES, SUBSCRIPTIONS ---
 
 // 🗂️ GET ALL QUOTES
 export const getAllQuotes = async (req, res) => {

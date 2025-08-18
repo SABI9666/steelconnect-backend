@@ -15,7 +15,7 @@ export const getDashboardStats = async (req, res) => {
             }
         };
 
-        // --- FIX: Fetched counts one-by-one to prevent timeouts ---
+        // Fetched counts one-by-one to prevent timeouts
         const userCount = await getCollectionCount('users');
         const quoteCount = await getCollectionCount('quotes');
         const messageCount = await getCollectionCount('messages');
@@ -69,19 +69,6 @@ export const getAllUsers = async (req, res) => {
     } catch (error) {
         console.error('❌ Error fetching users:', error);
         res.status(500).json({ success: false, message: 'Error fetching users' });
-    }
-};
-
-// 🔄 UPDATE USER STATUS
-export const updateUserStatus = async (req, res) => {
-    try {
-        const { userId } = req.params;
-        const { status } = req.body;
-        await db.collection('users').doc(userId).update({ status });
-        res.json({ success: true, message: 'User status updated successfully.' });
-    } catch (error) {
-        console.error('❌ Error updating user status:', error);
-        res.status(500).json({ success: false, message: 'Error updating user status' });
     }
 };
 
@@ -144,8 +131,8 @@ export const getAllSubscriptions = async (req, res) => {
         res.status(500).json({ success: false, message: 'Error fetching subscriptions' });
     }
 };
-## 2. Final Router (src/routes/admin.js)
-This router file correctly connects your API URLs to the final controller functions above.
+## 2. Correct admin.js Router
+This file should only contain the router code.
 
 JavaScript
 
@@ -156,7 +143,6 @@ import { isAdmin } from '../middleware/authMiddleware.js';
 import {
     getDashboardStats,
     getAllUsers,
-    updateUserStatus,
     deleteUser,
     getSystemStats,
     getAllQuotes,
@@ -179,7 +165,6 @@ router.get('/system-stats', getSystemStats);
 
 // Users
 router.get('/users', getAllUsers);
-router.put('/users/:userId/status', updateUserStatus);
 router.delete('/users/:userId', deleteUser);
 
 // Quotes, Jobs, Messages, Subscriptions

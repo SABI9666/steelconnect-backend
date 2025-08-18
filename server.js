@@ -31,6 +31,7 @@ const defaultAllowedOrigins = [
     'https://admin-pink-nine.vercel.app',
     'https://admin-git-main-sabins-projects-02d8db3a.vercel.app',
     'https://admin-r7lir0pwg-sabins-projects-02d8db3a.vercel.app',
+    'https://admin-3ienhn8gu-sabins-projects-02d8db3a.vercel.app', // New URL added
     // Main Frontend URLs
     'https://steelconnect-frontend.vercel.app',
     'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',

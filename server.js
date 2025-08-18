@@ -1,4 +1,4 @@
-// server.js - Estimation Feature Temporarily Disabled
+// server.js - Updated with a more robust CORS configuration
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -12,7 +12,6 @@ import jobsRoutes from './src/routes/jobs.js';
 import quotesRoutes from './src/routes/quotes.js';
 import messagesRoutes from './src/routes/messages.js';
 import adminRoutes from './src/routes/admin.js';
-// Estimation routes are removed for now
 
 dotenv.config();
 
@@ -24,22 +23,33 @@ mongoose.connect(process.env.MONGODB_URI)
     .then(() => console.log('✅ MongoDB connected'))
     .catch(err => console.error('❌ MongoDB connection error:', err));
 
-// --- CORS Middleware ---
-const allowedOrigins = (process.env.CORS_ORIGIN || '')
+// --- ✅ ENHANCED CORS Middleware ---
+
+// A default list of allowed frontend URLs. This provides a strong fallback.
+const defaultAllowedOrigins = [
+    'https://admin-pink-nine.vercel.app',
+    'https://admin-git-main-sabins-projects-02d8db3a.vercel.app',
+    'https://admin-r7lir0pwg-sabins-projects-02d8db3a.vercel.app'
+];
+
+// Combine the default list with any origins defined in the environment variable.
+const allowedOriginsFromEnv = (process.env.CORS_ORIGIN || '')
     .split(',')
     .map(origin => origin.trim())
     .filter(Boolean);
 
+const allowedOrigins = [...new Set([...defaultAllowedOrigins, ...allowedOriginsFromEnv])];
+
 if (allowedOrigins.length > 0) {
     console.log('✅ CORS is configured for the following origins:', allowedOrigins);
 } else {
-    console.warn('⚠️ CORS_ORIGIN environment variable not set. Requests may be blocked in production.');
+    console.warn('⚠️ No CORS origins configured. Requests may be blocked in production.');
 }
 
 const corsOptions = {
     origin: (origin, callback) => {
-        if (!origin) return callback(null, true);
-        if (allowedOrigins.includes(origin) || origin.includes('localhost') || origin.includes('127.0.0.1')) {
+        // Allow requests with no origin (like mobile apps or curl) and local development
+        if (!origin || allowedOrigins.includes(origin) || origin.includes('localhost') || origin.includes('127.0.0.1')) {
             callback(null, true);
         } else {
             console.error(`❌ CORS Error: Origin "${origin}" not allowed.`);
@@ -77,7 +87,6 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/jobs', jobsRoutes);
 app.use('/api/quotes', quotesRoutes);
 app.use('/api/messages', messagesRoutes);
-// app.use('/api/estimation', estimationRoutes); // Line removed
 
 // --- Error handling middleware ---
 app.use((error, req, res, next) => {

@@ -5,7 +5,7 @@ const db = admin.firestore();
 
 // --- DASHBOARD & SYSTEM STATS ---
 
-// 📊 GET DASHBOARD STATS
+// 📊 GET DASHBOARD STATS (SEQUENTIAL VERSION)
 export const getDashboardStats = async (req, res) => {
     try {
         const getCollectionCount = async (collectionName) => {
@@ -14,17 +14,16 @@ export const getDashboardStats = async (req, res) => {
                 return snapshot.size || 0;
             } catch (error) {
                 console.warn(`⚠️ Could not get count for collection: ${collectionName}`);
-                return 0;
+                return 0; // Return 0 if collection doesn't exist or fails
             }
         };
 
-        const [userCount, quoteCount, messageCount, jobsCount, subsCount] = await Promise.all([
-            getCollectionCount('users'),
-            getCollectionCount('quotes'),
-            getCollectionCount('messages'),
-            getCollectionCount('jobs'),
-            getCollectionCount('subscriptions')
-        ]);
+        // --- FIX: Fetched counts one-by-one to prevent timeouts ---
+        const userCount = await getCollectionCount('users');
+        const quoteCount = await getCollectionCount('quotes');
+        const messageCount = await getCollectionCount('messages');
+        const jobsCount = await getCollectionCount('jobs');
+        const subsCount = await getCollectionCount('subscriptions');
 
         res.json({
             success: true,

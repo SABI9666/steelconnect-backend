@@ -13,7 +13,7 @@ if (!serviceAccountKeyBase64) {
     if (!admin.apps.length) {
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
-        storageBucket: 'steelconnect-backend-3f684.appspot.com',
+        storageBucket: 'steelconnect-backend-3f684.firebasestorage.app',
         databaseURL: 'https://steelconnect-backend-3f684.firebaseio.com'
       });
       console.log('✅ Firebase Admin SDK initialized successfully.');

@@ -5,7 +5,7 @@ import { adminDb } from '../config/firebase.js';
 
 const router = express.Router();
 
-// --- Debug Routes ---
+// --- Debug/Test Routes ---
 router.get('/test', (req, res) => {
   res.json({ 
     message: 'Auth routes are working!', 
@@ -23,34 +23,10 @@ router.get('/test', (req, res) => {
   });
 });
 
-// Test route to check if admin login route exists
-router.get('/login/admin', (req, res) => {
-  res.json({ 
-    message: 'Admin login route exists! Use POST method with email and password.',
-    method: 'POST',
-    requiredFields: ['email', 'password']
-  });
-});
-
-// List all routes in this router
-router.get('/routes', (req, res) => {
-  const routes = [];
-  router.stack.forEach((middleware) => {
-    if (middleware.route) {
-      const path = middleware.route.path;
-      const methods = Object.keys(middleware.route.methods);
-      routes.push({ path, methods });
-    }
-  });
-  res.json({ routes });
-});
-
 // --- Admin Login Route ---
 router.post('/login/admin', async (req, res) => {
   try {
     console.log('🔐 Admin login attempt received');
-    console.log('Request body:', { email: req.body.email, passwordLength: req.body.password?.length });
-    
     const { email, password } = req.body;
 
     // Validation
@@ -62,19 +38,13 @@ router.post('/login/admin', async (req, res) => {
       });
     }
 
-    console.log('Environment check:', {
-      hasAdminEmail: !!process.env.ADMIN_EMAIL,
-      hasAdminPassword: !!process.env.ADMIN_PASSWORD,
-      hasJwtSecret: !!process.env.JWT_SECRET
-    });
+    console.log('Admin login attempt for:', email);
 
-    // Method 1: Environment Variable Admin (Recommended for simple setup)
+    // Method 1: Environment Variable Admin (Primary method)
     const adminEmail = process.env.ADMIN_EMAIL;
     const adminPassword = process.env.ADMIN_PASSWORD;
 
     if (adminEmail && adminPassword) {
-      console.log('🔍 Checking environment variable admin credentials');
-      
       if (email.toLowerCase().trim() === adminEmail.toLowerCase() && password === adminPassword) {
         console.log('✅ Environment admin login successful');
         
@@ -106,20 +76,12 @@ router.post('/login/admin', async (req, res) => {
             loginAt: new Date().toISOString()
           }
         });
-      } else {
-        console.log('❌ Environment admin credentials mismatch');
-        return res.status(401).json({ 
-          error: 'Invalid admin credentials.',
-          success: false 
-        });
       }
     }
 
-    console.log('🔍 No environment admin found, checking database...');
-
     // Method 2: Database Admin Check
     try {
-      // Check for admin in users collection with admin type
+      // Check users collection for admin type users
       const usersRef = adminDb.collection('users');
       const userSnapshot = await usersRef
         .where('email', '==', email.toLowerCase().trim())
@@ -131,6 +93,14 @@ router.post('/login/admin', async (req, res) => {
         console.log('✅ Found admin in users collection');
         const adminDoc = userSnapshot.docs[0];
         const adminData = adminDoc.data();
+
+        // Check if admin is active
+        if (adminData.isActive === false) {
+          return res.status(401).json({ 
+            error: 'Admin account is deactivated.',
+            success: false 
+          });
+        }
 
         // Verify password
         const isMatch = await bcrypt.compare(password, adminData.password);
@@ -178,7 +148,7 @@ router.post('/login/admin', async (req, res) => {
         });
       }
 
-      // Check admins collection
+      // Check separate admins collection
       const adminRef = adminDb.collection('admins');
       const adminSnapshot = await adminRef.where('email', '==', email.toLowerCase().trim()).limit(1).get();
       
@@ -190,7 +160,6 @@ router.post('/login/admin', async (req, res) => {
         // Verify password
         const isMatch = await bcrypt.compare(password, adminData.password);
         if (!isMatch) {
-          console.log('❌ Admins collection password mismatch');
           return res.status(401).json({ 
             error: 'Invalid admin credentials.',
             success: false 
@@ -203,7 +172,6 @@ router.post('/login/admin', async (req, res) => {
           updatedAt: new Date().toISOString()
         });
 
-        // Create JWT payload
         const payload = {
           userId: adminDoc.id,
           email: adminData.email,
@@ -233,26 +201,22 @@ router.post('/login/admin', async (req, res) => {
         });
       }
 
-      console.log('❌ No admin found in database');
-      return res.status(401).json({ 
-        error: 'Invalid admin credentials.',
-        success: false 
-      });
-
     } catch (dbError) {
       console.error('Database error during admin login:', dbError);
-      return res.status(500).json({ 
-        error: 'Database error during admin authentication.',
-        success: false 
-      });
     }
+
+    // No admin found
+    console.log('❌ Invalid admin credentials');
+    return res.status(401).json({ 
+      error: 'Invalid admin credentials.',
+      success: false 
+    });
 
   } catch (error) {
     console.error('ADMIN LOGIN ERROR:', error);
     res.status(500).json({ 
       error: 'An error occurred during admin login. Please try again.',
-      success: false,
-      details: error.message
+      success: false
     });
   }
 });
@@ -357,7 +321,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
-// --- User Login ---
+// --- Regular User Login (Contractors & Designers) ---
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -370,9 +334,15 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // Find user by email
+    console.log('Regular user login attempt for:', email);
+
+    // Find user by email (excluding admin type)
     const usersRef = adminDb.collection('users');
-    const userSnapshot = await usersRef.where('email', '==', email.toLowerCase().trim()).limit(1).get();
+    const userSnapshot = await usersRef
+      .where('email', '==', email.toLowerCase().trim())
+      .where('type', 'in', ['contractor', 'designer']) // Only allow contractor/designer
+      .limit(1)
+      .get();
     
     if (userSnapshot.empty) {
       return res.status(401).json({ 
@@ -407,7 +377,7 @@ router.post('/login', async (req, res) => {
       updatedAt: new Date().toISOString()
     });
     
-    // Create JWT payload (flat structure for middleware compatibility)
+    // Create JWT payload
     const payload = {
       userId: userDoc.id,
       email: userData.email,
@@ -421,6 +391,8 @@ router.post('/login', async (req, res) => {
       process.env.JWT_SECRET || 'your_default_secret_key_change_in_production', 
       { expiresIn: '7d' }
     );
+
+    console.log('✅ Regular user login successful');
 
     res.status(200).json({
       message: 'Login successful',
@@ -456,18 +428,18 @@ router.get('/profile', async (req, res) => {
       });
     }
 
-    const token = authHeader.substring(7);
+    const token = authHeader.substring(7); // Remove 'Bearer ' prefix
     
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_default_secret_key_change_in_production');
       
-      // Handle admin profile
+      // Handle admin profile (environment variable admin)
       if (decoded.userId === 'admin' || decoded.type === 'admin') {
         return res.status(200).json({
           success: true,
           user: {
             id: decoded.userId,
-            name: decoded.name,
+            name: decoded.name || 'Administrator',
             email: decoded.email,
             type: 'admin',
             role: 'admin'
@@ -497,6 +469,7 @@ router.get('/profile', async (req, res) => {
       });
 
     } catch (jwtError) {
+      console.error('JWT verification error:', jwtError);
       return res.status(401).json({ 
         error: 'Invalid or expired token.',
         success: false 
@@ -512,25 +485,269 @@ router.get('/profile', async (req, res) => {
   }
 });
 
-// Other routes remain the same...
+// --- Update User Profile ---
 router.put('/profile', async (req, res) => {
-  res.json({ message: 'Profile update route - implementation same as before' });
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ 
+        error: 'Authorization token required.',
+        success: false 
+      });
+    }
+
+    const token = authHeader.substring(7);
+    
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_default_secret_key_change_in_production');
+      
+      // Prevent admin profile updates via this route
+      if (decoded.userId === 'admin' || decoded.type === 'admin') {
+        return res.status(403).json({ 
+          error: 'Admin profile updates not allowed via this route.',
+          success: false 
+        });
+      }
+      
+      const { name, email } = req.body;
+
+      if (!name && !email) {
+        return res.status(400).json({ 
+          error: 'At least one field (name or email) is required for update.',
+          success: false 
+        });
+      }
+
+      const updateData = {
+        updatedAt: new Date().toISOString()
+      };
+
+      if (name) {
+        updateData.name = name.trim();
+      }
+
+      if (email) {
+        // Validate email format
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+          return res.status(400).json({ 
+            error: 'Please provide a valid email address.',
+            success: false 
+          });
+        }
+
+        // Check if email is already taken by another user
+        const existingUser = await adminDb.collection('users')
+          .where('email', '==', email.toLowerCase())
+          .get();
+        
+        if (!existingUser.empty && existingUser.docs[0].id !== decoded.userId) {
+          return res.status(409).json({ 
+            error: 'Email is already taken by another user.',
+            success: false 
+          });
+        }
+
+        updateData.email = email.toLowerCase().trim();
+      }
+
+      // Update user document
+      await adminDb.collection('users').doc(decoded.userId).update(updateData);
+
+      // Get updated user data
+      const userDoc = await adminDb.collection('users').doc(decoded.userId).get();
+      const userData = userDoc.data();
+      const { password, ...userProfile } = userData;
+
+      res.status(200).json({
+        message: 'Profile updated successfully.',
+        success: true,
+        user: {
+          id: userDoc.id,
+          ...userProfile
+        }
+      });
+
+    } catch (jwtError) {
+      return res.status(401).json({ 
+        error: 'Invalid or expired token.',
+        success: false 
+      });
+    }
+
+  } catch (error) {
+    console.error('PROFILE UPDATE ERROR:', error);
+    res.status(500).json({ 
+      error: 'An error occurred while updating profile.',
+      success: false 
+    });
+  }
 });
 
+// --- Change Password ---
 router.put('/change-password', async (req, res) => {
-  res.json({ message: 'Change password route - implementation same as before' });
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ 
+        error: 'Authorization token required.',
+        success: false 
+      });
+    }
+
+    const token = authHeader.substring(7);
+    
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_default_secret_key_change_in_production');
+      
+      // Handle admin password change differently
+      if (decoded.userId === 'admin' || decoded.type === 'admin') {
+        return res.status(403).json({ 
+          error: 'Admin password changes not allowed via this route. Contact system administrator.',
+          success: false 
+        });
+      }
+      
+      const { currentPassword, newPassword } = req.body;
+
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ 
+          error: 'Current password and new password are required.',
+          success: false 
+        });
+      }
+
+      if (newPassword.length < 6) {
+        return res.status(400).json({ 
+          error: 'New password must be at least 6 characters long.',
+          success: false 
+        });
+      }
+
+      // Get user document
+      const userDoc = await adminDb.collection('users').doc(decoded.userId).get();
+      
+      if (!userDoc.exists) {
+        return res.status(404).json({ 
+          error: 'User not found.',
+          success: false 
+        });
+      }
+
+      const userData = userDoc.data();
+
+      // Verify current password
+      const isMatch = await bcrypt.compare(currentPassword, userData.password);
+      if (!isMatch) {
+        return res.status(401).json({ 
+          error: 'Current password is incorrect.',
+          success: false 
+        });
+      }
+
+      // Hash new password
+      const saltRounds = 12;
+      const hashedNewPassword = await bcrypt.hash(newPassword, saltRounds);
+
+      // Update password
+      await adminDb.collection('users').doc(decoded.userId).update({
+        password: hashedNewPassword,
+        updatedAt: new Date().toISOString()
+      });
+
+      res.status(200).json({
+        message: 'Password changed successfully.',
+        success: true
+      });
+
+    } catch (jwtError) {
+      return res.status(401).json({ 
+        error: 'Invalid or expired token.',
+        success: false 
+      });
+    }
+
+  } catch (error) {
+    console.error('CHANGE PASSWORD ERROR:', error);
+    res.status(500).json({ 
+      error: 'An error occurred while changing password.',
+      success: false 
+    });
+  }
 });
 
+// --- Logout ---
 router.post('/logout', async (req, res) => {
   try {
+    // In a JWT-based system, logout is typically handled client-side by removing the token
+    // However, you can implement token blacklisting here if needed
+    
     res.status(200).json({
       message: 'Logout successful. Please remove the token from client storage.',
       success: true
     });
+
   } catch (error) {
     console.error('LOGOUT ERROR:', error);
     res.status(500).json({ 
       error: 'An error occurred during logout.',
+      success: false 
+    });
+  }
+});
+
+// --- Verify Token (Useful for frontend) ---
+router.get('/verify', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ 
+        error: 'Authorization token required.',
+        success: false 
+      });
+    }
+
+    const token = authHeader.substring(7);
+    
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_default_secret_key_change_in_production');
+      
+      // Return user info based on token
+      if (decoded.userId === 'admin' || decoded.type === 'admin') {
+        return res.status(200).json({
+          success: true,
+          user: {
+            id: decoded.userId,
+            name: decoded.name || 'Administrator',
+            email: decoded.email,
+            type: 'admin',
+            role: 'admin'
+          }
+        });
+      }
+
+      // For regular users, optionally fetch fresh data
+      res.status(200).json({
+        success: true,
+        user: {
+          id: decoded.userId,
+          name: decoded.name,
+          email: decoded.email,
+          type: decoded.type
+        }
+      });
+
+    } catch (jwtError) {
+      return res.status(401).json({ 
+        error: 'Invalid or expired token.',
+        success: false 
+      });
+    }
+
+  } catch (error) {
+    console.error('VERIFY TOKEN ERROR:', error);
+    res.status(500).json({ 
+      error: 'An error occurred while verifying token.',
       success: false 
     });
   }

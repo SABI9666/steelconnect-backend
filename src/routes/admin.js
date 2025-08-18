@@ -1,6 +1,5 @@
 import express from 'express';
-import { isAdmin } from '../middleware/authMiddleware.js'; // Assuming this path
-import { adminDb } from '../config/firebase.js'; // This is from your log, but will be replaced with Mongoose in a complete system
+import { isAdmin } from '../middleware/authMiddleware.js';
 import User from '../models/User.js';
 import Quote from '../models/Quote.js';
 import Message from '../models/Message.js';
@@ -14,7 +13,7 @@ router.use(isAdmin);
 // --- Admin Dashboard Stats Route ---
 router.get('/dashboard', async (req, res) => {
     try {
-        const totalUsers = await User.countDocuments();
+        const totalUsers = await User.countDocuments({ role: { $ne: 'admin' } });
         const totalQuotes = await Quote.countDocuments();
         const totalMessages = await Message.countDocuments();
         const totalJobs = await Job.countDocuments();
@@ -26,7 +25,6 @@ router.get('/dashboard', async (req, res) => {
                 totalQuotes,
                 totalMessages,
                 totalJobs,
-                loginCount: '...', // You could implement this by adding a counter to the User model
             }
         });
     } catch (error) {
@@ -56,6 +54,31 @@ router.put('/users/:id/status', async (req, res) => {
         res.status(500).json({ success: false, error: 'Failed to update user status.' });
     }
 });
+
+// --- NEW FEATURE START: Update User Subscription ---
+router.put('/users/:id/subscription', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body; // Expecting status: 'active' or 'inactive'
+
+        if (!['active', 'inactive'].includes(status)) {
+            return res.status(400).json({ success: false, error: 'Invalid subscription status provided.' });
+        }
+
+        const updateData = {
+            'subscription.status': status,
+            // You could add logic here to set an endDate, e.g., if status is 'active', set endDate to 1 year from now
+        };
+
+        await User.findByIdAndUpdate(id, updateData);
+        res.status(200).json({ success: true, message: 'User subscription updated successfully.' });
+    } catch (error) {
+        console.error('Error updating subscription:', error);
+        res.status(500).json({ success: false, error: 'Failed to update user subscription.' });
+    }
+});
+// --- NEW FEATURE END ---
+
 
 router.delete('/users/:id', async (req, res) => {
     try {

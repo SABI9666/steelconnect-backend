@@ -29,8 +29,8 @@ async function createAdminUser() {
     console.log('✅ Firebase initialized successfully');
 
     const adminEmail = 'pradeeksha798@gmail.com';
-    const adminPassword = '$2a$12$HrTMS7kM5Y.ABk0wKfqRyeVuukxVk1I1x1XX9VZITd5gYw9GOPoNm';
-    const adminName = 'admin';
+    const adminPassword = 'admin123456'; // Use plain text password - will be hashed
+    const adminName = 'Admin User';
 
     console.log('🔍 Checking if admin user already exists...');
 
@@ -40,16 +40,42 @@ async function createAdminUser() {
       .get();
 
     if (!existingAdmin.empty) {
-      console.log('❌ Admin user already exists with this email.');
+      console.log('⚠️ Admin user already exists with this email.');
       console.log('📋 Existing admin details:');
       existingAdmin.forEach(doc => {
         const data = doc.data();
         console.log(`   ID: ${doc.id}`);
         console.log(`   Email: ${data.email}`);
+        console.log(`   Name: ${data.name}`);
         console.log(`   Type: ${data.type}`);
         console.log(`   Active: ${data.isActive}`);
+        console.log(`   Status: ${data.status}`);
         console.log(`   Created: ${data.createdAt}`);
       });
+      
+      // Update existing admin to ensure proper fields
+      const docRef = existingAdmin.docs[0];
+      const userData = docRef.data();
+      
+      // Ensure both isActive and status fields exist
+      const updateData = {
+        updatedAt: new Date().toISOString()
+      };
+      
+      if (userData.isActive === undefined) {
+        updateData.isActive = true;
+      }
+      
+      if (!userData.status) {
+        updateData.status = userData.isActive !== false ? 'active' : 'suspended';
+      }
+      
+      if (Object.keys(updateData).length > 1) { // More than just updatedAt
+        console.log('🔄 Updating existing admin user fields...');
+        await docRef.ref.update(updateData);
+        console.log('✅ Admin user fields updated');
+      }
+      
       return;
     }
 
@@ -59,7 +85,7 @@ async function createAdminUser() {
     const hashedPassword = await bcrypt.hash(adminPassword, saltRounds);
     console.log('✅ Password hashed successfully');
 
-    // Create admin user object
+    // Create admin user object with all required fields
     const adminUser = {
       email: adminEmail.toLowerCase().trim(),
       password: hashedPassword,
@@ -67,7 +93,8 @@ async function createAdminUser() {
       type: 'admin', // This is crucial!
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      isActive: true
+      isActive: true,
+      status: 'active' // Add both fields for compatibility
     };
 
     console.log('💾 Saving admin user to Firebase...');
@@ -78,16 +105,25 @@ async function createAdminUser() {
     console.log('📋 Admin user details:');
     console.log('   Email:', adminEmail);
     console.log('   Password:', adminPassword);
+    console.log('   Name:', adminName);
     console.log('   Firebase ID:', adminRef.id);
     console.log('   Type: admin');
     console.log('   Active: true');
-    console.log('⚠️  Please change the password after first login!');
+    console.log('   Status: active');
+    console.log('⚠️  IMPORTANT: Use these credentials to login to the admin panel!');
+    console.log('⚠️  Please change the password after first login for security!');
+
+    // Test the password hash
+    console.log('🧪 Testing password hash...');
+    const testMatch = await bcrypt.compare(adminPassword, hashedPassword);
+    console.log('Password hash test:', testMatch ? '✅ PASSED' : '❌ FAILED');
 
   } catch (error) {
     console.error('❌ Error creating admin user:', error);
     console.error('🔍 Error details:', {
       message: error.message,
       code: error.code,
+      stack: error.stack
     });
     
     if (error.code === 'auth/invalid-credential') {
@@ -101,5 +137,3 @@ async function createAdminUser() {
 
 // Run the function
 createAdminUser();
-
-

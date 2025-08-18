@@ -1,13 +1,11 @@
-import admin from 'firebase-admin';
-
-const db = admin.firestore();
+import { adminDb } from '../config/firebase.js';
 
 // 📊 GET DASHBOARD STATS
 export const getDashboardStats = async (req, res) => {
     try {
         const getCollectionCount = async (collectionName) => {
             try {
-                const snapshot = await db.collection(collectionName).get();
+                const snapshot = await adminDb.collection(collectionName).get();
                 return snapshot.size || 0;
             } catch (error) {
                 console.warn(`⚠️ Could not get count for collection: ${collectionName}`);
@@ -59,10 +57,10 @@ export const getSystemStats = async (req, res) => {
 // 👥 GET ALL USERS
 export const getAllUsers = async (req, res) => {
     try {
-        const snapshot = await db.collection('users').where('type', '!=', 'admin').get();
+        const snapshot = await adminDb.collection('users').where('type', '!=', 'admin').get();
         const users = snapshot.docs.map(doc => {
             const { password, ...userData } = doc.data();
-            return { id: doc.id, ...userData };
+            return { _id: doc.id, id: doc.id, ...userData };
         });
         res.json({ success: true, users });
     } catch (error) {
@@ -75,7 +73,7 @@ export const getAllUsers = async (req, res) => {
 export const deleteUser = async (req, res) => {
     try {
         const { userId } = req.params;
-        await db.collection('users').doc(userId).delete();
+        await adminDb.collection('users').doc(userId).delete();
         res.json({ success: true, message: 'User deleted successfully.' });
     } catch (error) {
         console.error('❌ Error deleting user:', error);
@@ -86,8 +84,34 @@ export const deleteUser = async (req, res) => {
 // 🗂️ GET ALL QUOTES
 export const getAllQuotes = async (req, res) => {
     try {
-        const snapshot = await db.collection('quotes').orderBy('createdAt', 'desc').get();
-        const quotes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const snapshot = await adminDb.collection('quotes').orderBy('createdAt', 'desc').get();
+        const quotes = [];
+        
+        for (const doc of snapshot.docs) {
+            const quoteData = doc.data();
+            let userData = null;
+            
+            // Try to get user data if userId exists
+            if (quoteData.userId) {
+                try {
+                    const userDoc = await adminDb.collection('users').doc(quoteData.userId).get();
+                    if (userDoc.exists) {
+                        const { password, ...userInfo } = userDoc.data();
+                        userData = { id: userDoc.id, ...userInfo };
+                    }
+                } catch (userError) {
+                    console.warn(`Could not fetch user data for userId: ${quoteData.userId}`);
+                }
+            }
+            
+            quotes.push({
+                _id: doc.id,
+                id: doc.id,
+                ...quoteData,
+                userId: userData
+            });
+        }
+        
         res.json({ success: true, quotes });
     } catch (error) {
         console.error('❌ Error fetching quotes:', error);
@@ -98,8 +122,12 @@ export const getAllQuotes = async (req, res) => {
 // 💼 GET ALL JOBS
 export const getAllJobs = async (req, res) => {
     try {
-        const snapshot = await db.collection('jobs').orderBy('createdAt', 'desc').get();
-        const jobs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const snapshot = await adminDb.collection('jobs').orderBy('createdAt', 'desc').get();
+        const jobs = snapshot.docs.map(doc => ({ 
+            _id: doc.id, 
+            id: doc.id, 
+            ...doc.data() 
+        }));
         res.json({ success: true, jobs });
     } catch (error) {
         console.error('❌ Error fetching jobs:', error);
@@ -110,8 +138,34 @@ export const getAllJobs = async (req, res) => {
 // 💬 GET ALL MESSAGES
 export const getAllMessages = async (req, res) => {
     try {
-        const snapshot = await db.collection('messages').orderBy('createdAt', 'desc').get();
-        const messages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const snapshot = await adminDb.collection('messages').orderBy('createdAt', 'desc').get();
+        const messages = [];
+        
+        for (const doc of snapshot.docs) {
+            const messageData = doc.data();
+            let userData = null;
+            
+            // Try to get user data if senderId exists
+            if (messageData.senderId) {
+                try {
+                    const userDoc = await adminDb.collection('users').doc(messageData.senderId).get();
+                    if (userDoc.exists) {
+                        const { password, ...userInfo } = userDoc.data();
+                        userData = { id: userDoc.id, ...userInfo };
+                    }
+                } catch (userError) {
+                    console.warn(`Could not fetch user data for senderId: ${messageData.senderId}`);
+                }
+            }
+            
+            messages.push({
+                _id: doc.id,
+                id: doc.id,
+                ...messageData,
+                senderId: userData
+            });
+        }
+        
         res.json({ success: true, messages });
     } catch (error) {
         console.error('❌ Error fetching messages:', error);
@@ -122,8 +176,34 @@ export const getAllMessages = async (req, res) => {
 // 👑 GET ALL SUBSCRIPTIONS
 export const getAllSubscriptions = async (req, res) => {
     try {
-        const snapshot = await db.collection('subscriptions').orderBy('startDate', 'desc').get();
-        const subscriptions = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const snapshot = await adminDb.collection('subscriptions').orderBy('startDate', 'desc').get();
+        const subscriptions = [];
+        
+        for (const doc of snapshot.docs) {
+            const subData = doc.data();
+            let userData = null;
+            
+            // Try to get user data if userId exists
+            if (subData.userId) {
+                try {
+                    const userDoc = await adminDb.collection('users').doc(subData.userId).get();
+                    if (userDoc.exists) {
+                        const { password, ...userInfo } = userDoc.data();
+                        userData = { id: userDoc.id, ...userInfo };
+                    }
+                } catch (userError) {
+                    console.warn(`Could not fetch user data for userId: ${subData.userId}`);
+                }
+            }
+            
+            subscriptions.push({
+                _id: doc.id,
+                id: doc.id,
+                ...subData,
+                user: userData
+            });
+        }
+        
         res.json({ success: true, subscriptions });
     } catch (error) {
         console.error('❌ Error fetching subscriptions:', error);

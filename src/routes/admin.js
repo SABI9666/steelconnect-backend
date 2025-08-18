@@ -5,7 +5,6 @@ import { isAdmin } from '../middleware/authMiddleware.js';
 import {
     getDashboardStats,
     getAllUsers,
-    updateUserStatus,
     deleteUser,
     getSystemStats,
     getAllQuotes,
@@ -16,11 +15,11 @@ import {
 
 const router = express.Router();
 
-// Apply the 'isAdmin' security check to ALL routes in this file
+// This security check applies to all routes in this file
 router.use(isAdmin);
 
 
-// --- DEFINE THE API ROUTES ---
+// --- API ROUTES ---
 
 // Dashboard & System
 router.get('/dashboard', getDashboardStats);
@@ -28,7 +27,6 @@ router.get('/system-stats', getSystemStats);
 
 // Users
 router.get('/users', getAllUsers);
-router.put('/users/:userId/status', updateUserStatus);
 router.delete('/users/:userId', deleteUser);
 
 // Quotes, Jobs, Messages, Subscriptions

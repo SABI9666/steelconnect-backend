@@ -12,9 +12,9 @@ export const getDashboardStats = async (req, res) => {
     // Get counts from different collections
     const [usersSnapshot, jobsSnapshot, quotesSnapshot, messagesSnapshot] = await Promise.all([
       db.collection('users').get(),
-      db.collection('jobs').get(),
-      db.collection('quotes').get(),
-      db.collection('messages').get()
+      db.collection('jobs').get().catch(() => ({ size: 0 })), // Handle if collection doesn't exist
+      db.collection('quotes').get().catch(() => ({ size: 0 })),
+      db.collection('messages').get().catch(() => ({ size: 0 }))
     ]);
 
     // Calculate more detailed stats
@@ -24,9 +24,17 @@ export const getDashboardStats = async (req, res) => {
     const messages = [];
 
     usersSnapshot.forEach(doc => users.push({ id: doc.id, ...doc.data() }));
-    jobsSnapshot.forEach(doc => jobs.push({ id: doc.id, ...doc.data() }));
-    quotesSnapshot.forEach(doc => quotes.push({ id: doc.id, ...doc.data() }));
-    messagesSnapshot.forEach(doc => messages.push({ id: doc.id, ...doc.data() }));
+    
+    // Only process if collections exist
+    if (jobsSnapshot.forEach) {
+      jobsSnapshot.forEach(doc => jobs.push({ id: doc.id, ...doc.data() }));
+    }
+    if (quotesSnapshot.forEach) {
+      quotesSnapshot.forEach(doc => quotes.push({ id: doc.id, ...doc.data() }));
+    }
+    if (messagesSnapshot.forEach) {
+      messagesSnapshot.forEach(doc => messages.push({ id: doc.id, ...doc.data() }));
+    }
 
     // Get current date for recent activity calculations
     const now = new Date();
@@ -35,14 +43,15 @@ export const getDashboardStats = async (req, res) => {
 
     const stats = {
       totalUsers: usersSnapshot.size,
-      totalJobs: jobsSnapshot.size,
-      totalQuotes: quotesSnapshot.size,
-      totalMessages: messagesSnapshot.size,
+      totalJobs: jobsSnapshot.size || 0,
+      totalQuotes: quotesSnapshot.size || 0,
+      totalMessages: messagesSnapshot.size || 0,
       
-      // User stats
-      activeUsers: users.filter(user => user.isActive !== false).length,
+      // User stats - Use consistent field names
+      activeUsers: users.filter(user => user.isActive !== false && user.status !== 'suspended').length,
       adminUsers: users.filter(user => user.type === 'admin').length,
-      regularUsers: users.filter(user => user.type === 'user').length,
+      contractorUsers: users.filter(user => user.type === 'contractor').length,
+      designerUsers: users.filter(user => user.type === 'designer').length,
       
       // Job stats
       pendingJobs: jobs.filter(job => job.status === 'pending').length,
@@ -119,7 +128,7 @@ export const getAllUsers = async (req, res) => {
       sortBy = 'createdAt', 
       sortOrder = 'desc',
       userType,
-      isActive 
+      status 
     } = req.query;
     
     console.log('👥 Admin fetching users list:', { limit, offset, sortBy, sortOrder });
@@ -131,12 +140,17 @@ export const getAllUsers = async (req, res) => {
       query = query.where('type', '==', userType);
     }
     
-    if (isActive !== undefined) {
-      query = query.where('isActive', '==', isActive === 'true');
+    // Filter by status (active/suspended)
+    if (status) {
+      if (status === 'active') {
+        query = query.where('isActive', '==', true);
+      } else if (status === 'suspended') {
+        query = query.where('isActive', '==', false);
+      }
     }
     
     // Apply sorting
-    const validSortFields = ['createdAt', 'email', 'lastLogin', 'updatedAt'];
+    const validSortFields = ['createdAt', 'email', 'lastLoginAt', 'updatedAt'];
     if (validSortFields.includes(sortBy)) {
       query = query.orderBy(sortBy, sortOrder === 'asc' ? 'asc' : 'desc');
     } else {
@@ -159,11 +173,13 @@ export const getAllUsers = async (req, res) => {
       const userData = doc.data();
       users.push({
         id: doc.id,
+        name: userData.name,
         email: userData.email,
         type: userData.type,
         isActive: userData.isActive,
+        status: userData.status || (userData.isActive ? 'active' : 'suspended'), // Ensure both fields
         createdAt: userData.createdAt,
-        lastLogin: userData.lastLogin,
+        lastLoginAt: userData.lastLoginAt,
         updatedAt: userData.updatedAt
         // Don't include password hash
       });
@@ -198,19 +214,19 @@ export const getAllUsers = async (req, res) => {
 export const updateUserStatus = async (req, res) => {
   try {
     const { userId } = req.params;
-    const { isActive, notes } = req.body;
+    const { status, notes } = req.body; // Accept 'status' instead of 'isActive'
 
     console.log('🔄 Admin updating user status:', { 
       userId, 
-      isActive, 
+      status, 
       admin: req.user.email 
     });
 
     // Validate input
-    if (typeof isActive !== 'boolean') {
+    if (!status || !['active', 'suspended'].includes(status)) {
       return res.status(400).json({
         success: false,
-        message: 'isActive must be a boolean value'
+        message: 'Status must be either "active" or "suspended"'
       });
     }
 
@@ -225,9 +241,10 @@ export const updateUserStatus = async (req, res) => {
     }
 
     const userData = userDoc.data();
+    const isActive = status === 'active';
 
     // Don't allow admin to deactivate themselves
-    if (userId === req.user.id && !isActive) {
+    if (userId === req.user.userId && !isActive) {
       return res.status(400).json({
         success: false,
         message: 'Cannot deactivate your own account'
@@ -251,8 +268,9 @@ export const updateUserStatus = async (req, res) => {
 
     const updateData = {
       isActive: isActive,
+      status: status, // Store both for compatibility
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedBy: req.user.id
+      updatedBy: req.user.userId
     };
 
     if (notes) {
@@ -263,10 +281,11 @@ export const updateUserStatus = async (req, res) => {
 
     res.json({
       success: true,
-      message: `User ${isActive ? 'activated' : 'deactivated'} successfully`,
+      message: `User ${status === 'active' ? 'activated' : 'suspended'} successfully`,
       user: {
         id: userId,
         email: userData.email,
+        status: status,
         isActive: isActive
       }
     });
@@ -285,11 +304,9 @@ export const updateUserStatus = async (req, res) => {
 export const deleteUser = async (req, res) => {
   try {
     const { userId } = req.params;
-    const { confirmEmail } = req.body;
 
     console.log('🗑️ Admin attempting to delete user:', { 
-      userId, 
-      confirmEmail,
+      userId,
       admin: req.user.email 
     });
 
@@ -306,18 +323,10 @@ export const deleteUser = async (req, res) => {
     const userData = userDoc.data();
 
     // Don't allow admin to delete themselves
-    if (userId === req.user.id) {
+    if (userId === req.user.userId) {
       return res.status(400).json({
         success: false,
         message: 'Cannot delete your own account'
-      });
-    }
-
-    // Email confirmation check for safety
-    if (confirmEmail !== userData.email) {
-      return res.status(400).json({
-        success: false,
-        message: 'Email confirmation does not match user email'
       });
     }
 
@@ -339,8 +348,9 @@ export const deleteUser = async (req, res) => {
     await userRef.update({
       isDeleted: true,
       deletedAt: admin.firestore.FieldValue.serverTimestamp(),
-      deletedBy: req.user.id,
-      isActive: false
+      deletedBy: req.user.userId,
+      isActive: false,
+      status: 'deleted'
     });
 
     res.json({

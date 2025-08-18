@@ -2,7 +2,7 @@ import admin from 'firebase-admin';
 
 const db = admin.firestore();
 
-// 📊 GET DASHBOARD STATS (FINAL, SEQUENTIAL VERSION)
+// 📊 GET DASHBOARD STATS
 export const getDashboardStats = async (req, res) => {
     try {
         const getCollectionCount = async (collectionName) => {
@@ -11,11 +11,10 @@ export const getDashboardStats = async (req, res) => {
                 return snapshot.size || 0;
             } catch (error) {
                 console.warn(`⚠️ Could not get count for collection: ${collectionName}`);
-                return 0; // Return 0 if collection doesn't exist or fails
+                return 0;
             }
         };
 
-        // Fetched counts one-by-one to prevent timeouts
         const userCount = await getCollectionCount('users');
         const quoteCount = await getCollectionCount('quotes');
         const messageCount = await getCollectionCount('messages');
@@ -131,47 +130,3 @@ export const getAllSubscriptions = async (req, res) => {
         res.status(500).json({ success: false, message: 'Error fetching subscriptions' });
     }
 };
-## 2. Correct admin.js Router
-This file should only contain the router code.
-
-JavaScript
-
-import express from 'express';
-import { isAdmin } from '../middleware/authMiddleware.js';
-
-// Import all the controller functions
-import {
-    getDashboardStats,
-    getAllUsers,
-    deleteUser,
-    getSystemStats,
-    getAllQuotes,
-    getAllJobs,
-    getAllMessages,
-    getAllSubscriptions
-} from '../controllers/adminController.js';
-
-const router = express.Router();
-
-// Apply the 'isAdmin' security check to ALL routes in this file
-router.use(isAdmin);
-
-
-// --- DEFINE THE API ROUTES ---
-
-// Dashboard & System
-router.get('/dashboard', getDashboardStats);
-router.get('/system-stats', getSystemStats);
-
-// Users
-router.get('/users', getAllUsers);
-router.delete('/users/:userId', deleteUser);
-
-// Quotes, Jobs, Messages, Subscriptions
-router.get('/quotes', getAllQuotes);
-router.get('/jobs', getAllJobs);
-router.get('/messages', getAllMessages);
-router.get('/subscriptions', getAllSubscriptions);
-
-
-export default router;

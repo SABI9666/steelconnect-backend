@@ -1,4 +1,4 @@
-// server.js - Updated with a more robust CORS configuration
+// server.js - Updated with both Admin and Frontend URLs
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -25,11 +25,16 @@ mongoose.connect(process.env.MONGODB_URI)
 
 // --- ✅ ENHANCED CORS Middleware ---
 
-// A default list of allowed frontend URLs. This provides a strong fallback.
+// A default list of allowed frontend URLs for both admin and main frontends.
 const defaultAllowedOrigins = [
+    // Admin URLs
     'https://admin-pink-nine.vercel.app',
     'https://admin-git-main-sabins-projects-02d8db3a.vercel.app',
-    'https://admin-r7lir0pwg-sabins-projects-02d8db3a.vercel.app'
+    'https://admin-r7lir0pwg-sabins-projects-02d8db3a.vercel.app',
+    // Main Frontend URLs
+    'https://steelconnect-frontend.vercel.app',
+    'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
+    'https://steelconnect-frontend-jlnaa22o7-sabins-projects-02d8db3a.vercel.app'
 ];
 
 // Combine the default list with any origins defined in the environment variable.

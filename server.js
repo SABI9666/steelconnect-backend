@@ -1,4 +1,4 @@
-// server.js - Updated with both Admin and Frontend URLs
+// server.js - Updated with the new Admin URL
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -33,12 +33,13 @@ const defaultAllowedOrigins = [
     'https://admin-r7lir0pwg-sabins-projects-02d8db3a.vercel.app',
     'https://admin-3ienhn8gu-sabins-projects-02d8db3a.vercel.app',
     'https://admin-6bi3o0sai-sabins-projects-02d8db3a.vercel.app',
-    'https://admin-dpw50vhqp-sabins-projects-02d8db3a.vercel.app', // ✨ New URL added
+    'https://admin-dpw50vhqp-sabins-projects-02d8db3a.vercel.app',
+    'https://admin-oganpns57-sabins-projects-02d8db3a.vercel.app', // ✨ New URL added
     // Main Frontend URLs
     'https://steelconnect-frontend.vercel.app',
     'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
     'https://steelconnect-frontend-jlnaa22o7-sabins-projects-02d8db3a.vercel.app',
-    'https://steelconnect-frontend-cfni8p4qj-sabins-projects-02d8db3a.vercel.app' // ✨ New URL added
+    'https://steelconnect-frontend-cfni8p4qj-sabins-projects-02d8db3a.vercel.app'
 ];
 
 // Combine the default list with any origins defined in the environment variable.

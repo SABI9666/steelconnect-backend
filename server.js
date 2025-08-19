@@ -1,4 +1,4 @@
-// server.js - Updated with the new Admin URL
+// server.js - Updated with a dynamic CORS policy for Vercel
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -23,43 +23,39 @@ mongoose.connect(process.env.MONGODB_URI)
     .then(() => console.log('✅ MongoDB connected'))
     .catch(err => console.error('❌ MongoDB connection error:', err));
 
-// --- ✅ ENHANCED CORS Middleware ---
+// --- ✅ PERMANENT CORS SOLUTION for Vercel ---
 
-// A default list of allowed frontend URLs for both admin and main frontends.
-const defaultAllowedOrigins = [
-    // Admin URLs
-    'https://admin-pink-nine.vercel.app',
-    'https://admin-git-main-sabins-projects-02d8db3a.vercel.app',
-    'https://admin-r7lir0pwg-sabins-projects-02d8db3a.vercel.app',
-    'https://admin-3ienhn8gu-sabins-projects-02d8db3a.vercel.app',
-    'https://admin-6bi3o0sai-sabins-projects-02d8db3a.vercel.app',
-    'https://admin-dpw50vhqp-sabins-projects-02d8db3a.vercel.app',
-    'https://admin-oganpns57-sabins-projects-02d8db3a.vercel.app', // ✨ New URL added
-    // Main Frontend URLs
+// List of exact domains and patterns (Regular Expressions) to allow.
+const allowedOrigins = [
+    // Add your main production frontend URL
     'https://steelconnect-frontend.vercel.app',
-    'https://steelconnect-frontend-git-main-sabins-projects-02d8db3a.vercel.app',
-    'https://steelconnect-frontend-jlnaa22o7-sabins-projects-02d8db3a.vercel.app',
-    'https://steelconnect-frontend-cfni8p4qj-sabins-projects-02d8db3a.vercel.app'
+    
+    // This pattern matches your main branch AND all preview deployments for the admin site.
+    /^https:\/\/admin-.*-sabins-projects-02d8db3a\.vercel\.app$/,
+
+    // This pattern matches all preview deployments for the main frontend site.
+    /^https:\/\/steelconnect-frontend-.*-sabins-projects-02d8db3a\.vercel\.app$/,
 ];
-
-// Combine the default list with any origins defined in the environment variable.
-const allowedOriginsFromEnv = (process.env.CORS_ORIGIN || '')
-    .split(',')
-    .map(origin => origin.trim())
-    .filter(Boolean);
-
-const allowedOrigins = [...new Set([...defaultAllowedOrigins, ...allowedOriginsFromEnv])];
-
-if (allowedOrigins.length > 0) {
-    console.log('✅ CORS is configured for the following origins:', allowedOrigins);
-} else {
-    console.warn('⚠️ No CORS origins configured. Requests may be blocked in production.');
-}
 
 const corsOptions = {
     origin: (origin, callback) => {
-        // Allow requests with no origin (like mobile apps or curl) and local development
-        if (!origin || allowedOrigins.includes(origin) || origin.includes('localhost') || origin.includes('127.0.0.1')) {
+        // Allow requests with no origin (like Postman) or from localhost for development
+        if (!origin || origin.includes('localhost') || origin.includes('127.0.0.1')) {
+            return callback(null, true);
+        }
+
+        // Check if the incoming origin matches any of our allowed strings or patterns
+        const isAllowed = allowedOrigins.some(allowedOrigin => {
+            if (typeof allowedOrigin === 'string') {
+                return allowedOrigin === origin;
+            }
+            if (allowedOrigin instanceof RegExp) {
+                return allowedOrigin.test(origin);
+            }
+            return false;
+        });
+
+        if (isAllowed) {
             callback(null, true);
         } else {
             console.error(`❌ CORS Error: Origin "${origin}" not allowed.`);
@@ -69,6 +65,9 @@ const corsOptions = {
     credentials: true,
 };
 
+console.log('✅ CORS is configured with a dynamic policy for Vercel.');
+
+// --- Middleware ---
 app.use(cors(corsOptions));
 app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(compression());

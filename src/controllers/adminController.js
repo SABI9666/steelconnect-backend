@@ -2,7 +2,7 @@
 
 // Mongoose Models
 import User from '../models/User.js';
-import Estimation from '../models/Estimation.js'; // Added this line
+import Estimation from '../models/Estimation.js';
 
 // Firebase Admin DB
 import { adminDb } from '../config/firebase.js';
@@ -43,6 +43,23 @@ export const getAllUsers = async (req, res, next) => {
         res.status(200).json({ success: true, users });
     } catch (error) {
         console.error('Error fetching all users:', error);
+        next(error);
+    }
+};
+
+/**
+ * (RE-ADDED) Deletes a user from the database.
+ */
+export const deleteUser = async (req, res, next) => {
+    try {
+        const { userId } = req.params;
+        const deletedUser = await User.findByIdAndDelete(userId);
+        if (!deletedUser) {
+            return res.status(404).json({ success: false, message: 'User not found.' });
+        }
+        res.status(200).json({ success: true, message: 'User deleted successfully.' });
+    } catch (error) {
+        console.error('Error deleting user:', error);
         next(error);
     }
 };
@@ -104,7 +121,7 @@ export const getAllSubscriptions = async (req, res, next) => {
 };
 
 /**
- * (NEW) Retrieves a list of all estimations from MongoDB.
+ * Retrieves a list of all estimations from MongoDB.
  */
 export const getAllEstimations = async (req, res, next) => {
     try {

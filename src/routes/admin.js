@@ -1,16 +1,18 @@
 import express from 'express';
 import { isAdmin } from '../middleware/authMiddleware.js';
 import { adminDb } from '../config/firebase.js';
+
 // Import all the controller functions
 import {
     getDashboardStats,
     getAllUsers,
-    deleteUser,
+    deleteUser, // This was in your file, so I've kept it.
     getSystemStats,
     getAllQuotes,
     getAllJobs,
     getAllMessages,
-    getAllSubscriptions
+    getAllSubscriptions,
+    getAllEstimations // Added for the new feature
 } from '../controllers/adminController.js';
 
 const router = express.Router();
@@ -492,5 +494,8 @@ router.post('/subscriptions', async (req, res) => {
         res.status(500).json({ success: false, message: 'Error adding subscription' });
     }
 });
+
+// (NEW) Estimations Management from MongoDB
+router.get('/estimations', getAllEstimations);
 
 export default router;

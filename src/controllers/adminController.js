@@ -18,6 +18,7 @@ export const getDashboardStats = async (req, res) => {
         const messageCount = await getCollectionCount('messages');
         const jobsCount = await getCollectionCount('jobs');
         const subsCount = await getCollectionCount('subscriptions');
+        const estimationCount = await getCollectionCount('estimations'); // Added for new section
 
         res.json({
             success: true,
@@ -26,7 +27,8 @@ export const getDashboardStats = async (req, res) => {
                 totalQuotes: quoteCount,
                 totalMessages: messageCount,
                 totalJobs: jobsCount,
-                activeSubscriptions: subsCount
+                activeSubscriptions: subsCount,
+                totalEstimations: estimationCount, // Added for new section
             }
         });
     } catch (error) {
@@ -91,7 +93,6 @@ export const getAllQuotes = async (req, res) => {
             const quoteData = doc.data();
             let userData = null;
             
-            // Try to get user data if userId exists
             if (quoteData.userId) {
                 try {
                     const userDoc = await adminDb.collection('users').doc(quoteData.userId).get();
@@ -145,7 +146,6 @@ export const getAllMessages = async (req, res) => {
             const messageData = doc.data();
             let userData = null;
             
-            // Try to get user data if senderId exists
             if (messageData.senderId) {
                 try {
                     const userDoc = await adminDb.collection('users').doc(messageData.senderId).get();
@@ -183,7 +183,6 @@ export const getAllSubscriptions = async (req, res) => {
             const subData = doc.data();
             let userData = null;
             
-            // Try to get user data if userId exists
             if (subData.userId) {
                 try {
                     const userDoc = await adminDb.collection('users').doc(subData.userId).get();
@@ -208,5 +207,77 @@ export const getAllSubscriptions = async (req, res) => {
     } catch (error) {
         console.error('❌ Error fetching subscriptions:', error);
         res.status(500).json({ success: false, message: 'Error fetching subscriptions' });
+    }
+};
+
+// 🏗️ GET ALL ESTIMATIONS (NEW)
+export const getAllEstimations = async (req, res) => {
+    try {
+        const snapshot = await adminDb.collection('estimations').orderBy('createdAt', 'desc').get();
+        const estimations = [];
+        
+        for (const doc of snapshot.docs) {
+            const estData = doc.data();
+            let contractorData = null;
+            
+            if (estData.contractorId) {
+                try {
+                    const userDoc = await adminDb.collection('users').doc(estData.contractorId).get();
+                    if (userDoc.exists) {
+                        const { password, ...userInfo } = userDoc.data();
+                        contractorData = { id: userDoc.id, ...userInfo };
+                    }
+                } catch (userError) {
+                    console.warn(`Could not fetch contractor data for contractorId: ${estData.contractorId}`);
+                }
+            }
+            
+            estimations.push({
+                _id: doc.id,
+                id: doc.id,
+                ...estData,
+                contractorId: contractorData 
+            });
+        }
+        
+        res.json({ success: true, estimations });
+    } catch (error) {
+        console.error('❌ Error fetching estimations:', error);
+        res.status(500).json({ success: false, message: 'Error fetching estimations' });
+    }
+};
+
+// ✉️ REPLY TO MESSAGE (NEW)
+export const replyToMessage = async (req, res) => {
+    try {
+        const { messageId } = req.params;
+        const { content } = req.body;
+        const adminUser = req.user; // Decoded from JWT by authMiddleware
+
+        if (!content) {
+            return res.status(400).json({ success: false, message: 'Reply content cannot be empty.' });
+        }
+
+        // Get the original message to find the original sender
+        const originalMessageDoc = await adminDb.collection('messages').doc(messageId).get();
+        if (!originalMessageDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Original message not found.' });
+        }
+        const originalMessageData = originalMessageDoc.data();
+        
+        const newReply = {
+            content,
+            senderId: adminUser.userId, // The admin is the sender
+            receiverId: originalMessageData.senderId, // The receiver is the original sender
+            createdAt: new Date().toISOString(),
+            isRead: false
+        };
+
+        await adminDb.collection('messages').add(newReply);
+        
+        res.json({ success: true, message: 'Reply sent successfully.' });
+    } catch (error) {
+        console.error('❌ Error sending reply:', error);
+        res.status(500).json({ success: false, message: 'Error sending reply' });
     }
 };

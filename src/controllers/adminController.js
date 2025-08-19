@@ -1,31 +1,32 @@
 // src/controllers/adminController.js
 
 // Mongoose Models
-import User from '../models/User.js';
-import Estimation from '../models/Estimation.js';
+import Estimation from '../models/Estimation.js'; // Only Estimation is from MongoDB
 
 // Firebase Admin DB
 import { adminDb } from '../config/firebase.js';
 
 /**
- * Fetches statistics for the admin dashboard.
+ * Fetches statistics for the admin dashboard from both databases.
  */
 export const getDashboardStats = async (req, res, next) => {
     try {
-        const [userCount, quotesSnapshot, messagesSnapshot, jobsSnapshot] = await Promise.all([
-            User.countDocuments(), // From MongoDB
-            adminDb.collection('quotes').get(),
-            adminDb.collection('messages').get(),
-            adminDb.collection('jobs').get()
+        const [usersSnapshot, quotesSnapshot, messagesSnapshot, jobsSnapshot, estimationCount] = await Promise.all([
+            adminDb.collection('users').get(),      // From Firestore
+            adminDb.collection('quotes').get(),     // From Firestore
+            adminDb.collection('messages').get(),   // From Firestore
+            adminDb.collection('jobs').get(),       // From Firestore
+            Estimation.countDocuments()             // From MongoDB
         ]);
 
         res.status(200).json({
             success: true,
             stats: {
-                totalUsers: userCount,
+                totalUsers: usersSnapshot.size,
                 totalQuotes: quotesSnapshot.size,
                 totalMessages: messagesSnapshot.size,
-                totalJobs: jobsSnapshot.size
+                totalJobs: jobsSnapshot.size,
+                totalEstimations: estimationCount
             }
         });
     } catch (error) {
@@ -35,31 +36,40 @@ export const getDashboardStats = async (req, res, next) => {
 };
 
 /**
- * Retrieves a list of all users from MongoDB.
+ * Retrieves a list of all users from Firestore.
  */
 export const getAllUsers = async (req, res, next) => {
     try {
-        const users = await User.find().select('-password').sort({ createdAt: -1 });
+        const usersSnapshot = await adminDb.collection('users').orderBy('createdAt', 'desc').get();
+        const users = usersSnapshot.docs.map(doc => {
+            const data = doc.data();
+            delete data.password; // IMPORTANT: Never send password hashes to the frontend
+            return { id: doc.id, ...data };
+        });
         res.status(200).json({ success: true, users });
     } catch (error) {
-        console.error('Error fetching all users:', error);
+        console.error('Error fetching all users from Firestore:', error);
         next(error);
     }
 };
 
 /**
- * (RE-ADDED) Deletes a user from the database.
+ * Deletes a user from Firestore.
  */
 export const deleteUser = async (req, res, next) => {
     try {
         const { userId } = req.params;
-        const deletedUser = await User.findByIdAndDelete(userId);
-        if (!deletedUser) {
+        const userRef = adminDb.collection('users').doc(userId);
+        const doc = await userRef.get();
+
+        if (!doc.exists) {
             return res.status(404).json({ success: false, message: 'User not found.' });
         }
+
+        await userRef.delete();
         res.status(200).json({ success: true, message: 'User deleted successfully.' });
     } catch (error) {
-        console.error('Error deleting user:', error);
+        console.error('Error deleting user from Firestore:', error);
         next(error);
     }
 };
@@ -128,11 +138,10 @@ export const getAllEstimations = async (req, res, next) => {
         const estimations = await Estimation.find().sort({ createdAt: -1 });
         res.status(200).json({ success: true, estimations });
     } catch (error) {
-        console.error('Error fetching all estimations:', error);
+        console.error('Error fetching all estimations from MongoDB:', error);
         next(error);
     }
 };
-
 
 /**
  * Retrieves system statistics.

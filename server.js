@@ -11,6 +11,8 @@ import jobsRoutes from './src/routes/jobs.js';
 import quotesRoutes from './src/routes/quotes.js';
 import messagesRoutes from './src/routes/messages.js';
 import adminRoutes from './src/routes/admin.js';
+// --- ✅ ADD THIS LINE ---
+import estimationRoutes from './src/routes/estimation.js'; // Import the estimation routes
 
 dotenv.config();
 
@@ -72,7 +74,7 @@ console.log('✅ CORS is configured with a dynamic policy for Vercel.');
 app.use(cors(corsOptions));
 app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(compression());
-app.use(express.json({ limit: ' ৫০mb' }));
+app.use(express.json({ limit: '50mb' })); // Corrected the limit format
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // --- 📝 Request Logging ---
@@ -91,6 +93,8 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/jobs', jobsRoutes);
 app.use('/api/quotes', quotesRoutes);
 app.use('/api/messages', messagesRoutes);
+// --- ✅ ADD THIS LINE ---
+app.use('/api/estimation', estimationRoutes); // Register the estimation routes
 
 // --- 🚨 Error Handling ---
 app.use((error, req, res, next) => {

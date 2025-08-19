@@ -38,7 +38,7 @@ const allowedOrigins = [
   // Production frontend URL
   'https://steelconnect-frontend.vercel.app',
   
-  // ✅ ADDED: Specific Vercel domain for the admin panel
+  // Specific Vercel domain for the admin panel
   'https://admin-pink-nine.vercel.app',
 
   // Regex for the admin site's main branch and all preview deployments
@@ -72,7 +72,7 @@ console.log('✅ CORS is configured with a dynamic policy for Vercel.');
 app.use(cors(corsOptions));
 app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(compression());
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: ' ৫০mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // --- 📝 Request Logging ---

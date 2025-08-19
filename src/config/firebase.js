@@ -17,13 +17,15 @@ const serviceAccount = JSON.parse(serviceAccountJson);
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
-    // --- FIX: The bucket name should not include 'firebasestorage.' ---
+    // CORRECTED: Use the .appspot.com URL for the storage bucket name
     storageBucket: 'steelconnect-backend-3f684.firebasestorage.app'
   });
 }
 
 // Export the initialized services
 const adminDb = admin.firestore();
-const adminStorage = admin.storage();
+// CREATED: Get the default bucket instance from storage
+const bucket = admin.storage().bucket();
 
-export { admin, adminDb, adminStorage };
+// EXPORTED: Added 'bucket' to the export list
+export { admin, adminDb, bucket };

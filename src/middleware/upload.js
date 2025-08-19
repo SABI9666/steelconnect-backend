@@ -1,10 +1,12 @@
 import multer from 'multer';
-import { adminStorage } from '../config/firebase.js';
+// FIXED: Import 'bucket' directly from your firebase config
+import { bucket } from '../config/firebase.js';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 
 const multerStorage = multer.memoryStorage();
 
+// This multer instance is used to process the file in memory
 export const upload = multer({
   storage: multerStorage,
   limits: { fileSize: 15 * 1024 * 1024 }, // 15MB
@@ -25,8 +27,9 @@ export const upload = multer({
   },
 });
 
+// This is a helper function to upload a file buffer to Firebase
 export const uploadToFirebase = (file, destinationFolder) => {
-  const bucket = adminStorage.bucket();
+  // FIXED: No need to call adminStorage.bucket() since we import bucket directly
   const uniqueSuffix = `${uuidv4()}${path.extname(file.originalname)}`;
   const blob = bucket.file(`${destinationFolder}/${uniqueSuffix}`);
   const blobStream = blob.createWriteStream({
@@ -44,9 +47,12 @@ export const uploadToFirebase = (file, destinationFolder) => {
       try {
         await blob.makePublic();
         const publicUrl = `https://storage.googleapis.com/${bucket.name}/${blob.name}`;
-        resolve(publicUrl);
+        // Also return the path for future deletions
+        resolve({
+            url: publicUrl,
+            path: blob.name
+        });
       } catch (error) {
-        // FIX: Changed 'err' to 'error' to match the catch block variable
         console.error('Failed to make file public:', error);
         reject(new Error('Failed to get public URL: ' + error.message));
       }

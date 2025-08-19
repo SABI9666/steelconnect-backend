@@ -1,56 +1,42 @@
 import jwt from 'jsonwebtoken';
 import { adminDb } from '../config/firebase.js';
 
-// Middleware to verify JWT token
-export const verifyToken = async (req, res, next) => {
+// Middleware to verify JWT token and attach user to request
+export const authenticateToken = async (req, res, next) => {
     try {
         const token = req.header('Authorization')?.replace('Bearer ', '');
         
         if (!token) {
-            return res.status(401).json({ error: 'Access denied. No token provided.' });
+            return res.status(401).json({ success: false, error: 'Access denied. No token provided.' });
         }
 
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret');
-        req.user = decoded;
+        req.user = decoded; // Attaches the decoded user payload (e.g., userId, type) to the request object
         next();
     } catch (error) {
         console.error('Token verification failed:', error);
-        res.status(401).json({ error: 'Invalid token.' });
+        res.status(401).json({ success: false, error: 'Invalid or expired token.' });
     }
 };
 
-// Middleware to check if user is admin
+// Middleware to check if the authenticated user is an admin
 export const isAdmin = async (req, res, next) => {
     try {
-        const token = req.header('Authorization')?.replace('Bearer ', '');
-        
-        if (!token) {
-            return res.status(401).json({ 
-                success: false, 
-                error: 'Access denied. No token provided.' 
-            });
-        }
+        const userType = req.user?.type;
+        const userId = req.user?.userId;
 
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret');
-        
-        // Check if it's an environment admin
-        if (decoded.userId === 'env_admin' && decoded.type === 'admin') {
-            req.user = decoded;
-            return next();
+        if (!userType || !userId) {
+             return res.status(401).json({ success: false, error: 'Authentication details not found. Please log in again.' });
         }
         
-        // Check if it's a database admin
-        if (decoded.type === 'admin' && decoded.role === 'admin') {
-            // Verify the user still exists and is admin in database
-            try {
-                const userDoc = await adminDb.collection('users').doc(decoded.userId).get();
-                if (userDoc.exists && userDoc.data().type === 'admin') {
-                    req.user = decoded;
-                    return next();
-                }
-            } catch (dbError) {
-                console.error('Database verification failed:', dbError);
-            }
+        // Simple check based on the token's 'type' field
+        if (userType === 'admin') {
+            // Optional: For extra security, you could re-verify against the database here
+            // const userDoc = await adminDb.collection('users').doc(userId).get();
+            // if (userDoc.exists && userDoc.data().type === 'admin') {
+            //     return next();
+            // }
+            return next(); // If token says admin, proceed
         }
         
         return res.status(403).json({ 
@@ -60,43 +46,39 @@ export const isAdmin = async (req, res, next) => {
         
     } catch (error) {
         console.error('Admin verification failed:', error);
-        res.status(401).json({ 
+        res.status(500).json({ 
             success: false, 
-            error: 'Invalid token.' 
+            error: 'An internal error occurred during admin verification.' 
         });
     }
 };
 
-// Middleware to check if user owns resource or is admin
+// Middleware to check if the user owns the resource or is an admin
 export const isOwnerOrAdmin = async (req, res, next) => {
     try {
-        const token = req.header('Authorization')?.replace('Bearer ', '');
+        const { userId, type } = req.user;
         
-        if (!token) {
-            return res.status(401).json({ error: 'Access denied. No token provided.' });
-        }
-
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret');
-        
-        // Check if user is admin
-        if (decoded.type === 'admin' || decoded.role === 'admin') {
-            req.user = decoded;
+        // If the user is an admin, they have access
+        if (type === 'admin') {
             return next();
         }
         
-        // Check if user owns the resource
-        const resourceUserId = req.params.userId || req.body.userId || req.query.userId;
-        if (decoded.userId === resourceUserId) {
-            req.user = decoded;
+        // Check if the user ID from the token matches the user ID in the request parameters (e.g., /api/users/:userId)
+        const resourceUserId = req.params.userId;
+        if (userId === resourceUserId) {
             return next();
         }
         
         return res.status(403).json({ 
-            error: 'Access denied. You can only access your own resources.' 
+            success: false,
+            error: 'Access denied. You do not have permission to access this resource.' 
         });
         
     } catch (error) {
-        console.error('Authorization failed:', error);
-        res.status(401).json({ error: 'Invalid token.' });
+        console.error('Ownership verification failed:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: 'An internal error occurred during ownership verification.' 
+        });
     }
 };

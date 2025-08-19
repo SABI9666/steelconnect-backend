@@ -1,32 +1,31 @@
 // src/controllers/adminController.js
 
-// IMPORTANT: You need to define these Mongoose models based on your database schema.
-// These are placeholder imports. Make sure the path is correct.
+// Mongoose Models
 import User from '../models/User.js';
-import Quote from '../models/Quote.js';
-import Message from '../models/Message.js';
-// Added missing model imports based on your router's needs
-import Job from '../models/Job.js';
-import Subscription from '../models/Subscription.js';
+import Estimation from '../models/Estimation.js'; // Added this line
 
+// Firebase Admin DB
+import { adminDb } from '../config/firebase.js';
 
 /**
  * Fetches statistics for the admin dashboard.
  */
 export const getDashboardStats = async (req, res, next) => {
     try {
-        const [userCount, quoteCount, messageCount] = await Promise.all([
-            User.countDocuments(),
-            Quote.countDocuments(),
-            Message.countDocuments()
+        const [userCount, quotesSnapshot, messagesSnapshot, jobsSnapshot] = await Promise.all([
+            User.countDocuments(), // From MongoDB
+            adminDb.collection('quotes').get(),
+            adminDb.collection('messages').get(),
+            adminDb.collection('jobs').get()
         ]);
 
         res.status(200).json({
             success: true,
             stats: {
                 totalUsers: userCount,
-                totalQuotes: quoteCount,
-                totalMessages: messageCount,
+                totalQuotes: quotesSnapshot.size,
+                totalMessages: messagesSnapshot.size,
+                totalJobs: jobsSnapshot.size
             }
         });
     } catch (error) {
@@ -36,7 +35,7 @@ export const getDashboardStats = async (req, res, next) => {
 };
 
 /**
- * Retrieves a list of all users, excluding their passwords.
+ * Retrieves a list of all users from MongoDB.
  */
 export const getAllUsers = async (req, res, next) => {
     try {
@@ -49,96 +48,74 @@ export const getAllUsers = async (req, res, next) => {
 };
 
 /**
- * Updates the status of a specific user.
- */
-export const updateUserStatus = async (req, res, next) => {
-    try {
-        const { userId } = req.params;
-        const { status } = req.body;
-
-        if (!status) {
-            return res.status(400).json({ success: false, message: 'Status is required.' });
-        }
-
-        const updatedUser = await User.findByIdAndUpdate(userId, { status }, { new: true }).select('-password');
-        if (!updatedUser) {
-            return res.status(404).json({ success: false, message: 'User not found.' });
-        }
-        res.status(200).json({ success: true, message: `User status updated to ${status}.`, user: updatedUser });
-    } catch (error) {
-        console.error('Error updating user status:', error);
-        next(error);
-    }
-};
-
-/**
- * Deletes a user from the database.
- */
-export const deleteUser = async (req, res, next) => {
-    try {
-        const { userId } = req.params;
-        const deletedUser = await User.findByIdAndDelete(userId);
-        if (!deletedUser) {
-            return res.status(404).json({ success: false, message: 'User not found.' });
-        }
-        res.status(200).json({ success: true, message: 'User deleted successfully.' });
-    } catch (error) {
-        console.error('Error deleting user:', error);
-        next(error);
-    }
-};
-
-/**
- * Retrieves a list of all quotes.
+ * Retrieves a list of all quotes from Firestore.
  */
 export const getAllQuotes = async (req, res, next) => {
     try {
-        const quotes = await Quote.find().sort({ createdAt: -1 });
+        const quotesSnapshot = await adminDb.collection('quotes').orderBy('createdAt', 'desc').get();
+        const quotes = quotesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         res.status(200).json({ success: true, quotes });
     } catch (error) {
-        console.error('Error fetching all quotes:', error);
+        console.error('Error fetching all quotes from Firestore:', error);
         next(error);
     }
 };
 
 /**
- * Retrieves a list of all job postings.
+ * Retrieves a list of all jobs from Firestore.
  */
 export const getAllJobs = async (req, res, next) => {
     try {
-        const jobs = await Job.find().sort({ createdAt: -1 });
+        const jobsSnapshot = await adminDb.collection('jobs').orderBy('createdAt', 'desc').get();
+        const jobs = jobsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         res.status(200).json({ success: true, jobs });
     } catch (error) {
-        console.error('Error fetching all jobs:', error);
+        console.error('Error fetching all jobs from Firestore:', error);
         next(error);
     }
 };
 
 /**
- * Retrieves a list of all messages.
+ * Retrieves a list of all messages from Firestore.
  */
 export const getAllMessages = async (req, res, next) => {
     try {
-        const messages = await Message.find().sort({ createdAt: -1 });
+        const messagesSnapshot = await adminDb.collection('messages').orderBy('createdAt', 'desc').get();
+        const messages = messagesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         res.status(200).json({ success: true, messages });
     } catch (error) {
-        console.error('Error fetching all messages:', error);
+        console.error('Error fetching all messages from Firestore:', error);
         next(error);
     }
 };
 
 /**
- * Retrieves a list of all subscriptions.
+ * Retrieves a list of all subscriptions from Firestore.
  */
 export const getAllSubscriptions = async (req, res, next) => {
     try {
-        const subscriptions = await Subscription.find().sort({ createdAt: -1 });
+        const subscriptionsSnapshot = await adminDb.collection('subscriptions').orderBy('createdAt', 'desc').get();
+        const subscriptions = subscriptionsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         res.status(200).json({ success: true, subscriptions });
     } catch (error) {
-        console.error('Error fetching all subscriptions:', error);
+        console.error('Error fetching all subscriptions from Firestore:', error);
         next(error);
     }
 };
+
+/**
+ * (NEW) Retrieves a list of all estimations from MongoDB.
+ */
+export const getAllEstimations = async (req, res, next) => {
+    try {
+        const estimations = await Estimation.find().sort({ createdAt: -1 });
+        res.status(200).json({ success: true, estimations });
+    } catch (error) {
+        console.error('Error fetching all estimations:', error);
+        next(error);
+    }
+};
+
 
 /**
  * Retrieves system statistics.

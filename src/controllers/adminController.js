@@ -5,6 +5,10 @@
 import User from '../models/User.js';
 import Quote from '../models/Quote.js';
 import Message from '../models/Message.js';
+// Added missing model imports based on your router's needs
+import Job from '../models/Job.js';
+import Subscription from '../models/Subscription.js';
+
 
 /**
  * Fetches statistics for the admin dashboard.
@@ -36,7 +40,7 @@ export const getDashboardStats = async (req, res, next) => {
  */
 export const getAllUsers = async (req, res, next) => {
     try {
-        const users = await User.find().select('-password');
+        const users = await User.find().select('-password').sort({ createdAt: -1 });
         res.status(200).json({ success: true, users });
     } catch (error) {
         console.error('Error fetching all users:', error);
@@ -80,6 +84,58 @@ export const deleteUser = async (req, res, next) => {
         res.status(200).json({ success: true, message: 'User deleted successfully.' });
     } catch (error) {
         console.error('Error deleting user:', error);
+        next(error);
+    }
+};
+
+/**
+ * Retrieves a list of all quotes.
+ */
+export const getAllQuotes = async (req, res, next) => {
+    try {
+        const quotes = await Quote.find().sort({ createdAt: -1 });
+        res.status(200).json({ success: true, quotes });
+    } catch (error) {
+        console.error('Error fetching all quotes:', error);
+        next(error);
+    }
+};
+
+/**
+ * Retrieves a list of all job postings.
+ */
+export const getAllJobs = async (req, res, next) => {
+    try {
+        const jobs = await Job.find().sort({ createdAt: -1 });
+        res.status(200).json({ success: true, jobs });
+    } catch (error) {
+        console.error('Error fetching all jobs:', error);
+        next(error);
+    }
+};
+
+/**
+ * Retrieves a list of all messages.
+ */
+export const getAllMessages = async (req, res, next) => {
+    try {
+        const messages = await Message.find().sort({ createdAt: -1 });
+        res.status(200).json({ success: true, messages });
+    } catch (error) {
+        console.error('Error fetching all messages:', error);
+        next(error);
+    }
+};
+
+/**
+ * Retrieves a list of all subscriptions.
+ */
+export const getAllSubscriptions = async (req, res, next) => {
+    try {
+        const subscriptions = await Subscription.find().sort({ createdAt: -1 });
+        res.status(200).json({ success: true, subscriptions });
+    } catch (error) {
+        console.error('Error fetching all subscriptions:', error);
         next(error);
     }
 };

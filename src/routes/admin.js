@@ -1,701 +1,222 @@
-// src/routes/admin.js - Firebase-based admin routes
 import express from 'express';
-import { isAdmin } from '../middleware/authMiddleware.js';
+import jwt from 'jsonwebtoken';
 import { adminDb } from '../config/firebase.js';
 
 const router = express.Router();
 
-// Middleware to use on all admin routes
-router.use(isAdmin);
-
-// --- Admin Dashboard Stats Route ---
-router.get('/dashboard', async (req, res) => {
+// Debug admin token
+router.get('/admin-token-debug', async (req, res) => {
     try {
-        console.log('Admin dashboard requested');
+        const authHeader = req.headers.authorization;
         
-        // Get counts from Firebase collections
-        const [usersSnapshot, quotesSnapshot, messagesSnapshot, jobsSnapshot, estimationsSnapshot] = await Promise.all([
-            adminDb.collection('users').get(),
-            adminDb.collection('quotes').get(),
-            adminDb.collection('messages').get(),
-            adminDb.collection('jobs').get(),
-            adminDb.collection('estimations').get()
-        ]);
-
-        // Get unread messages count
-        const unreadMessagesSnapshot = await adminDb.collection('messages')
-            .where('status', '==', 'unread')
-            .get();
-
-        // Get pending estimations count
-        const pendingEstimationsSnapshot = await adminDb.collection('estimations')
-            .where('status', '==', 'pending')
-            .get();
-
-        // Get recent activity (last 5 users)
-        const recentUsersSnapshot = await adminDb.collection('users')
-            .orderBy('createdAt', 'desc')
-            .limit(3)
-            .get();
-
-        const recentActivity = [];
-        recentUsersSnapshot.forEach(doc => {
-            const user = doc.data();
-            recentActivity.push({
-                type: 'user',
-                description: `New user registration: ${user.email}`,
-                timestamp: user.createdAt
-            });
-        });
-
-        // Get recent quotes
-        const recentQuotesSnapshot = await adminDb.collection('quotes')
-            .orderBy('createdAt', 'desc')
-            .limit(2)
-            .get();
-
-        recentQuotesSnapshot.forEach(doc => {
-            const quote = doc.data();
-            recentActivity.push({
-                type: 'quote',
-                description: `Quote request: ${quote.projectTitle || 'New Project'}`,
-                timestamp: quote.createdAt
-            });
-        });
-
-        // Sort activity by timestamp
-        recentActivity.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-
-        const stats = {
-            totalUsers: usersSnapshot.size,
-            totalQuotes: quotesSnapshot.size,
-            totalMessages: messagesSnapshot.size,
-            totalJobs: jobsSnapshot.size,
-            totalEstimations: estimationsSnapshot.size,
-            activeSubscriptions: 0, // Add when implementing subscriptions
-            pendingEstimations: pendingEstimationsSnapshot.size,
-            unreadMessages: unreadMessagesSnapshot.size
-        };
-
-        res.status(200).json({
-            success: true,
-            stats,
-            recentActivity: recentActivity.slice(0, 5)
-        });
-    } catch (error) {
-        console.error('Error fetching dashboard stats:', error);
-        res.status(500).json({ 
-            success: false, 
-            error: 'Failed to fetch dashboard statistics.' 
-        });
-    }
-});
-
-// --- User Management Routes ---
-router.get('/users', async (req, res) => {
-    try {
-        console.log('Admin requesting users list');
-        
-        const usersSnapshot = await adminDb.collection('users')
-            .where('role', '!=', 'admin')
-            .orderBy('role')
-            .orderBy('createdAt', 'desc')
-            .get();
-            
-        const users = [];
-        usersSnapshot.forEach(doc => {
-            const userData = doc.data();
-            users.push({
-                _id: doc.id,
-                name: userData.name,
-                email: userData.email,
-                role: userData.role,
-                isActive: userData.isActive !== false, // Default to true if not set
-                company: userData.company,
-                phone: userData.phone,
-                createdAt: userData.createdAt,
-                lastLogin: userData.lastLogin
-            });
-        });
-            
-        res.status(200).json({ 
-            success: true, 
-            users 
-        });
-    } catch (error) {
-        console.error('Error fetching users:', error);
-        res.status(500).json({ 
-            success: false, 
-            error: 'Failed to fetch users.' 
-        });
-    }
-});
-
-// Get specific user details
-router.get('/users/:id', async (req, res) => {
-    try {
-        const userDoc = await adminDb.collection('users').doc(req.params.id).get();
-        
-        if (!userDoc.exists) {
-            return res.status(404).json({
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.json({
                 success: false,
-                error: 'User not found'
+                message: 'No valid authorization header',
+                hasHeader: !!authHeader,
+                headerStart: authHeader?.substring(0, 20)
             });
         }
-        
-        const userData = userDoc.data();
-        
-        // Get user activity stats
-        const [quotesSnapshot, jobsSnapshot, messagesSnapshot] = await Promise.all([
-            adminDb.collection('quotes').where('userId', '==', req.params.id).get(),
-            adminDb.collection('jobs').where('clientId', '==', req.params.id).get(),
-            adminDb.collection('messages').where('senderId', '==', req.params.id).get()
-        ]);
-        
-        const stats = {
-            quotesRequested: quotesSnapshot.size,
-            jobsCompleted: jobsSnapshot.docs.filter(doc => doc.data().status === 'completed').length,
-            messagesSent: messagesSnapshot.size
-        };
-        
-        const user = {
-            _id: userDoc.id,
-            ...userData,
-            stats
-        };
-        
-        res.json({
-            success: true,
-            user
-        });
-        
-    } catch (error) {
-        console.error('User details error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to load user details'
-        });
-    }
-});
 
-// Update user status
-router.patch('/users/:id/status', async (req, res) => {
-    try {
-        const { isActive } = req.body;
-        
-        await adminDb.collection('users').doc(req.params.id).update({
-            isActive,
-            updatedAt: new Date().toISOString()
-        });
-        
-        const userDoc = await adminDb.collection('users').doc(req.params.id).get();
-        
-        if (!userDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                error: 'User not found'
-            });
-        }
-        
-        res.json({
-            success: true,
-            message: `User ${isActive ? 'activated' : 'deactivated'} successfully`,
-            user: { _id: userDoc.id, ...userDoc.data() }
-        });
-        
-    } catch (error) {
-        console.error('Update user status error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to update user status'
-        });
-    }
-});
+        const token = authHeader.split(' ')[1];
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret');
 
-// Delete user
-router.delete('/users/:id', async (req, res) => {
-    try {
-        const userDoc = await adminDb.collection('users').doc(req.params.id).get();
+        // Check if it's an environment admin
+        const isEnvAdmin = decoded.userId === 'env_admin' && decoded.type === 'admin';
         
-        if (!userDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                error: 'User not found'
-            });
-        }
+        // Check if it's a database admin
+        let isDbAdmin = false;
+        let dbUserData = null;
+        let dbError = null;
         
-        await adminDb.collection('users').doc(req.params.id).delete();
-        
-        res.json({
-            success: true,
-            message: 'User deleted successfully'
-        });
-        
-    } catch (error) {
-        console.error('Delete user error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to delete user'
-        });
-    }
-});
-
-// --- Quotes Management Routes ---
-router.get('/quotes', async (req, res) => {
-    try {
-        console.log('Admin requesting quotes list');
-        
-        const quotesSnapshot = await adminDb.collection('quotes')
-            .orderBy('createdAt', 'desc')
-            .get();
-            
-        const quotes = [];
-        
-        for (const doc of quotesSnapshot.docs) {
-            const quoteData = doc.data();
-            
-            // Get user data for each quote
-            let userData = null;
-            if (quoteData.userId) {
-                const userDoc = await adminDb.collection('users').doc(quoteData.userId).get();
+        if (decoded.type === 'admin' && decoded.role === 'admin' && !isEnvAdmin) {
+            try {
+                const userDoc = await adminDb.collection('users').doc(decoded.userId).get();
                 if (userDoc.exists) {
-                    userData = userDoc.data();
+                    dbUserData = userDoc.data();
+                    isDbAdmin = dbUserData.type === 'admin';
+                } else {
+                    dbError = 'User document not found in database';
                 }
-            }
-            
-            quotes.push({
-                _id: doc.id,
-                clientName: userData?.name || 'Unknown Client',
-                clientEmail: userData?.email || 'Unknown Email',
-                projectTitle: quoteData.projectTitle || quoteData.title || 'Untitled Project',
-                projectType: quoteData.projectType || quoteData.category || 'General',
-                amount: quoteData.estimatedCost || quoteData.amount || 0,
-                status: quoteData.status || 'pending',
-                createdAt: quoteData.createdAt,
-                updatedAt: quoteData.updatedAt
-            });
-        }
-        
-        res.status(200).json({ 
-            success: true, 
-            quotes 
-        });
-    } catch (error) {
-        console.error('Error fetching quotes:', error);
-        res.status(500).json({ 
-            success: false, 
-            error: 'Failed to fetch quotes.' 
-        });
-    }
-});
-
-// Get specific quote details
-router.get('/quotes/:id', async (req, res) => {
-    try {
-        const quoteDoc = await adminDb.collection('quotes').doc(req.params.id).get();
-        
-        if (!quoteDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                error: 'Quote not found'
-            });
-        }
-        
-        const quoteData = quoteDoc.data();
-        
-        // Get user data
-        let userData = null;
-        if (quoteData.userId) {
-            const userDoc = await adminDb.collection('users').doc(quoteData.userId).get();
-            if (userDoc.exists) {
-                userData = userDoc.data();
+            } catch (error) {
+                dbError = error.message;
             }
         }
-        
-        const quote = {
-            _id: quoteDoc.id,
-            quoteNumber: quoteData.quoteNumber || quoteDoc.id.slice(-6),
-            clientName: userData?.name || 'Unknown Client',
-            clientEmail: userData?.email || 'Unknown Email',
-            clientPhone: userData?.phone || 'Not provided',
-            projectTitle: quoteData.projectTitle || quoteData.title || 'Untitled Project',
-            projectType: quoteData.projectType || quoteData.category || 'General',
-            amount: quoteData.estimatedCost || quoteData.amount || 0,
-            status: quoteData.status || 'pending',
-            description: quoteData.description || 'No description provided',
-            createdAt: quoteData.createdAt,
-            updatedAt: quoteData.updatedAt
-        };
-        
-        res.json({
+
+        return res.json({
             success: true,
-            quote
+            tokenData: {
+                userId: decoded.userId,
+                email: decoded.email,
+                type: decoded.type,
+                role: decoded.role,
+                iat: decoded.iat ? new Date(decoded.iat * 1000).toISOString() : 'missing',
+                exp: decoded.exp ? new Date(decoded.exp * 1000).toISOString() : 'missing'
+            },
+            adminChecks: {
+                isEnvAdmin: isEnvAdmin,
+                isDbAdmin: isDbAdmin,
+                hasAdminType: decoded.type === 'admin',
+                hasAdminRole: decoded.role === 'admin',
+                dbUserExists: !!dbUserData,
+                dbUserData: dbUserData,
+                dbError: dbError
+            },
+            finalAuthorization: isEnvAdmin || isDbAdmin,
+            recommendations: [
+                !isEnvAdmin && !isDbAdmin ? 'User is not authorized as admin' : null,
+                decoded.type !== 'admin' ? 'Token missing admin type' : null,
+                decoded.role !== 'admin' ? 'Token missing admin role' : null,
+                dbError ? `Database issue: ${dbError}` : null
+            ].filter(Boolean)
         });
-        
+
     } catch (error) {
-        console.error('Quote details error:', error);
-        res.status(500).json({
+        return res.json({
             success: false,
-            error: 'Failed to load quote details'
+            error: error.message,
+            type: error.name
         });
     }
 });
 
-// Update quote status
-router.patch('/quotes/:id/status', async (req, res) => {
+// Test admin middleware logic
+router.get('/admin-auth-test', async (req, res) => {
     try {
-        const { status } = req.body;
+        const token = req.header('Authorization')?.replace('Bearer ', '');
         
-        await adminDb.collection('quotes').doc(req.params.id).update({
-            status,
-            updatedAt: new Date().toISOString()
-        });
-        
-        res.json({
-            success: true,
-            message: 'Quote status updated successfully'
-        });
-        
-    } catch (error) {
-        console.error('Update quote status error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to update quote status'
-        });
-    }
-});
+        if (!token) {
+            return res.status(401).json({ 
+                success: false, 
+                error: 'Access denied. No token provided.',
+                step: 'token_missing'
+            });
+        }
 
-// Update quote amount
-router.patch('/quotes/:id/amount', async (req, res) => {
-    try {
-        const { amount } = req.body;
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret');
         
-        await adminDb.collection('quotes').doc(req.params.id).update({
-            amount: parseFloat(amount),
-            estimatedCost: parseFloat(amount),
-            updatedAt: new Date().toISOString()
-        });
-        
-        res.json({
-            success: true,
-            message: 'Quote amount updated successfully'
-        });
-        
-    } catch (error) {
-        console.error('Update quote amount error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to update quote amount'
-        });
-    }
-});
-
-// Delete quote
-router.delete('/quotes/:id', async (req, res) => {
-    try {
-        const quoteDoc = await adminDb.collection('quotes').doc(req.params.id).get();
-        
-        if (!quoteDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                error: 'Quote not found'
+        // Check if it's an environment admin
+        if (decoded.userId === 'env_admin' && decoded.type === 'admin') {
+            return res.json({
+                success: true,
+                message: 'Environment admin access granted',
+                adminType: 'environment',
+                user: decoded
             });
         }
         
-        await adminDb.collection('quotes').doc(req.params.id).delete();
-        
-        res.json({
-            success: true,
-            message: 'Quote deleted successfully'
-        });
-        
-    } catch (error) {
-        console.error('Delete quote error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to delete quote'
-        });
-    }
-});
-
-// --- Messages Management Routes ---
-router.get('/messages', async (req, res) => {
-    try {
-        console.log('Admin requesting messages list');
-        
-        const messagesSnapshot = await adminDb.collection('messages')
-            .orderBy('createdAt', 'desc')
-            .get();
-            
-        const messages = [];
-        
-        for (const doc of messagesSnapshot.docs) {
-            const messageData = doc.data();
-            
-            // Get sender data
-            let senderData = null;
-            if (messageData.senderId) {
-                const senderDoc = await adminDb.collection('users').doc(messageData.senderId).get();
-                if (senderDoc.exists) {
-                    senderData = senderDoc.data();
+        // Check if it's a database admin
+        if (decoded.type === 'admin' && decoded.role === 'admin') {
+            try {
+                const userDoc = await adminDb.collection('users').doc(decoded.userId).get();
+                if (userDoc.exists && userDoc.data().type === 'admin') {
+                    return res.json({
+                        success: true,
+                        message: 'Database admin access granted',
+                        adminType: 'database',
+                        user: decoded,
+                        dbUser: userDoc.data()
+                    });
+                } else {
+                    return res.status(403).json({
+                        success: false,
+                        error: 'User not found in database or not admin',
+                        step: 'db_verification_failed',
+                        userExists: userDoc.exists,
+                        userData: userDoc.exists ? userDoc.data() : null
+                    });
                 }
-            }
-            
-            messages.push({
-                _id: doc.id,
-                senderName: senderData?.name || messageData.senderName || 'Unknown Sender',
-                senderEmail: senderData?.email || messageData.senderEmail || 'Unknown Email',
-                subject: messageData.subject || 'No Subject',
-                content: messageData.content || messageData.message || '',
-                status: messageData.status || 'unread',
-                createdAt: messageData.createdAt,
-                attachments: messageData.attachments || []
-            });
-        }
-        
-        res.status(200).json({ 
-            success: true, 
-            messages 
-        });
-    } catch (error) {
-        console.error('Error fetching messages:', error);
-        res.status(500).json({ 
-            success: false, 
-            error: 'Failed to fetch messages.' 
-        });
-    }
-});
-
-// Get specific message details
-router.get('/messages/:id', async (req, res) => {
-    try {
-        const messageDoc = await adminDb.collection('messages').doc(req.params.id).get();
-        
-        if (!messageDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                error: 'Message not found'
-            });
-        }
-        
-        const messageData = messageDoc.data();
-        
-        // Get sender data
-        let senderData = null;
-        if (messageData.senderId) {
-            const senderDoc = await adminDb.collection('users').doc(messageData.senderId).get();
-            if (senderDoc.exists) {
-                senderData = senderDoc.data();
+            } catch (dbError) {
+                return res.status(500).json({
+                    success: false,
+                    error: 'Database verification failed',
+                    step: 'db_error',
+                    details: dbError.message
+                });
             }
         }
         
-        const message = {
-            _id: messageDoc.id,
-            senderName: senderData?.name || messageData.senderName || 'Unknown Sender',
-            senderEmail: senderData?.email || messageData.senderEmail || 'Unknown Email',
-            subject: messageData.subject || 'No Subject',
-            content: messageData.content || messageData.message || '',
-            status: messageData.status || 'unread',
-            createdAt: messageData.createdAt,
-            attachments: messageData.attachments || []
-        };
-        
-        res.json({
-            success: true,
-            message
-        });
-        
-    } catch (error) {
-        console.error('Message details error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to load message details'
-        });
-    }
-});
-
-// Update message status
-router.patch('/messages/:id/status', async (req, res) => {
-    try {
-        const { status } = req.body;
-        
-        await adminDb.collection('messages').doc(req.params.id).update({
-            status,
-            updatedAt: new Date().toISOString()
-        });
-        
-        res.json({
-            success: true,
-            message: 'Message status updated successfully'
-        });
-        
-    } catch (error) {
-        console.error('Update message status error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to update message status'
-        });
-    }
-});
-
-// Reply to message
-router.post('/messages/:id/reply', async (req, res) => {
-    try {
-        const { content } = req.body;
-        
-        const messageDoc = await adminDb.collection('messages').doc(req.params.id).get();
-        
-        if (!messageDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                error: 'Message not found'
-            });
-        }
-        
-        // Create reply in replies subcollection
-        await adminDb.collection('messages').doc(req.params.id)
-            .collection('replies').add({
-                content,
-                senderName: 'Admin',
-                senderType: 'admin',
-                createdAt: new Date().toISOString()
-            });
-        
-        // Update message status to replied
-        await adminDb.collection('messages').doc(req.params.id).update({
-            status: 'replied',
-            updatedAt: new Date().toISOString()
-        });
-        
-        res.json({
-            success: true,
-            message: 'Reply sent successfully'
-        });
-        
-    } catch (error) {
-        console.error('Reply to message error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to send reply'
-        });
-    }
-});
-
-// Delete message
-router.delete('/messages/:id', async (req, res) => {
-    try {
-        const messageDoc = await adminDb.collection('messages').doc(req.params.id).get();
-        
-        if (!messageDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                error: 'Message not found'
-            });
-        }
-        
-        await adminDb.collection('messages').doc(req.params.id).delete();
-        
-        res.json({
-            success: true,
-            message: 'Message deleted successfully'
-        });
-        
-    } catch (error) {
-        console.error('Delete message error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to delete message'
-        });
-    }
-});
-
-// --- Jobs Management Routes ---
-router.get('/jobs', async (req, res) => {
-    try {
-        console.log('Admin requesting jobs list');
-        
-        const jobsSnapshot = await adminDb.collection('jobs')
-            .orderBy('createdAt', 'desc')
-            .get();
-            
-        const jobs = [];
-        jobsSnapshot.forEach(doc => {
-            const jobData = doc.data();
-            jobs.push({
-                _id: doc.id,
-                ...jobData
-            });
-        });
-        
-        res.status(200).json({ 
-            success: true, 
-            jobs 
-        });
-    } catch (error) {
-        console.error('Error fetching jobs:', error);
-        res.status(500).json({ 
+        return res.status(403).json({ 
             success: false, 
-            error: 'Failed to fetch jobs.' 
-        });
-    }
-});
-
-// --- Estimations Management Routes ---
-router.get('/estimations', async (req, res) => {
-    try {
-        console.log('Admin requesting estimations list');
-        
-        const estimationsSnapshot = await adminDb.collection('estimations')
-            .orderBy('createdAt', 'desc')
-            .get();
-            
-        const estimations = [];
-        estimationsSnapshot.forEach(doc => {
-            const estimationData = doc.data();
-            estimations.push({
-                _id: doc.id,
-                ...estimationData
-            });
+            error: 'Access denied. Admin privileges required.',
+            step: 'insufficient_privileges',
+            userType: decoded.type,
+            userRole: decoded.role,
+            userId: decoded.userId
         });
         
-        res.status(200).json({ 
-            success: true, 
-            estimations 
-        });
     } catch (error) {
-        console.error('Error fetching estimations:', error);
-        res.status(500).json({ 
+        return res.status(401).json({ 
             success: false, 
-            error: 'Failed to fetch estimations.' 
+            error: 'Token verification failed',
+            step: 'token_verification',
+            details: error.message
         });
     }
 });
 
-// --- Subscription placeholder routes ---
-router.get('/subscriptions', async (req, res) => {
+// Check Firebase connection and admin collection
+router.get('/firebase-admin-test', async (req, res) => {
     try {
-        res.json({ 
-            success: true, 
-            subscriptions: [] 
+        // Test Firebase connection
+        const testCollection = await adminDb.collection('users').limit(1).get();
+        
+        // Try to find admin users
+        const adminUsers = await adminDb.collection('users').where('type', '==', 'admin').get();
+        
+        return res.json({
+            success: true,
+            firebase: {
+                connected: true,
+                canReadUsers: true,
+                totalAdminUsers: adminUsers.size,
+                adminUsers: adminUsers.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data()
+                }))
+            },
+            environment: {
+                hasJwtSecret: !!process.env.JWT_SECRET,
+                nodeEnv: process.env.NODE_ENV
+            }
         });
+        
     } catch (error) {
-        res.status(500).json({ 
-            success: false, 
-            error: 'Failed to fetch subscriptions.' 
+        return res.json({
+            success: false,
+            firebase: {
+                connected: false,
+                error: error.message
+            }
         });
     }
 });
 
-router.get('/subscription-plans', async (req, res) => {
+// Test creating an environment admin token
+router.post('/create-env-admin-token', (req, res) => {
     try {
-        res.json({ 
-            success: true, 
-            plans: [] 
+        const { email = 'admin@steelconnect.com' } = req.body;
+        
+        const adminToken = jwt.sign({
+            userId: 'env_admin',
+            email: email,
+            name: 'Environment Admin',
+            type: 'admin',
+            role: 'admin'
+        }, process.env.JWT_SECRET || 'your_secret', { expiresIn: '24h' });
+
+        return res.json({
+            success: true,
+            message: 'Environment admin token created',
+            token: adminToken,
+            decodedToken: jwt.decode(adminToken),
+            usage: 'Use this token in Authorization: Bearer <token> header'
         });
+        
     } catch (error) {
-        res.status(500).json({ 
-            success: false, 
-            error: 'Failed to fetch subscription plans.' 
+        return res.json({
+            success: false,
+            error: error.message
         });
     }
 });

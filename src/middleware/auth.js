@@ -1,8 +1,8 @@
 // src/middleware/auth.js
-// Authentication and authorization middleware for Firebase users
+// Authentication and authorization middleware for your Firebase setup
 
 import jwt from 'jsonwebtoken';
-import { admin } from '../config/firebase.js'; // Firebase Admin SDK
+import { admin } from '../config/firebase.js';
 
 // Get Firebase Auth instance
 const auth = admin.auth();
@@ -30,10 +30,47 @@ export const authenticateToken = async (req, res, next) => {
       user = await auth.getUser(decoded.userId);
     } catch (firebaseError) {
       console.error('Firebase user lookup error:', firebaseError.message);
-      return res.status(401).json({
-        success: false,
-        error: 'Access denied. User not found in Firebase.'
-      });
+      
+      // Auto-create env_admin user if it doesn't exist
+      if (decoded.userId === 'env_admin') {
+        try {
+          console.log('🔧 Auto-creating env_admin user in Firebase...');
+          
+          user = await auth.createUser({
+            uid: 'env_admin',
+            email: 'admin@steelconnect.com',
+            displayName: 'Environment Admin',
+            emailVerified: true
+          });
+          
+          // Set admin role
+          await auth.setCustomUserClaims('env_admin', { 
+            role: 'admin',
+            type: 'admin',
+            autoCreated: true,
+            createdAt: new Date().toISOString()
+          });
+          
+          console.log('✅ Auto-created env_admin user successfully');
+          
+          // Get the user again to ensure it has the claims
+          user = await auth.getUser('env_admin');
+          
+        } catch (createError) {
+          console.error('❌ Failed to auto-create env_admin user:', createError.message);
+          return res.status(401).json({
+            success: false,
+            error: 'Access denied. Failed to create admin user.',
+            details: createError.message
+          });
+        }
+      } else {
+        return res.status(401).json({
+          success: false,
+          error: 'Access denied. User not found in Firebase.',
+          userId: decoded.userId
+        });
+      }
     }
 
     // Convert Firebase user to our expected format

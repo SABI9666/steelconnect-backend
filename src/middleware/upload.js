@@ -58,15 +58,16 @@ export const upload = multer({
 // Upload single file to Firebase Storage
 export const uploadToFirebase = async (file, folder = 'uploads') => {
   try {
-    if (!isFirebaseEnabled()) {
-      console.log('⚠️ Firebase not enabled, returning local file info');
+    if (!isFirebaseEnabled() || !bucket) {
+      console.log('⚠️ Firebase not enabled or bucket not available, returning mock file info');
       return {
         success: true,
-        url: `http://localhost:3000/uploads/${file.originalname}`,
+        url: `https://mock-storage.steelconnect.com/uploads/${file.originalname}`,
         fileName: file.originalname,
         size: file.size,
         mimeType: file.mimetype,
-        folder: folder
+        folder: folder,
+        mock: true
       };
     }
 

@@ -1,207 +1,136 @@
+// src/routes/auth.js
+// ✅ CLEAN AUTH ROUTES
+
 import express from 'express';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { adminDb } from '../config/firebase.js';
+import User from '../models/User.js'; // Adjust path to your User model
 
 const router = express.Router();
 
-// --- Admin Login Route ---
+// Test endpoint
+router.get('/test', (req, res) => {
+  res.json({ 
+    success: true, 
+    message: 'Auth route is accessible',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Verify token endpoint
+router.get('/verify', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({
+        success: false,
+        error: 'No token provided'
+      });
+    }
+
+    const token = authHeader.substring(7);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    const user = await User.findById(decoded.userId).select('-password');
+    
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
+    
+  } catch (error) {
+    console.error('Token verification error:', error);
+    res.status(401).json({
+      success: false,
+      error: 'Invalid token'
+    });
+  }
+});
+
+// Admin login endpoint
 router.post('/login/admin', async (req, res) => {
-    try {
-        console.log('--- ADMIN LOGIN ATTEMPT ---');
-        const { email, password } = req.body;
-
-        if (!email || !password) {
-            console.log('❌ Login failed: Missing email or password.');
-            return res.status(400).json({ error: 'Email and password are required.' });
-        }
-        console.log(`Step 1: Received login request for email: ${email}`);
-
-        // Method 1: Environment Variable Admin (Backup)
-        const adminEmail = process.env.ADMIN_EMAIL;
-        const adminPassword = process.env.ADMIN_PASSWORD;
-        if (adminEmail && adminPassword && email.toLowerCase() === adminEmail.toLowerCase() && password === adminPassword) {
-            console.log('✅ Success via environment variable admin.');
-            const payload = {
-                userId: 'env_admin',
-                email: adminEmail,
-                type: 'admin',
-                name: 'Environment Admin',
-                role: 'admin'
-            };
-            const token = jwt.sign(payload, process.env.JWT_SECRET || 'your_secret', { expiresIn: '24h' });
-            return res.status(200).json({
-                message: 'Admin login successful',
-                success: true,
-                token: token,
-                user: { id: 'env_admin', name: 'Environment Admin', email: adminEmail, type: 'admin', role: 'admin' }
-            });
-        }
-        console.log('Step 2: Not an environment variable admin. Checking Firestore...');
-
-        // Method 2: Database Admin Check
-        if (!adminDb) {
-            console.error('❌ FATAL: adminDb is not available! Check firebase.js initialization.');
-            return res.status(500).json({ error: 'Database service is not available.' });
-        }
-
-        console.log('Step 3: Querying the "users" collection...');
-        const usersRef = adminDb.collection('users');
-        const userSnapshot = await usersRef
-            .where('email', '==', email.toLowerCase().trim())
-            .where('type', '==', 'admin')
-            .limit(1)
-            .get();
-
-        console.log(`Step 4: Firestore query completed. Found ${userSnapshot.size} matching document(s).`);
-        if (userSnapshot.empty) {
-            console.log('❌ Login failed: No user found in Firestore with that email and type="admin".');
-            return res.status(401).json({ error: 'Invalid admin credentials.' });
-        }
-
-        console.log('Step 5: User document found. Checking password...');
-        const adminDoc = userSnapshot.docs[0];
-        const adminData = adminDoc.data();
-
-        const isMatch = await bcrypt.compare(password, adminData.password);
-        if (!isMatch) {
-            console.log('❌ Login failed: Password does not match.');
-            return res.status(401).json({ error: 'Invalid admin credentials.' });
-        }
-
-        console.log('✅ Step 6: Password matches! Login successful.');
-        const payload = {
-            userId: adminDoc.id,
-            email: adminData.email,
-            type: 'admin',
-            name: adminData.name,
-            role: 'admin'
-        };
-        const token = jwt.sign(payload, process.env.JWT_SECRET || 'your_secret', { expiresIn: '24h' });
-        return res.status(200).json({
-            message: 'Admin login successful',
-            success: true,
-            token: token,
-            user: { id: adminDoc.id, name: adminData.name, email: adminData.email, type: 'admin', role: 'admin' }
-        });
-
-    } catch (error) {
-        console.error('🔴 CATASTROPHIC ERROR in /login/admin route:', error);
-        res.status(500).json({
-            error: 'A server error occurred during admin login.',
-            details: error.message
-        });
+  try {
+    const { email, password } = req.body;
+    
+    console.log('Admin login attempt:', email);
+    
+    // Validate input
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email and password are required'
+      });
     }
-});
-
-// --- Regular User Registration ---
-router.post('/register', async (req, res) => {
-    try {
-        const { email, password, name, type } = req.body;
-
-        if (!email || !password || !name || !type) {
-            return res.status(400).json({ error: 'Email, password, name, and type are required.' });
-        }
-        if (type !== 'contractor' && type !== 'designer') {
-            return res.status(400).json({ error: 'User type must be either "contractor" or "designer".' });
-        }
-        if (password.length < 6) {
-            return res.status(400).json({ error: 'Password must be at least 6 characters long.' });
-        }
-
-        const existingUser = await adminDb.collection('users').where('email', '==', email.toLowerCase()).get();
-        if (!existingUser.empty) {
-            return res.status(409).json({ error: 'User with this email already exists.' });
-        }
-
-        const hashedPassword = await bcrypt.hash(password, 12);
-        const newUser = {
-            email: email.toLowerCase().trim(),
-            password: hashedPassword,
-            name: name.trim(),
-            type,
-            role: 'user', // Set a default role for non-admins
-            status: 'active',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            subscription: { status: 'inactive', endDate: null }
-        };
-
-        const userRef = await adminDb.collection('users').add(newUser);
-        const { password: _, ...userToReturn } = newUser;
-
-        const payload = { userId: userRef.id, email: newUser.email, type: newUser.type, name: newUser.name };
-        const token = jwt.sign(payload, process.env.JWT_SECRET || 'your_secret', { expiresIn: '7d' });
-
-        res.status(201).json({
-            message: 'User registered successfully.',
-            success: true,
-            token,
-            user: { id: userRef.id, ...userToReturn }
-        });
-
-    } catch (error) {
-        console.error('REGISTRATION ERROR:', error);
-        res.status(500).json({ error: 'An error occurred during registration.' });
+    
+    // Find user
+    const user = await User.findOne({ email });
+    if (!user) {
+      console.log('❌ User not found:', email);
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid credentials'
+      });
     }
-});
-
-// --- Regular User Login ---
-router.post('/login', async (req, res) => {
-    try {
-        const { email, password } = req.body;
-
-        if (!email || !password) {
-            return res.status(400).json({ error: 'Email and password are required.' });
-        }
-
-        const userSnapshot = await adminDb.collection('users')
-            .where('email', '==', email.toLowerCase().trim())
-            .where('type', 'in', ['contractor', 'designer'])
-            .limit(1)
-            .get();
-
-        if (userSnapshot.empty) {
-            return res.status(401).json({ error: 'Invalid credentials.' });
-        }
-
-        const userDoc = userSnapshot.docs[0];
-        const userData = userDoc.data();
-
-        if (userData.status === 'suspended') {
-            return res.status(403).json({ error: 'Your account has been suspended.' });
-        }
-
-        const isMatch = await bcrypt.compare(password, userData.password);
-        if (!isMatch) {
-            return res.status(401).json({ error: 'Invalid credentials.' });
-        }
-
-        const payload = { userId: userDoc.id, email: userData.email, type: userData.type, name: userData.name };
-        const token = jwt.sign(payload, process.env.JWT_SECRET || 'your_secret', { expiresIn: '7d' });
-
-        res.status(200).json({
-            message: 'Login successful',
-            success: true,
-            token: token,
-            user: {
-                id: userDoc.id,
-                name: userData.name,
-                email: userData.email,
-                type: userData.type,
-            }
-        });
-
-    } catch (error) {
-        console.error('LOGIN ERROR:', error);
-        res.status(500).json({ error: 'An error occurred during login.' });
+    
+    // Check password
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      console.log('❌ Invalid password for:', email);
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid credentials'
+      });
     }
+    
+    // Check if user is admin
+    if (user.role !== 'admin' && user.type !== 'admin') {
+      console.log('❌ User is not admin:', email, 'Role:', user.role);
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. Admin privileges required.'
+      });
+    }
+    
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    
+    console.log('✅ Admin login successful:', email);
+    
+    res.json({
+      success: true,
+      token,
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Login error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Login failed'
+    });
+  }
 });
 
 export default router;
-
-
-
-
-
-

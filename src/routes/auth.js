@@ -1,14 +1,10 @@
-// src/routes/auth.js
-// ✅ CLEAN AUTH ROUTES
-
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import User from '../models/User.js'; // Adjust path to your User model
+import User from '../models/User.js';
 
 const router = express.Router();
 
-// Test endpoint
 router.get('/test', (req, res) => {
   res.json({ 
     success: true, 
@@ -17,7 +13,6 @@ router.get('/test', (req, res) => {
   });
 });
 
-// Verify token endpoint
 router.get('/verify', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -60,14 +55,12 @@ router.get('/verify', async (req, res) => {
   }
 });
 
-// Admin login endpoint
 router.post('/login/admin', async (req, res) => {
   try {
     const { email, password } = req.body;
     
     console.log('Admin login attempt:', email);
     
-    // Validate input
     if (!email || !password) {
       return res.status(400).json({
         success: false,
@@ -75,43 +68,39 @@ router.post('/login/admin', async (req, res) => {
       });
     }
     
-    // Find user
     const user = await User.findOne({ email });
     if (!user) {
-      console.log('❌ User not found:', email);
+      console.log('User not found:', email);
       return res.status(401).json({
         success: false,
         error: 'Invalid credentials'
       });
     }
     
-    // Check password
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
-      console.log('❌ Invalid password for:', email);
+      console.log('Invalid password for:', email);
       return res.status(401).json({
         success: false,
         error: 'Invalid credentials'
       });
     }
     
-    // Check if user is admin
     if (user.role !== 'admin' && user.type !== 'admin') {
-      console.log('❌ User is not admin:', email, 'Role:', user.role);
+      console.log('User is not admin:', email, 'Role:', user.role);
       return res.status(403).json({
         success: false,
         error: 'Access denied. Admin privileges required.'
       });
     }
     
-    // Generate JWT token
     const token = jwt.sign(
       { userId: user._id },
       process.env.JWT_SECRET,
       { expiresIn: '24h' }
     );
     
-    console.log('✅ Admin login successful:', email);
+    console.log('Admin login successful:', email);
     
     res.json({
       success: true,
@@ -125,7 +114,7 @@ router.post('/login/admin', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ Login error:', error);
+    console.error('Login error:', error);
     res.status(500).json({
       success: false,
       error: 'Login failed'

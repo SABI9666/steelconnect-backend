@@ -233,6 +233,9 @@ export const isOwnerOrAdmin = (userIdField = 'userId') => {
   };
 };
 
+// Alias for isAdmin (some routes might use requireAdmin instead)
+export const requireAdmin = isAdmin;
+
 export default {
   authenticateToken,
   isContractor,
@@ -240,5 +243,6 @@ export default {
   isAdmin,
   isClient,
   hasRole,
-  isOwnerOrAdmin
+  isOwnerOrAdmin,
+  requireAdmin
 };

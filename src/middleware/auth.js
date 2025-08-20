@@ -2,7 +2,10 @@
 // Authentication and authorization middleware for Firebase users
 
 import jwt from 'jsonwebtoken';
-import { auth } from '../config/firebase.js'; // Firebase Admin SDK
+import { admin } from '../config/firebase.js'; // Firebase Admin SDK
+
+// Get Firebase Auth instance
+const auth = admin.auth();
 
 // Middleware to authenticate JWT token with Firebase users
 export const authenticateToken = async (req, res, next) => {

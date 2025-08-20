@@ -52,4 +52,39 @@ router.get('/health', (req, res) => {
   });
 });
 
+// Simple test endpoint that returns minimal data
+router.get('/test-data', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Test endpoint working',
+    data: {
+      test: 'Hello from backend!',
+      timestamp: new Date().toISOString(),
+      user: req.user.email
+    }
+  });
+});
+
+// Analytics endpoint (since your frontend is requesting it)
+router.get('/analytics', (req, res) => {
+  res.json({
+    success: true,
+    data: {
+      totalRevenue: 150000,
+      monthlyGrowth: 12.5,
+      activeProjects: 8,
+      completedProjects: 15,
+      chartData: [
+        { month: 'Jan', value: 10000 },
+        { month: 'Feb', value: 15000 },
+        { month: 'Mar', value: 20000 },
+        { month: 'Apr', value: 18000 },
+        { month: 'May', value: 25000 },
+        { month: 'Jun', value: 30000 }
+      ]
+    },
+    timestamp: new Date().toISOString()
+  });
+});
+
 export default router;

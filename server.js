@@ -1,17 +1,14 @@
-// ISSUES FOUND IN YOUR SERVER:
-
-// ❌ PROBLEM 1: Missing JWT_SECRET in environment validation
-// ❌ PROBLEM 2: Admin routes might not have proper authentication middleware
-// ❌ PROBLEM 3: No health check for auth endpoints
-
-// ✅ FIXED SERVER CODE:
+// server.js
+// SteelConnect Backend Server - Firebase Only (No MongoDB)
 
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import dotenv from 'dotenv';
-import mongoose from 'mongoose';
+
+// Import Firebase config
+import { firebaseStatus, isFirebaseEnabled } from './src/config/firebase.js';
 
 // Import routes
 import authRoutes from './src/routes/auth.js';
@@ -25,10 +22,15 @@ dotenv.config();
 
 // --- 🛡️ ENHANCED Environment Variable Validation ---
 const requiredEnvVars = [
-  'MONGODB_URI', 
   'PORT', 
-  'JWT_SECRET',  // ✅ ADDED: This is crucial for JWT authentication
-  // Add other required vars as needed
+  'JWT_SECRET',
+  'FIREBASE_SERVICE_ACCOUNT_KEY_BASE64', // Firebase requirement
+];
+
+// Optional but recommended env vars
+const optionalEnvVars = [
+  'NODE_ENV',
+  'CORS_ORIGIN',
 ];
 
 for (const varName of requiredEnvVars) {
@@ -41,26 +43,26 @@ for (const varName of requiredEnvVars) {
 
 console.log('✅ All required environment variables are set');
 
+// Check optional vars
+optionalEnvVars.forEach(varName => {
+  if (!process.env[varName]) {
+    console.log(`⚠️ Optional environment variable "${varName}" is not set`);
+  }
+});
+
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// --- 🔗 Enhanced Database Connection ---
-mongoose.connect(process.env.MONGODB_URI, {
-  // Add these options for better connection handling
-  maxPoolSize: 10,
-  serverSelectionTimeoutMS: 5000,
-  socketTimeoutMS: 45000,
-})
-  .then(() => {
-    console.log('✅ MongoDB connected successfully');
-    console.log('Database Name:', mongoose.connection.name);
-  })
-  .catch(err => {
-    console.error('❌ MongoDB connection error:', err);
-    process.exit(1);
-  });
+// --- 🔥 Firebase Status Check ---
+if (!isFirebaseEnabled()) {
+  console.error('❌ Firebase is not properly initialized!');
+  console.log('Firebase Status:', firebaseStatus);
+  process.exit(1);
+}
 
-// --- 🌐 CORS Configuration (Your existing config is good) ---
+console.log('✅ Firebase Status:', firebaseStatus);
+
+// --- 🌐 CORS Configuration ---
 const allowedOrigins = [
   'https://steelconnect-frontend.vercel.app',
   'https://admin-pink-nine.vercel.app',
@@ -70,10 +72,15 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin || origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) {
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true);
+    
+    // Allow localhost for development
+    if (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) {
       return callback(null, true);
     }
 
+    // Check against allowed origins
     if (allowedOrigins.some(pattern => (pattern instanceof RegExp ? pattern.test(origin) : pattern === origin))) {
       callback(null, true);
     } else {
@@ -82,26 +89,32 @@ const corsOptions = {
     }
   },
   credentials: true,
-  // ✅ ADDED: More specific CORS headers
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
+  exposedHeaders: ['Content-Length', 'X-JSON'],
+  maxAge: 86400, // 24 hours
 };
 
 // --- ⚙️ Enhanced Middleware ---
 app.use(cors(corsOptions));
 app.use(helmet({ 
   contentSecurityPolicy: false, 
-  crossOriginResourcePolicy: { policy: "cross-origin" } 
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginOpenerPolicy: { policy: "unsafe-none" }
 }));
 app.use(compression());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// Trust proxy (important for Render deployment)
+app.set('trust proxy', 1);
+
 // --- 📝 Enhanced Request Logging ---
 app.use((req, res, next) => {
   const timestamp = new Date().toISOString();
   const authHeader = req.headers.authorization ? 'Bearer ***' : 'No Auth';
-  console.log(`${timestamp} - ${req.method} ${req.url} - Auth: ${authHeader} - Origin: ${req.headers.origin || 'None'}`);
+  const userAgent = req.headers['user-agent'] ? req.headers['user-agent'].substring(0, 50) + '...' : 'Unknown';
+  console.log(`${timestamp} - ${req.method} ${req.url} - Auth: ${authHeader} - Origin: ${req.headers.origin || 'None'} - UA: ${userAgent}`);
   next();
 });
 
@@ -109,41 +122,79 @@ app.use((req, res, next) => {
 app.get('/health', (req, res) => {
   const healthCheck = {
     success: true,
-    message: 'Backend is healthy',
+    message: 'SteelConnect Backend is healthy',
     timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
+    uptime: Math.floor(process.uptime()),
     environment: process.env.NODE_ENV || 'development',
-    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    platform: process.platform,
+    nodeVersion: process.version,
+    memory: {
+      used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB',
+      total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + 'MB'
+    },
+    firebase: {
+      initialized: firebaseStatus.initialized,
+      hasFirestore: firebaseStatus.hasFirestore,
+      hasStorage: firebaseStatus.hasStorage,
+      projectId: firebaseStatus.projectId
+    },
     // Don't expose sensitive info in production
     ...(process.env.NODE_ENV !== 'production' && {
-      mongoUri: process.env.MONGODB_URI ? 'Set' : 'Not Set',
-      jwtSecret: process.env.JWT_SECRET ? 'Set' : 'Not Set',
+      env: {
+        jwtSecret: process.env.JWT_SECRET ? 'Set' : 'Not Set',
+        firebaseKey: process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 ? 'Set' : 'Not Set',
+      }
     })
   };
   res.json(healthCheck);
 });
 
-// --- ✅ AUTH TEST ENDPOINT ---
-app.get('/api/auth/test', (req, res) => {
-  res.json({ 
-    success: true, 
-    message: 'Auth route is accessible',
+// --- ✅ Firebase Status Endpoint ---
+app.get('/firebase/status', (req, res) => {
+  res.json({
+    success: true,
+    firebase: firebaseStatus,
     timestamp: new Date().toISOString()
   });
 });
 
+// --- ✅ API Status Endpoint ---
+app.get('/api/status', (req, res) => {
+  res.json({ 
+    success: true, 
+    message: 'SteelConnect API is running',
+    version: '1.0.0',
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      auth: '/api/auth',
+      admin: '/api/admin',
+      jobs: '/api/jobs',
+      quotes: '/api/quotes',
+      messages: '/api/messages',
+      estimation: '/api/estimation'
+    }
+  });
+});
+
+// --- 🏠 Root Endpoint ---
 app.get('/', (req, res) => {
   res.json({ 
+    success: true,
     message: 'SteelConnect Backend API', 
     version: '1.0.0',
+    firebase: firebaseStatus.initialized,
+    documentation: 'https://github.com/SABI9666/steelconnect-backend',
     endpoints: [
-      '/health',
-      '/api/auth',
-      '/api/admin',
-      '/api/jobs',
-      '/api/quotes',
-      '/api/messages',
-      '/api/estimation'
+      'GET /health - Health check',
+      'GET /firebase/status - Firebase status',
+      'GET /api/status - API status',
+      'GET /api/auth/test - Auth test',
+      'POST /api/auth/login/admin - Admin login',
+      'GET /api/admin/* - Admin routes',
+      'GET /api/jobs/* - Jobs routes',
+      'GET /api/quotes/* - Quotes routes',
+      'GET /api/messages/* - Messages routes',
+      'GET /api/estimation/* - Estimation routes'
     ]
   });
 });
@@ -158,22 +209,37 @@ app.use('/api/estimation', estimationRoutes);
 
 // --- 🚨 Enhanced Error Handling ---
 app.use((error, req, res, next) => {
-  console.error('❌ Global Error Handler:', {
+  const timestamp = new Date().toISOString();
+  const errorId = Math.random().toString(36).substring(2, 15);
+  
+  console.error(`❌ Global Error [${errorId}] at ${timestamp}:`, {
     message: error.message,
     stack: error.stack,
     url: req.url,
     method: req.method,
-    timestamp: new Date().toISOString()
+    headers: req.headers,
+    body: req.body,
+    params: req.params,
+    query: req.query
   });
   
-  const status = error.status || 500;
+  const status = error.status || error.statusCode || 500;
   const message = error.message || 'An internal server error occurred.';
   
-  // Don't expose stack traces in production
+  // Different error responses for different environments
   const response = {
     success: false,
     error: message,
-    ...(process.env.NODE_ENV !== 'production' && { stack: error.stack })
+    errorId: errorId,
+    timestamp: timestamp,
+    ...(process.env.NODE_ENV === 'development' && { 
+      stack: error.stack,
+      details: {
+        url: req.url,
+        method: req.method,
+        headers: req.headers
+      }
+    })
   };
   
   res.status(status).json(response);
@@ -184,43 +250,82 @@ app.use((req, res) => {
   console.log(`❌ 404 - Route not found: ${req.method} ${req.originalUrl}`);
   res.status(404).json({ 
     success: false, 
-    error: `Route not found: ${req.originalUrl}`,
+    error: `Route not found: ${req.method} ${req.originalUrl}`,
+    message: 'The requested endpoint does not exist',
     availableRoutes: [
       'GET /health',
+      'GET /firebase/status', 
+      'GET /api/status',
       'GET /api/auth/test',
       'POST /api/auth/login/admin',
-      'GET /api/admin/dashboard',
-    ]
+      'GET /api/admin/*',
+      'GET /api/jobs/*',
+      'GET /api/quotes/*',
+      'GET /api/messages/*',
+      'GET /api/estimation/*'
+    ],
+    timestamp: new Date().toISOString()
   });
 });
 
 // --- 🚀 Start Server ---
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 SteelConnect Backend Server listening on port ${PORT}`);
-  console.log(`📍 Health check: http://localhost:${PORT}/health`);
-  console.log(`📍 Auth test: http://localhost:${PORT}/api/auth/test`);
+  console.log('\n🚀 SteelConnect Backend Server Started Successfully!');
+  console.log('='.repeat(50));
+  console.log(`📍 Server: http://localhost:${PORT}`);
+  console.log(`📍 Health: http://localhost:${PORT}/health`);
+  console.log(`📍 Firebase: http://localhost:${PORT}/firebase/status`);
+  console.log(`📍 API Status: http://localhost:${PORT}/api/status`);
+  console.log(`📍 Auth Test: http://localhost:${PORT}/api/auth/test`);
+  console.log('='.repeat(50));
+  console.log(`🔥 Firebase: ${firebaseStatus.initialized ? '✅ Connected' : '❌ Not Connected'}`);
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🕒 Started at: ${new Date().toISOString()}`);
+  console.log('='.repeat(50));
 });
 
-// --- 💥 Enhanced Error Handlers ---
+// --- 💥 Enhanced Process Error Handlers ---
 process.on('unhandledRejection', (reason, promise) => {
   console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
-  server.close(() => process.exit(1));
+  console.error('Stack:', reason?.stack);
+  
+  // Don't exit immediately in production, log and continue
+  if (process.env.NODE_ENV === 'production') {
+    console.log('🔄 Continuing in production mode...');
+  } else {
+    console.log('🛑 Shutting down due to unhandled rejection...');
+    gracefulShutdown();
+  }
 });
 
 process.on('uncaughtException', (error) => {
   console.error('❌ Uncaught Exception:', error);
-  server.close(() => process.exit(1));
+  console.error('Stack:', error.stack);
+  gracefulShutdown();
 });
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
+// Graceful shutdown function
+const gracefulShutdown = () => {
   console.log('✅ SIGTERM received. Shutting down gracefully...');
+  
   server.close(() => {
-    mongoose.connection.close(false, () => {
-      console.log('✅ Server and database connections closed.');
-      process.exit(0);
-    });
+    console.log('✅ HTTP server closed');
+    
+    // Since we're using Firebase instead of MongoDB, no database connection to close
+    console.log('✅ All connections closed');
+    process.exit(0);
   });
-});
 
+  // Force close after 10 seconds
+  setTimeout(() => {
+    console.error('❌ Could not close connections in time, forcefully shutting down');
+    process.exit(1);
+  }, 10000);
+};
+
+// Graceful shutdown handlers
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
+
+// Export for testing
 export default app;

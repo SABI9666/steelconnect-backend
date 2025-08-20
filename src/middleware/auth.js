@@ -1,332 +1,244 @@
 // src/middleware/auth.js
-// Complete authentication middleware with all role checks
+// Authentication and authorization middleware
 
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
 
-// Main authentication middleware
+// Middleware to authenticate JWT token
 export const authenticateToken = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    console.log('Auth header received:', authHeader ? 'Bearer ***' : 'None');
     
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      console.log('No valid authorization header');
-      return res.status(401).json({ 
-        success: false, 
-        error: 'Access denied. No token provided.' 
+      return res.status(401).json({
+        success: false,
+        error: 'Access denied. No token provided.'
       });
     }
 
-    const token = authHeader.substring(7);
+    const token = authHeader.substring(7); // Remove 'Bearer ' prefix
     
-    if (!token) {
-      console.log('No token found after Bearer');
-      return res.status(401).json({ 
-        success: false, 
-        error: 'Access denied. Invalid token format.' 
-      });
-    }
-
+    // Verify the token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    console.log('Token decoded successfully, user ID:', decoded.userId);
     
+    // Find the user
     const user = await User.findById(decoded.userId).select('-password');
     
     if (!user) {
-      console.log('User not found in database');
-      return res.status(401).json({ 
-        success: false, 
-        error: 'Access denied. User not found.' 
+      return res.status(401).json({
+        success: false,
+        error: 'Access denied. User not found.'
       });
     }
 
-    console.log('User authenticated:', user.email, 'Role:', user.role);
+    // Add user to request object
     req.user = user;
     next();
     
   } catch (error) {
-    console.error('Auth middleware error:', error.message);
-    
-    if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({ 
-        success: false, 
-        error: 'Access denied. Token expired.' 
-      });
-    }
+    console.error('Authentication error:', error.message);
     
     if (error.name === 'JsonWebTokenError') {
-      return res.status(401).json({ 
-        success: false, 
-        error: 'Access denied. Invalid token.' 
+      return res.status(401).json({
+        success: false,
+        error: 'Access denied. Invalid token.'
       });
     }
     
-    res.status(500).json({ 
-      success: false, 
-      error: 'Internal server error during authentication.' 
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({
+        success: false,
+        error: 'Access denied. Token expired.'
+      });
+    }
+    
+    return res.status(500).json({
+      success: false,
+      error: 'Authentication failed.'
     });
   }
 };
 
-// Admin authorization middleware
-export const requireAdmin = (req, res, next) => {
-  try {
-    console.log('Checking admin privileges for user:', req.user?.email);
-    console.log('User role:', req.user?.role);
-    
-    if (!req.user) {
-      console.log('No user in request');
-      return res.status(401).json({ 
-        success: false, 
-        error: 'Authentication required.' 
-      });
-    }
-
-    const isAdmin = req.user.role === 'admin' || req.user.type === 'admin';
-    
-    if (!isAdmin) {
-      console.log('User is not admin:', req.user.role);
-      return res.status(403).json({ 
-        success: false, 
-        error: 'Access denied. Admin privileges required.' 
-      });
-    }
-
-    console.log('Admin access granted');
-    next();
-    
-  } catch (error) {
-    console.error('Admin middleware error:', error.message);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Internal server error during authorization.' 
-    });
-  }
-};
-
-// Contractor authorization middleware
-export const requireContractor = (req, res, next) => {
-  try {
-    console.log('Checking contractor privileges for user:', req.user?.email);
-    console.log('User role:', req.user?.role);
-    
-    if (!req.user) {
-      console.log('No user in request');
-      return res.status(401).json({ 
-        success: false, 
-        error: 'Authentication required.' 
-      });
-    }
-
-    const isContractor = req.user.role === 'contractor' || req.user.type === 'contractor';
-    
-    if (!isContractor) {
-      console.log('User is not contractor:', req.user.role);
-      return res.status(403).json({ 
-        success: false, 
-        error: 'Access denied. Contractor privileges required.' 
-      });
-    }
-
-    console.log('Contractor access granted');
-    next();
-    
-  } catch (error) {
-    console.error('Contractor middleware error:', error.message);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Internal server error during authorization.' 
-    });
-  }
-};
-
-// Client authorization middleware
-export const requireClient = (req, res, next) => {
-  try {
-    console.log('Checking client privileges for user:', req.user?.email);
-    console.log('User role:', req.user?.role);
-    
-    if (!req.user) {
-      console.log('No user in request');
-      return res.status(401).json({ 
-        success: false, 
-        error: 'Authentication required.' 
-      });
-    }
-
-    const isClient = req.user.role === 'client' || req.user.type === 'client';
-    
-    if (!isClient) {
-      console.log('User is not client:', req.user.role);
-      return res.status(403).json({ 
-        success: false, 
-        error: 'Access denied. Client privileges required.' 
-      });
-    }
-
-    console.log('Client access granted');
-    next();
-    
-  } catch (error) {
-    console.error('Client middleware error:', error.message);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Internal server error during authorization.' 
-    });
-  }
-};
-
-// Check if user is contractor (function, not middleware)
-export const isContractor = (user) => {
-  return user && (user.role === 'contractor' || user.type === 'contractor');
-};
-
-// Check if user is admin (function, not middleware)
-export const isAdmin = (user) => {
-  return user && (user.role === 'admin' || user.type === 'admin');
-};
-
-// Check if user is client (function, not middleware)
-export const isClient = (user) => {
-  return user && (user.role === 'client' || user.type === 'client');
-};
-
-// Allow admin OR contractor
-export const requireAdminOrContractor = (req, res, next) => {
+// Middleware to check if user is a contractor
+export const isContractor = (req, res, next) => {
   try {
     if (!req.user) {
-      return res.status(401).json({ 
-        success: false, 
-        error: 'Authentication required.' 
+      return res.status(401).json({
+        success: false,
+        error: 'Access denied. User not authenticated.'
       });
     }
 
-    const hasAccess = isAdmin(req.user) || isContractor(req.user);
-    
-    if (!hasAccess) {
-      return res.status(403).json({ 
-        success: false, 
-        error: 'Access denied. Admin or Contractor privileges required.' 
+    if (req.user.role !== 'contractor' && req.user.type !== 'contractor') {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. Contractor privileges required.'
       });
     }
 
-    console.log('Admin or Contractor access granted');
     next();
-    
   } catch (error) {
-    console.error('Admin/Contractor middleware error:', error.message);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Internal server error during authorization.' 
+    console.error('Contractor authorization error:', error.message);
+    return res.status(500).json({
+      success: false,
+      error: 'Authorization failed.'
     });
   }
 };
 
-// Allow admin OR client
-export const requireAdminOrClient = (req, res, next) => {
+// Middleware to check if user is a designer
+export const isDesigner = (req, res, next) => {
   try {
     if (!req.user) {
-      return res.status(401).json({ 
-        success: false, 
-        error: 'Authentication required.' 
+      return res.status(401).json({
+        success: false,
+        error: 'Access denied. User not authenticated.'
       });
     }
 
-    const hasAccess = isAdmin(req.user) || isClient(req.user);
-    
-    if (!hasAccess) {
-      return res.status(403).json({ 
-        success: false, 
-        error: 'Access denied. Admin or Client privileges required.' 
+    if (req.user.role !== 'designer' && req.user.type !== 'designer') {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. Designer privileges required.'
       });
     }
 
-    console.log('Admin or Client access granted');
     next();
-    
   } catch (error) {
-    console.error('Admin/Client middleware error:', error.message);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Internal server error during authorization.' 
+    console.error('Designer authorization error:', error.message);
+    return res.status(500).json({
+      success: false,
+      error: 'Authorization failed.'
     });
   }
 };
 
-// Check if user owns resource or is admin
-export const requireOwnershipOrAdmin = (resourceUserIdField = 'userId') => {
+// Middleware to check if user is an admin
+export const isAdmin = (req, res, next) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access denied. User not authenticated.'
+      });
+    }
+
+    if (req.user.role !== 'admin' && req.user.type !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. Admin privileges required.'
+      });
+    }
+
+    next();
+  } catch (error) {
+    console.error('Admin authorization error:', error.message);
+    return res.status(500).json({
+      success: false,
+      error: 'Authorization failed.'
+    });
+  }
+};
+
+// Middleware to check if user is a client
+export const isClient = (req, res, next) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access denied. User not authenticated.'
+      });
+    }
+
+    if (req.user.role !== 'client' && req.user.type !== 'client') {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. Client privileges required.'
+      });
+    }
+
+    next();
+  } catch (error) {
+    console.error('Client authorization error:', error.message);
+    return res.status(500).json({
+      success: false,
+      error: 'Authorization failed.'
+    });
+  }
+};
+
+// Middleware to check multiple roles
+export const hasRole = (roles) => {
   return (req, res, next) => {
     try {
       if (!req.user) {
-        return res.status(401).json({ 
-          success: false, 
-          error: 'Authentication required.' 
-        });
-      }
-
-      // Admin can access anything
-      if (isAdmin(req.user)) {
-        console.log('Admin access granted');
-        return next();
-      }
-
-      // Check ownership
-      const resourceUserId = req.params[resourceUserIdField] || req.body[resourceUserIdField];
-      
-      if (!resourceUserId) {
-        return res.status(400).json({
+        return res.status(401).json({
           success: false,
-          error: 'Resource owner ID not provided'
+          error: 'Access denied. User not authenticated.'
         });
       }
 
-      if (req.user._id.toString() !== resourceUserId.toString()) {
+      const userRole = req.user.role || req.user.type;
+      
+      if (!roles.includes(userRole)) {
         return res.status(403).json({
           success: false,
-          error: 'Access denied. You can only access your own resources.'
+          error: `Access denied. Required roles: ${roles.join(', ')}`
         });
       }
 
-      console.log('Resource ownership verified');
       next();
-      
     } catch (error) {
-      console.error('Ownership middleware error:', error.message);
-      res.status(500).json({ 
-        success: false, 
-        error: 'Internal server error during authorization.' 
+      console.error('Role authorization error:', error.message);
+      return res.status(500).json({
+        success: false,
+        error: 'Authorization failed.'
       });
     }
   };
 };
 
-// Optional authentication (doesn't fail if no token)
-export const optionalAuth = async (req, res, next) => {
-  try {
-    const authHeader = req.headers.authorization;
-    
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      req.user = null;
-      return next();
-    }
+// Middleware to check if user owns the resource or is admin
+export const isOwnerOrAdmin = (userIdField = 'userId') => {
+  return (req, res, next) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({
+          success: false,
+          error: 'Access denied. User not authenticated.'
+        });
+      }
 
-    const token = authHeader.substring(7);
-    
-    if (!token) {
-      req.user = null;
-      return next();
-    }
+      const userRole = req.user.role || req.user.type;
+      const userId = req.user._id.toString();
+      const resourceUserId = req.params[userIdField] || req.body[userIdField];
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.userId).select('-password');
-    
-    req.user = user || null;
-    next();
-    
-  } catch (error) {
-    console.log('Optional auth failed:', error.message);
-    req.user = null;
-    next();
-  }
+      // Allow if user is admin or owns the resource
+      if (userRole === 'admin' || userId === resourceUserId) {
+        return next();
+      }
+
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. You can only access your own resources.'
+      });
+
+    } catch (error) {
+      console.error('Ownership authorization error:', error.message);
+      return res.status(500).json({
+        success: false,
+        error: 'Authorization failed.'
+      });
+    }
+  };
+};
+
+export default {
+  authenticateToken,
+  isContractor,
+  isDesigner,
+  isAdmin,
+  isClient,
+  hasRole,
+  isOwnerOrAdmin
 };

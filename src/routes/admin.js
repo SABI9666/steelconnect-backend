@@ -1,12 +1,13 @@
-/ src/routes/admin.js
-// ✅ CLEAN ADMIN ROUTES - IMPORTS AT TOP ONLY
-
 import express from 'express';
 import { authenticateToken, requireAdmin } from '../middleware/auth.js';
+import User from '../models/User.js';
+import Quote from '../models/Quote.js'; // Adjust path to your models
+import Job from '../models/Job.js';
+import Message from '../models/Message.js';
+import Estimation from '../models/Estimation.js';
 
 const router = express.Router();
 
-// Test endpoint for debugging
 router.get('/test', authenticateToken, requireAdmin, (req, res) => {
   res.json({ 
     success: true, 
@@ -19,44 +20,75 @@ router.get('/test', authenticateToken, requireAdmin, (req, res) => {
   });
 });
 
-// Dashboard endpoint
+// REAL DASHBOARD with database queries
 router.get('/dashboard', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    console.log('✅ Dashboard access granted to:', req.user.email);
+    console.log('Dashboard access granted to:', req.user.email);
     
-    // Mock data for now - replace with real database queries
+    // Get real counts from database
+    const [
+      totalUsers,
+      totalQuotes,
+      totalJobs,
+      totalMessages,
+      totalEstimations,
+      unreadMessages,
+      pendingEstimations
+    ] = await Promise.all([
+      User.countDocuments(),
+      Quote.countDocuments(),
+      Job.countDocuments(),
+      Message.countDocuments(),
+      Estimation.countDocuments(),
+      Message.countDocuments({ status: 'unread' }),
+      Estimation.countDocuments({ status: 'pending' })
+    ]);
+
+    // Get recent activity from database
+    const recentUsers = await User.find()
+      .sort({ createdAt: -1 })
+      .limit(3)
+      .select('name email createdAt');
+
+    const recentQuotes = await Quote.find()
+      .sort({ createdAt: -1 })
+      .limit(2)
+      .select('clientName projectTitle createdAt');
+
+    const recentActivity = [
+      ...recentUsers.map(user => ({
+        type: 'user',
+        description: `New user registration: ${user.email}`,
+        timestamp: user.createdAt
+      })),
+      ...recentQuotes.map(quote => ({
+        type: 'quote',
+        description: `Quote request: ${quote.projectTitle}`,
+        timestamp: quote.createdAt
+      }))
+    ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)).slice(0, 5);
+    
     const dashboardData = {
       stats: {
-        totalUsers: 150,
-        totalQuotes: 45,
-        totalJobs: 23,
-        totalMessages: 89,
-        totalEstimations: 34,
-        activeSubscriptions: 12,
-        pendingEstimations: 8,
-        unreadMessages: 15
+        totalUsers,
+        totalQuotes,
+        totalJobs,
+        totalMessages,
+        totalEstimations,
+        activeSubscriptions: 0, // Add when you have subscription model
+        pendingEstimations,
+        unreadMessages
       },
-      recentActivity: [
-        {
-          type: 'user',
-          description: 'New user registration: john@example.com',
-          timestamp: new Date().toISOString()
-        },
-        {
-          type: 'quote',
-          description: 'Quote request submitted for steel fabrication',
-          timestamp: new Date(Date.now() - 86400000).toISOString()
-        }
-      ]
+      recentActivity
     };
     
     res.json({
       success: true,
-      ...dashboardData // Spread the data directly
+      ...dashboardData
     });
     
   } catch (error) {
-    console.error('❌ Dashboard error:', error);
+    console.error('Dashboard error:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to load dashboard data'
@@ -64,32 +96,15 @@ router.get('/dashboard', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
-// Users endpoint
+// REAL USERS from database
 router.get('/users', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    console.log('✅ Users access granted to:', req.user.email);
+    console.log('Users access granted to:', req.user.email);
     
-    // Mock data for now - replace with real User.find() query
-    const users = [
-      {
-        _id: '1',
-        name: 'John Doe',
-        email: 'john@example.com',
-        role: 'client',
-        isActive: true,
-        createdAt: new Date().toISOString(),
-        company: 'ABC Construction'
-      },
-      {
-        _id: '2',
-        name: 'Jane Smith',
-        email: 'jane@example.com',
-        role: 'contractor',
-        isActive: true,
-        createdAt: new Date().toISOString(),
-        company: 'Steel Works Inc'
-      }
-    ];
+    const users = await User.find()
+      .select('-password') // Don't send passwords
+      .sort({ createdAt: -1 })
+      .lean(); // Convert to plain objects for better performance
     
     res.json({
       success: true,
@@ -97,7 +112,7 @@ router.get('/users', authenticateToken, requireAdmin, async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ Users error:', error);
+    console.error('Users error:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to load users'
@@ -105,24 +120,15 @@ router.get('/users', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
-// Quotes endpoint
+// REAL QUOTES from database
 router.get('/quotes', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    console.log('✅ Quotes access granted to:', req.user.email);
+    console.log('Quotes access granted to:', req.user.email);
     
-    // Mock data for now
-    const quotes = [
-      {
-        _id: '1',
-        clientName: 'John Doe',
-        clientEmail: 'john@example.com',
-        projectTitle: 'Steel Framework',
-        projectType: 'Construction',
-        amount: 15000,
-        status: 'pending',
-        createdAt: new Date().toISOString()
-      }
-    ];
+    const quotes = await Quote.find()
+      .populate('clientId', 'name email') // If you have user references
+      .sort({ createdAt: -1 })
+      .lean();
     
     res.json({
       success: true,
@@ -130,7 +136,7 @@ router.get('/quotes', authenticateToken, requireAdmin, async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ Quotes error:', error);
+    console.error('Quotes error:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to load quotes'
@@ -138,56 +144,48 @@ router.get('/quotes', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
-// Subscriptions endpoint
-router.get('/subscriptions', authenticateToken, requireAdmin, async (req, res) => {
+// REAL JOBS from database
+router.get('/jobs', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    console.log('✅ Subscriptions access granted to:', req.user.email);
+    console.log('Jobs access granted to:', req.user.email);
     
-    res.json({ 
-      success: true, 
-      subscriptions: [] // Empty for now
+    const jobs = await Job.find()
+      .populate('clientId', 'name email')
+      .populate('contractorId', 'name email company')
+      .sort({ createdAt: -1 })
+      .lean();
+    
+    res.json({
+      success: true,
+      jobs: jobs
     });
     
   } catch (error) {
-    console.error('❌ Subscriptions error:', error);
+    console.error('Jobs error:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to load subscriptions'
+      error: 'Failed to load jobs'
     });
   }
 });
 
-// Subscription plans endpoint
-router.get('/subscription-plans', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    console.log('✅ Subscription plans access granted to:', req.user.email);
-    
-    res.json({ 
-      success: true, 
-      plans: [] // Empty for now
-    });
-    
-  } catch (error) {
-    console.error('❌ Subscription plans error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to load subscription plans'
-    });
-  }
-});
-
-// Messages endpoint
+// REAL MESSAGES from database
 router.get('/messages', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    console.log('✅ Messages access granted to:', req.user.email);
+    console.log('Messages access granted to:', req.user.email);
     
-    res.json({ 
-      success: true, 
-      messages: [] // Empty for now
+    const messages = await Message.find()
+      .populate('senderId', 'name email')
+      .sort({ createdAt: -1 })
+      .lean();
+    
+    res.json({
+      success: true,
+      messages: messages
     });
     
   } catch (error) {
-    console.error('❌ Messages error:', error);
+    console.error('Messages error:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to load messages'
@@ -195,18 +193,23 @@ router.get('/messages', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
-// Estimations endpoint
+// REAL ESTIMATIONS from database
 router.get('/estimations', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    console.log('✅ Estimations access granted to:', req.user.email);
+    console.log('Estimations access granted to:', req.user.email);
     
-    res.json({ 
-      success: true, 
-      estimations: [] // Empty for now
+    const estimations = await Estimation.find()
+      .populate('contractorId', 'name email company')
+      .sort({ createdAt: -1 })
+      .lean();
+    
+    res.json({
+      success: true,
+      estimations: estimations
     });
     
   } catch (error) {
-    console.error('❌ Estimations error:', error);
+    console.error('Estimations error:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to load estimations'
@@ -214,21 +217,145 @@ router.get('/estimations', authenticateToken, requireAdmin, async (req, res) => 
   }
 });
 
-// Jobs endpoint
-router.get('/jobs', authenticateToken, requireAdmin, async (req, res) => {
+// PLACEHOLDER for subscriptions (when you implement them)
+router.get('/subscriptions', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    console.log('✅ Jobs access granted to:', req.user.email);
+    console.log('Subscriptions access granted to:', req.user.email);
+    
+    // When you create Subscription model, replace with:
+    // const subscriptions = await Subscription.find().populate('userId', 'name email');
     
     res.json({ 
       success: true, 
-      jobs: [] // Empty for now
+      subscriptions: [] // Empty until you implement subscriptions
     });
     
   } catch (error) {
-    console.error('❌ Jobs error:', error);
+    console.error('Subscriptions error:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to load jobs'
+      error: 'Failed to load subscriptions'
+    });
+  }
+});
+
+// PLACEHOLDER for subscription plans
+router.get('/subscription-plans', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    console.log('Subscription plans access granted to:', req.user.email);
+    
+    // When you create SubscriptionPlan model, replace with:
+    // const plans = await SubscriptionPlan.find();
+    
+    res.json({ 
+      success: true, 
+      plans: [] // Empty until you implement subscription plans
+    });
+    
+  } catch (error) {
+    console.error('Subscription plans error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to load subscription plans'
+    });
+  }
+});
+
+// USER MANAGEMENT ENDPOINTS
+
+// Get specific user details
+router.get('/users/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id)
+      .select('-password')
+      .lean();
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    // Add activity stats (customize based on your models)
+    const stats = {
+      quotesRequested: await Quote.countDocuments({ clientId: user._id }),
+      jobsCompleted: await Job.countDocuments({ 
+        $or: [{ clientId: user._id }, { contractorId: user._id }],
+        status: 'completed' 
+      }),
+      messagesSent: await Message.countDocuments({ senderId: user._id })
+    };
+    
+    res.json({
+      success: true,
+      user: { ...user, stats }
+    });
+    
+  } catch (error) {
+    console.error('User details error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to load user details'
+    });
+  }
+});
+
+// Update user status
+router.patch('/users/:id/status', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { isActive } = req.body;
+    
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      { isActive },
+      { new: true }
+    ).select('-password');
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: `User ${isActive ? 'activated' : 'deactivated'} successfully`,
+      user
+    });
+    
+  } catch (error) {
+    console.error('Update user status error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update user status'
+    });
+  }
+});
+
+// Delete user
+router.delete('/users/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const user = await User.findByIdAndDelete(req.params.id);
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'User deleted successfully'
+    });
+    
+  } catch (error) {
+    console.error('Delete user error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete user'
     });
   }
 });

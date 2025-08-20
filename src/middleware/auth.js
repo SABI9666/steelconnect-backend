@@ -1,10 +1,10 @@
 // src/middleware/auth.js
-// Authentication and authorization middleware
+// Authentication and authorization middleware for Firebase users
 
 import jwt from 'jsonwebtoken';
-import User from '../models/User.js';
+import { auth } from '../config/firebase.js'; // Firebase Admin SDK
 
-// Middleware to authenticate JWT token
+// Middleware to authenticate JWT token with Firebase users
 export const authenticateToken = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
@@ -21,18 +21,36 @@ export const authenticateToken = async (req, res, next) => {
     // Verify the token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     
-    // Find the user
-    const user = await User.findById(decoded.userId).select('-password');
-    
-    if (!user) {
+    // Get user from Firebase using the userId from token
+    let user;
+    try {
+      user = await auth.getUser(decoded.userId);
+    } catch (firebaseError) {
+      console.error('Firebase user lookup error:', firebaseError.message);
       return res.status(401).json({
         success: false,
-        error: 'Access denied. User not found.'
+        error: 'Access denied. User not found in Firebase.'
       });
     }
 
+    // Convert Firebase user to our expected format
+    const userData = {
+      _id: user.uid,
+      uid: user.uid,
+      name: user.displayName || user.email?.split('@')[0] || 'Unknown',
+      email: user.email,
+      role: user.customClaims?.role || 'client', // Default to client if no role set
+      type: user.customClaims?.type || user.customClaims?.role || 'client',
+      emailVerified: user.emailVerified,
+      disabled: user.disabled,
+      metadata: {
+        creationTime: user.metadata.creationTime,
+        lastSignInTime: user.metadata.lastSignInTime
+      }
+    };
+
     // Add user to request object
-    req.user = user;
+    req.user = userData;
     next();
     
   } catch (error) {
@@ -55,6 +73,56 @@ export const authenticateToken = async (req, res, next) => {
     return res.status(500).json({
       success: false,
       error: 'Authentication failed.'
+    });
+  }
+};
+
+// Alternative: Authenticate using Firebase ID token directly
+export const authenticateFirebaseToken = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access denied. No token provided.'
+      });
+    }
+
+    const idToken = authHeader.substring(7); // Remove 'Bearer ' prefix
+    
+    // Verify Firebase ID token directly
+    const decodedToken = await auth.verifyIdToken(idToken);
+    
+    // Get full user data from Firebase
+    const user = await auth.getUser(decodedToken.uid);
+
+    // Convert Firebase user to our expected format
+    const userData = {
+      _id: user.uid,
+      uid: user.uid,
+      name: user.displayName || user.email?.split('@')[0] || 'Unknown',
+      email: user.email,
+      role: user.customClaims?.role || 'client',
+      type: user.customClaims?.type || user.customClaims?.role || 'client',
+      emailVerified: user.emailVerified,
+      disabled: user.disabled,
+      metadata: {
+        creationTime: user.metadata.creationTime,
+        lastSignInTime: user.metadata.lastSignInTime
+      }
+    };
+
+    // Add user to request object
+    req.user = userData;
+    next();
+    
+  } catch (error) {
+    console.error('Firebase authentication error:', error.message);
+    
+    return res.status(401).json({
+      success: false,
+      error: 'Access denied. Invalid Firebase token.'
     });
   }
 };
@@ -210,7 +278,7 @@ export const isOwnerOrAdmin = (userIdField = 'userId') => {
       }
 
       const userRole = req.user.role || req.user.type;
-      const userId = req.user._id.toString();
+      const userId = req.user.uid || req.user._id; // Use Firebase UID
       const resourceUserId = req.params[userIdField] || req.body[userIdField];
 
       // Allow if user is admin or owns the resource
@@ -238,6 +306,7 @@ export const requireAdmin = isAdmin;
 
 export default {
   authenticateToken,
+  authenticateFirebaseToken,
   isContractor,
   isDesigner,
   isAdmin,

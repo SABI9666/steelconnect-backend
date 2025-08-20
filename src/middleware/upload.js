@@ -45,8 +45,8 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-// Configure upload limits
-const upload = multer({
+// Configure upload limits - EXPORT THIS as named export 'upload'
+export const upload = multer({
   storage: storage,
   fileFilter: fileFilter,
   limits: {
@@ -312,6 +312,7 @@ export const uploadFields = (fields, folder = 'uploads') => {
 
 // Export default object with all functions
 export default {
+  upload, // Add this to the default export as well
   uploadSingle,
   uploadMultiple,
   uploadFields,

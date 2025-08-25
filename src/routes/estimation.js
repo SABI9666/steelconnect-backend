@@ -1,10 +1,79 @@
-// src/routes/estimation.js - Complete Firebase Integrated Version
+// src/routes/estimation.js - Fixed version compatible with your existing auth middleware
 import express from 'express';
 import { upload, uploadToFirebase } from '../middleware/upload.js';
-import { isAdmin, authenticateUser } from '../middleware/authMiddleware.js';
+import { isAdmin } from '../middleware/authMiddleware.js';
 import { adminDb } from '../config/firebase.js';
 
 const router = express.Router();
+
+// Simple authentication middleware for contractors (using your existing pattern)
+const authenticateToken = async (req, res, next) => {
+    try {
+        const authHeader = req.headers['authorization'];
+        const token = authHeader && authHeader.split(' ')[1];
+        
+        if (!token) {
+            return next(); // Allow anonymous access for legacy endpoints
+        }
+        
+        // Use Firebase Admin to verify token
+        const decodedToken = await adminDb.auth().verifyIdToken(token);
+        
+        // Get user data from Firestore
+        const userDoc = await adminDb.collection('users').doc(decodedToken.uid).get();
+        if (userDoc.exists) {
+            req.user = {
+                id: decodedToken.uid,
+                ...userDoc.data()
+            };
+        }
+        
+        next();
+    } catch (error) {
+        console.error('Token verification error:', error);
+        return next(); // Allow to continue for legacy endpoints
+    }
+};
+
+// Middleware to require authentication
+const requireAuth = async (req, res, next) => {
+    try {
+        const authHeader = req.headers['authorization'];
+        const token = authHeader && authHeader.split(' ')[1];
+        
+        if (!token) {
+            return res.status(401).json({
+                success: false,
+                error: 'Authentication required'
+            });
+        }
+        
+        // Use Firebase Admin to verify token
+        const decodedToken = await adminDb.auth().verifyIdToken(token);
+        
+        // Get user data from Firestore
+        const userDoc = await adminDb.collection('users').doc(decodedToken.uid).get();
+        if (!userDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                error: 'User not found'
+            });
+        }
+        
+        req.user = {
+            id: decodedToken.uid,
+            ...userDoc.data()
+        };
+        
+        next();
+    } catch (error) {
+        console.error('Authentication error:', error);
+        return res.status(401).json({
+            success: false,
+            error: 'Invalid token'
+        });
+    }
+};
 
 // Helper function to format estimation data
 const formatEstimationData = (docId, data) => {
@@ -19,77 +88,6 @@ const formatEstimationData = (docId, data) => {
         dueDate: data.dueDate?.toDate ? data.dueDate.toDate().toISOString() : data.dueDate
     };
 };
-
-// Initialize with mock data if needed (for testing)
-const initializeMockData = async () => {
-    try {
-        const snapshot = await adminDb.collection('estimations').limit(1).get();
-        if (snapshot.empty) {
-            console.log('Initializing estimation collection with sample data...');
-            
-            const mockEstimations = [
-                {
-                    projectTitle: 'Office Building Steel Frame',
-                    contractorName: 'Steel Works Inc',
-                    contractorEmail: 'contractor@steelworks.com',
-                    contractorId: 'mock-contractor-1',
-                    status: 'pending',
-                    description: 'Structural steel framework for 5-story office building',
-                    uploadedFiles: [
-                        {
-                            name: 'blueprints.pdf',
-                            url: 'https://example.com/files/blueprints.pdf',
-                            uploadedAt: new Date()
-                        }
-                    ],
-                    createdAt: new Date(Date.now() - 86400000),
-                    updatedAt: new Date(Date.now() - 86400000),
-                    priority: 'normal',
-                    estimatedAmount: null,
-                    estimatedBy: null,
-                    adminNotes: '',
-                    resultFile: null
-                },
-                {
-                    projectTitle: 'Bridge Reinforcement Project',
-                    contractorName: 'Metro Construction',
-                    contractorEmail: 'info@metroconstruction.com',
-                    contractorId: 'mock-contractor-2',
-                    status: 'completed',
-                    description: 'Steel reinforcement for highway bridge expansion',
-                    uploadedFiles: [
-                        {
-                            name: 'specifications.pdf',
-                            url: 'https://example.com/files/specifications.pdf',
-                            uploadedAt: new Date()
-                        }
-                    ],
-                    resultFile: {
-                        name: 'estimation_result.pdf',
-                        url: 'https://example.com/results/estimation_result.pdf',
-                        uploadedAt: new Date()
-                    },
-                    estimatedAmount: 125000,
-                    createdAt: new Date(Date.now() - 172800000),
-                    updatedAt: new Date(Date.now() - 43200000),
-                    priority: 'high',
-                    estimatedBy: 'admin-user-1',
-                    adminNotes: 'Completed with standard specifications'
-                }
-            ];
-
-            for (const estimation of mockEstimations) {
-                await adminDb.collection('estimations').add(estimation);
-            }
-            console.log('Sample estimation data initialized');
-        }
-    } catch (error) {
-        console.error('Error initializing mock data:', error);
-    }
-};
-
-// Initialize mock data on server start (call this once)
-// initializeMockData();
 
 // --- ADMIN ROUTES (Enhanced with Firebase) ---
 
@@ -166,26 +164,6 @@ router.get('/:id', isAdmin, async (req, res) => {
         
         const estimation = formatEstimationData(doc.id, doc.data());
         
-        // Get contractor details if available
-        if (estimation.contractorId) {
-            try {
-                const contractorDoc = await adminDb.collection('users').doc(estimation.contractorId).get();
-                if (contractorDoc.exists) {
-                    const contractorData = contractorDoc.data();
-                    estimation.contractorDetails = {
-                        id: contractorDoc.id,
-                        name: contractorData.name,
-                        email: contractorData.email,
-                        type: contractorData.type,
-                        phone: contractorData.phone,
-                        company: contractorData.company
-                    };
-                }
-            } catch (err) {
-                console.warn('Could not fetch contractor details:', err.message);
-            }
-        }
-        
         res.json({
             success: true,
             estimation: estimation
@@ -201,7 +179,7 @@ router.get('/:id', isAdmin, async (req, res) => {
 });
 
 // GET /api/estimation/:id/files - Get estimation files
-router.get('/:id/files', async (req, res) => {
+router.get('/:id/files', authenticateToken, async (req, res) => {
     try {
         const estimationId = req.params.id;
         
@@ -243,7 +221,7 @@ router.patch('/:id/status', isAdmin, async (req, res) => {
     try {
         const estimationId = req.params.id;
         const { status } = req.body;
-        const adminId = req.user.id;
+        const adminId = req.user?.id;
         
         const validStatuses = ['pending', 'in-progress', 'completed', 'rejected', 'cancelled'];
         
@@ -272,10 +250,10 @@ router.patch('/:id/status', isAdmin, async (req, res) => {
         // Update related fields based on status
         if (status === 'in-progress') {
             updateData.estimationStartDate = new Date();
-            updateData.estimatedBy = adminId;
+            if (adminId) updateData.estimatedBy = adminId;
         } else if (status === 'completed') {
             updateData.estimationCompletedDate = new Date();
-            if (!doc.data().estimatedBy) {
+            if (!doc.data().estimatedBy && adminId) {
                 updateData.estimatedBy = adminId;
             }
         }
@@ -308,7 +286,7 @@ router.post('/:id/result', isAdmin, upload.single('resultFile'), async (req, res
     try {
         const estimationId = req.params.id;
         const { notes, estimatedAmount } = req.body;
-        const adminId = req.user.id;
+        const adminId = req.user?.id;
         
         if (!req.file) {
             return res.status(400).json({
@@ -340,10 +318,10 @@ router.post('/:id/result', isAdmin, upload.single('resultFile'), async (req, res
                 },
                 status: 'completed',
                 updatedAt: new Date(),
-                estimationCompletedDate: new Date(),
-                estimatedBy: adminId
+                estimationCompletedDate: new Date()
             };
             
+            if (adminId) updateData.estimatedBy = adminId;
             if (notes) updateData.adminNotes = notes;
             if (estimatedAmount) updateData.estimatedAmount = parseFloat(estimatedAmount);
             
@@ -379,7 +357,7 @@ router.post('/:id/result', isAdmin, upload.single('resultFile'), async (req, res
 });
 
 // GET /api/estimation/:id/result - Get estimation result
-router.get('/:id/result', async (req, res) => {
+router.get('/:id/result', authenticateToken, async (req, res) => {
     try {
         const estimationId = req.params.id;
         
@@ -472,95 +450,8 @@ router.patch('/:id/due-date', isAdmin, async (req, res) => {
     }
 });
 
-// PATCH /api/estimation/:id/amount - Update estimation amount (Admin only)
-router.patch('/:id/amount', isAdmin, async (req, res) => {
-    try {
-        const estimationId = req.params.id;
-        const { amount } = req.body;
-        
-        if (!amount || isNaN(amount) || amount < 0) {
-            return res.status(400).json({
-                success: false,
-                error: 'Valid amount is required'
-            });
-        }
-        
-        const docRef = adminDb.collection('estimations').doc(estimationId);
-        const doc = await docRef.get();
-        
-        if (!doc.exists) {
-            return res.status(404).json({
-                success: false,
-                error: 'Estimation not found'
-            });
-        }
-        
-        await docRef.update({
-            estimatedAmount: parseFloat(amount),
-            updatedAt: new Date()
-        });
-        
-        // Get updated document
-        const updatedDoc = await docRef.get();
-        const estimation = formatEstimationData(updatedDoc.id, updatedDoc.data());
-        
-        res.json({
-            success: true,
-            estimation: estimation,
-            message: 'Estimation amount updated successfully'
-        });
-        
-    } catch (error) {
-        console.error('Update amount error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to update estimation amount'
-        });
-    }
-});
-
-// PATCH /api/estimation/:id/notes - Add/update admin notes (Admin only)
-router.patch('/:id/notes', isAdmin, async (req, res) => {
-    try {
-        const estimationId = req.params.id;
-        const { notes } = req.body;
-        
-        const docRef = adminDb.collection('estimations').doc(estimationId);
-        const doc = await docRef.get();
-        
-        if (!doc.exists) {
-            return res.status(404).json({
-                success: false,
-                error: 'Estimation not found'
-            });
-        }
-        
-        await docRef.update({
-            adminNotes: notes || '',
-            updatedAt: new Date()
-        });
-        
-        // Get updated document
-        const updatedDoc = await docRef.get();
-        const estimation = formatEstimationData(updatedDoc.id, updatedDoc.data());
-        
-        res.json({
-            success: true,
-            estimation: estimation,
-            message: 'Notes updated successfully'
-        });
-        
-    } catch (error) {
-        console.error('Update notes error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to update notes'
-        });
-    }
-});
-
 // DELETE /api/estimation/:id - Delete estimation
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticateToken, async (req, res) => {
     try {
         const estimationId = req.params.id;
         
@@ -612,10 +503,10 @@ router.delete('/:id', async (req, res) => {
     }
 });
 
-// --- CONTRACTOR ROUTES (Enhanced with Firebase and Authentication) ---
+// --- CONTRACTOR ROUTES ---
 
-// POST /api/estimation/submit - Submit new estimation request (Updated endpoint)
-router.post('/submit', authenticateUser, upload.array('estimationFile', 10), async (req, res) => {
+// POST /api/estimation/submit - Submit new estimation request (Authenticated users)
+router.post('/submit', requireAuth, upload.array('estimationFile', 10), async (req, res) => {
     try {
         const { projectTitle, description } = req.body;
         const userId = req.user.id;
@@ -628,16 +519,6 @@ router.post('/submit', authenticateUser, upload.array('estimationFile', 10), asy
             });
         }
         
-        // Get user data
-        const userDoc = await adminDb.collection('users').doc(userId).get();
-        if (!userDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                error: 'User not found'
-            });
-        }
-        
-        const userData = userDoc.data();
         const uploadedFiles = [];
         
         // Upload files to Firebase Storage
@@ -664,8 +545,8 @@ router.post('/submit', authenticateUser, upload.array('estimationFile', 10), asy
             projectTitle,
             description,
             contractorId: userId,
-            contractorName: userData.name,
-            contractorEmail: userData.email,
+            contractorName: req.user.name,
+            contractorEmail: req.user.email,
             status: 'pending',
             uploadedFiles,
             createdAt: new Date(),
@@ -688,7 +569,7 @@ router.post('/submit', authenticateUser, upload.array('estimationFile', 10), asy
         const createdDoc = await docRef.get();
         const formattedEstimation = formatEstimationData(docRef.id, createdDoc.data());
         
-        console.log('New estimation submitted:', projectTitle, 'by', userData.name);
+        console.log('New estimation submitted:', projectTitle, 'by', req.user.name);
         
         res.status(201).json({
             success: true,
@@ -776,7 +657,7 @@ router.post('/contractor/submit', upload.array('files', 10), async (req, res) =>
 });
 
 // GET /api/estimation/contractor/:email - Get estimations for specific contractor
-router.get('/contractor/:email', async (req, res) => {
+router.get('/contractor/:email', authenticateToken, async (req, res) => {
     try {
         const contractorEmail = req.params.email;
         
@@ -807,106 +688,6 @@ router.get('/contractor/:email', async (req, res) => {
         res.status(500).json({
             success: false,
             error: 'Failed to fetch contractor estimations'
-        });
-    }
-});
-
-// GET /api/estimation/my-estimations - Get current user's estimations
-router.get('/my-estimations', authenticateUser, async (req, res) => {
-    try {
-        const userId = req.user.id;
-        
-        const snapshot = await adminDb.collection('estimations')
-            .where('contractorId', '==', userId)
-            .orderBy('createdAt', 'desc')
-            .get();
-        
-        const estimations = snapshot.docs.map(doc => formatEstimationData(doc.id, doc.data()));
-        
-        res.json({
-            success: true,
-            data: estimations
-        });
-        
-    } catch (error) {
-        console.error('Get my estimations error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to fetch estimations'
-        });
-    }
-});
-
-// GET /api/estimation/stats/dashboard - Get estimation dashboard stats (Admin only)
-router.get('/stats/dashboard', isAdmin, async (req, res) => {
-    try {
-        const snapshot = await adminDb.collection('estimations').get();
-        
-        const stats = {
-            total: 0,
-            pending: 0,
-            inProgress: 0,
-            completed: 0,
-            rejected: 0,
-            cancelled: 0,
-            overdue: 0,
-            totalValue: 0,
-            avgCompletionDays: 0
-        };
-        
-        const completionTimes = [];
-        const now = new Date();
-        
-        snapshot.forEach(doc => {
-            const data = doc.data();
-            stats.total++;
-            
-            // Count by status
-            if (data.status) {
-                const statusKey = data.status.replace('-', '');
-                if (stats.hasOwnProperty(statusKey)) {
-                    stats[statusKey]++;
-                } else if (data.status === 'in-progress') {
-                    stats.inProgress++;
-                }
-            }
-            
-            // Total estimated value
-            if (data.estimatedAmount) {
-                stats.totalValue += data.estimatedAmount;
-            }
-            
-            // Check for overdue
-            if (data.dueDate && data.status !== 'completed' && data.dueDate.toDate() < now) {
-                stats.overdue++;
-            }
-            
-            // Calculate completion time
-            if (data.status === 'completed' && data.estimationStartDate && data.estimationCompletedDate) {
-                const startDate = data.estimationStartDate.toDate();
-                const endDate = data.estimationCompletedDate.toDate();
-                const completionDays = (endDate - startDate) / (1000 * 60 * 60 * 24);
-                completionTimes.push(completionDays);
-            }
-        });
-        
-        // Calculate average completion time
-        if (completionTimes.length > 0) {
-            stats.avgCompletionDays = Math.round(
-                completionTimes.reduce((sum, days) => sum + days, 0) / completionTimes.length
-            );
-        }
-        
-        res.json({
-            success: true,
-            stats: stats
-        });
-        
-    } catch (error) {
-        console.error('Get dashboard stats error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to get dashboard statistics'
         });
     }
 });

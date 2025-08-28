@@ -53,6 +53,7 @@ async function fetchVercelDeployments() {
     
     const staticOrigins = [
         // Known stable URLs
+        'https://www.steelconnectapp.com', // Added production domain
         'https://admin-pink-nine.vercel.app',
         'https://steelconnect-frontend.vercel.app',
     ];
@@ -352,7 +353,7 @@ app.use((error, req, res, next) => {
 // --- 404 Handler ---
 app.use('*', (req, res) => {
     console.log(`❌ 404 - Route not found: ${req.method} ${req.originalUrl}`);
-    console.log(`   Origin: ${req.headers.origin || 'No origin'}`);
+    console.log(`    Origin: ${req.headers.origin || 'No origin'}`);
     
     res.status(404).json({ 
         success: false, 

@@ -13,8 +13,8 @@ import quotesRoutes from './src/routes/quotes.js';
 import messagesRoutes from './src/routes/messages.js';
 import estimationRoutes from './src/routes/estimation.js';
 
-// Import Firebase Admin SDK directly
-import admin from 'firebase-admin';
+// Import Firebase services from external file
+import { admin, adminDb, adminAuth, adminStorage } from '../firebase.js';
 
 dotenv.config();
 const app = express();
@@ -30,56 +30,6 @@ if (process.env.RESEND_API_KEY) {
 }
 
 console.log('🚀 SteelConnect Backend Starting...');
-
-// --- Firebase Admin SDK Initialization ---
-console.log('🔥 Initializing Firebase Admin SDK...');
-
-// Check for the required environment variable
-if (!process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64) {
-  console.error('❌ FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 is not set in environment variables.');
-  throw new Error('FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 is not set in environment variables.');
-}
-
-let adminDb, adminAuth, adminStorage;
-
-try {
-  // Decode the Base64 service account key from environment variables
-  const serviceAccountJson = Buffer.from(
-    process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64,
-    'base64'
-  ).toString('utf8');
-  
-  const serviceAccount = JSON.parse(serviceAccountJson);
-  
-  // Validate service account has required fields
-  if (!serviceAccount.project_id || !serviceAccount.private_key || !serviceAccount.client_email) {
-    throw new Error('Invalid service account key - missing required fields');
-  }
-  
-  console.log(`🔥 Service account loaded for project: ${serviceAccount.project_id}`);
-  
-  // Initialize Firebase Admin SDK if not already initialized
-  if (!admin.apps.length) {
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-      storageBucket: `${serviceAccount.project_id}.appspot.com`
-    });
-    console.log('✅ Firebase Admin SDK initialized successfully');
-  } else {
-    console.log('ℹ️ Firebase Admin SDK already initialized');
-  }
-  
-  // Initialize Firebase services
-  adminDb = admin.firestore();
-  adminAuth = admin.auth();
-  adminStorage = admin.storage();
-  
-  console.log('✅ Firebase services initialized successfully');
-  
-} catch (error) {
-  console.error('❌ Failed to initialize Firebase Admin SDK:', error.message);
-  throw error;
-}
 
 // --- Firebase Connection Check ---
 try {

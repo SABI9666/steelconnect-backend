@@ -1,10 +1,9 @@
-// server.js - FULLY UPDATED AND FUNCTIONAL
+/ server.js - FULLY UPDATED AND FUNCTIONAL
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import dotenv from 'dotenv';
-import mongoose from 'mongoose';
 import { Resend } from 'resend';
 
 // Import existing routes
@@ -14,8 +13,8 @@ import quotesRoutes from './src/routes/quotes.js';
 import messagesRoutes from './src/routes/messages.js';
 import estimationRoutes from './src/routes/estimation.js';
 
-// Import Firebase services - FIX: Correct relative path
-import { admin, adminDb, adminStorage } from './firebase.js';
+// Import Firebase services - FIX: Correct relative path for src folder structure
+import { admin, adminDb, adminAuth, adminStorage } from '../firebase.js';
 
 dotenv.config();
 const app = express();
@@ -32,13 +31,16 @@ if (process.env.RESEND_API_KEY) {
 
 console.log('🚀 SteelConnect Backend Starting...');
 
-// --- Database Connection ---
-if (process.env.MONGODB_URI) {
-    mongoose.connect(process.env.MONGODB_URI)
-        .then(() => console.log('✅ MongoDB connected'))
-        .catch(err => console.error('❌ MongoDB connection error:', err));
-} else {
-    console.warn('⚠️ MONGODB_URI not found in environment variables');
+// --- Firebase Connection Check ---
+try {
+    // Test Firebase connection
+    console.log('🔥 Testing Firebase connection...');
+    const testCollection = adminDb.collection('_health_check');
+    await testCollection.doc('test').set({ timestamp: admin.firestore.FieldValue.serverTimestamp() });
+    console.log('✅ Firebase Firestore connected successfully');
+} catch (error) {
+    console.error('❌ Firebase connection error:', error.message);
+    // Don't exit - let the server start but log the error
 }
 
 // --- Enhanced CORS Configuration ---
@@ -361,6 +363,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n🎉 SteelConnect Backend Server Started Successfully!`);
     console.log(`🔗 Server running on: http://localhost:${PORT}`);
     console.log(`🔗 Health check: http://localhost:${PORT}/health`);
-    console.log(`📱 CORS origins configured: ${allowedOrigins.length > 0 ? allowedOrigins.join(', ') : 'Development mode (all origins)'}`);
+    console.log(`📱 CORS origins configured: ${allowedOrigins.length > 0 ? allowedOrigins.join(', ') : 'Development mode (all Vercel/localhost origins allowed)'}`);
     console.log(`🔥 Firebase Admin initialized: ${admin.apps.length > 0 ? '✅' : '❌'}`);
+    console.log(`💾 Database: Firebase Firestore`);
 });

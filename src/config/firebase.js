@@ -18,7 +18,7 @@ if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
     // FIX: The Admin SDK requires the bucket name in the 'project-id.appspot.com' format.
-    storageBucket: 'steelconnect-backend-3f684.appspot.com'
+    storageBucket: 'steelconnect-backend-3f684.firebasestorage.app'
   });
 }
 
@@ -28,3 +28,4 @@ const adminStorage = admin.storage();
 const adminAuth = admin.auth(); // FIX: Export auth for use in other files
 
 export { admin, adminDb, adminStorage, adminAuth };
+

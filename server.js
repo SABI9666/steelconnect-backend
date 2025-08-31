@@ -15,7 +15,7 @@ import messagesRoutes from './src/routes/messages.js';
 import estimationRoutes from './src/routes/estimation.js';
 
 // Import Firebase services and middleware helpers
-import { adminDb, adminAuth } from './firebase.js';
+import { adminDb, adminAuth } from '../firebase.js'; // FIX: Corrected path to go up one directory
 
 dotenv.config();
 const app = express();

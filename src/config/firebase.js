@@ -46,13 +46,6 @@ const adminDb = admin.firestore();
 const adminAuth = admin.auth();
 const adminStorage = admin.storage();
 
-// Test the connection
-try {
-  // This will verify that the Firestore connection is working
-  await adminDb.listCollections();
-  console.log('✅ Firestore connection verified');
-} catch (error) {
-  console.warn('⚠️ Firestore connection test failed:', error.message);
-}
+console.log('✅ Firebase services exported successfully');
 
-export { admin, adminDb, adminAuth, adminSt
+export { admin, adminDb, adminAuth, adminStorage };

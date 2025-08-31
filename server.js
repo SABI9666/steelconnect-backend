@@ -90,7 +90,7 @@ app.get('/health', (req, res) => {
     });
 });
 
-// --- Token Authentication Middleware ---
+// --- Enhanced Token Authentication Middleware ---
 const authenticateToken = async (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -100,12 +100,40 @@ const authenticateToken = async (req, res, next) => {
     }
 
     try {
+        // First, try to verify as Firebase ID token
         const decodedToken = await adminAuth.verifyIdToken(token);
         req.user = decodedToken;
         next();
-    } catch (error) {
-        console.error('Token verification error:', error);
-        return res.status(403).json({ error: 'Invalid or expired token' });
+    } catch (firebaseError) {
+        console.error('Firebase token verification failed:', firebaseError.message);
+        
+        // If Firebase verification fails, try custom token validation
+        try {
+            // Check if it's a JWT token without Firebase format
+            const jwt = require('jsonwebtoken');
+            const decoded = jwt.decode(token, { complete: true });
+            
+            if (!decoded) {
+                throw new Error('Invalid token format');
+            }
+            
+            // Log token info for debugging
+            console.log('Token debug info:', {
+                header: decoded.header,
+                hasKid: !!decoded.header?.kid,
+                iss: decoded.payload?.iss,
+                aud: decoded.payload?.aud
+            });
+            
+            return res.status(403).json({ 
+                error: 'Invalid Firebase ID token',
+                details: 'Token must be a valid Firebase ID token with "kid" claim',
+                tokenIssuer: decoded.payload?.iss || 'unknown'
+            });
+        } catch (jwtError) {
+            console.error('JWT decode error:', jwtError.message);
+            return res.status(403).json({ error: 'Invalid token format' });
+        }
     }
 };
 

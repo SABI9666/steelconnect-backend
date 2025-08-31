@@ -171,6 +171,17 @@ const authenticateToken = async (req, res, next) => {
     }
 };
 
+// --- Middleware to attach Firebase services to req ---
+app.use((req, res, next) => {
+    req.firebase = {
+        admin,
+        adminDb,
+        adminAuth,
+        adminStorage
+    };
+    next();
+});
+
 // --- Register Existing Routes ---
 app.use('/api/auth', authRoutes);
 app.use('/api/jobs', jobsRoutes);

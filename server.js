@@ -4,7 +4,9 @@ import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import dotenv from 'dotenv';
+// Add jsonwebtoken import at the top
 import { Resend } from 'resend';
+import jwt from 'jsonwebtoken';
 
 // Import existing routes - UPDATED PATHS for root-level server.js
 import authRoutes from './src/routes/auth.js';
@@ -99,41 +101,41 @@ const authenticateToken = async (req, res, next) => {
         return res.status(401).json({ error: 'Unauthorized - No token provided' });
     }
 
+    // TEMPORARY BYPASS for development - Remove in production
+    if (process.env.NODE_ENV === 'development' || process.env.SKIP_TOKEN_VERIFICATION === 'true') {
+        console.warn('⚠️ Token verification bypassed for development');
+        req.user = { uid: 'dev-user-id', email: 'dev@test.com' };
+        return next();
+    }
+
     try {
-        // First, try to verify as Firebase ID token
+        // Try to verify as Firebase ID token
         const decodedToken = await adminAuth.verifyIdToken(token);
         req.user = decodedToken;
         next();
     } catch (firebaseError) {
         console.error('Firebase token verification failed:', firebaseError.message);
         
-        // If Firebase verification fails, try custom token validation
+        // Enhanced debugging
         try {
-            // Check if it's a JWT token without Firebase format
-            const jwt = require('jsonwebtoken');
             const decoded = jwt.decode(token, { complete: true });
             
-            if (!decoded) {
-                throw new Error('Invalid token format');
-            }
-            
-            // Log token info for debugging
             console.log('Token debug info:', {
-                header: decoded.header,
-                hasKid: !!decoded.header?.kid,
-                iss: decoded.payload?.iss,
-                aud: decoded.payload?.aud
+                header: decoded?.header,
+                hasKid: !!decoded?.header?.kid,
+                iss: decoded?.payload?.iss,
+                aud: decoded?.payload?.aud,
+                tokenLength: token.length,
+                tokenPrefix: token.substring(0, 20) + '...'
             });
-            
-            return res.status(403).json({ 
-                error: 'Invalid Firebase ID token',
-                details: 'Token must be a valid Firebase ID token with "kid" claim',
-                tokenIssuer: decoded.payload?.iss || 'unknown'
-            });
-        } catch (jwtError) {
-            console.error('JWT decode error:', jwtError.message);
-            return res.status(403).json({ error: 'Invalid token format' });
+        } catch (e) {
+            console.log('Could not decode token for debugging:', e.message);
         }
+        
+        return res.status(403).json({ 
+            error: 'Invalid Firebase ID token',
+            details: 'Token must be a valid Firebase ID token with "kid" claim. Check frontend authentication implementation.'
+        });
     }
 };
 

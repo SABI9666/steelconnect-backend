@@ -109,32 +109,62 @@ const authenticateToken = async (req, res, next) => {
     }
 
     try {
-        // Try to verify as Firebase ID token
-        const decodedToken = await adminAuth.verifyIdToken(token);
-        req.user = decodedToken;
-        next();
-    } catch (firebaseError) {
-        console.error('Firebase token verification failed:', firebaseError.message);
+        // First decode to check token type
+        const decoded = jwt.decode(token, { complete: true });
         
-        // Enhanced debugging
-        try {
-            const decoded = jwt.decode(token, { complete: true });
-            
-            console.log('Token debug info:', {
-                header: decoded?.header,
-                hasKid: !!decoded?.header?.kid,
-                iss: decoded?.payload?.iss,
-                aud: decoded?.payload?.aud,
-                tokenLength: token.length,
-                tokenPrefix: token.substring(0, 20) + '...'
-            });
-        } catch (e) {
-            console.log('Could not decode token for debugging:', e.message);
+        if (!decoded) {
+            return res.status(403).json({ error: 'Invalid token format' });
+        }
+
+        console.log('Token debug info:', {
+            header: decoded.header,
+            hasKid: !!decoded.header?.kid,
+            iss: decoded.payload?.iss,
+            aud: decoded.payload?.aud,
+            tokenLength: token.length,
+            alg: decoded.header?.alg
+        });
+
+        // Check if it's a Firebase ID token (has kid and RS256)
+        if (decoded.header?.kid && decoded.header?.alg === 'RS256') {
+            // Try Firebase verification
+            const decodedToken = await adminAuth.verifyIdToken(token);
+            req.user = decodedToken;
+            return next();
         }
         
+        // Handle custom JWT tokens (HS256)
+        if (decoded.header?.alg === 'HS256') {
+            const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+            
+            try {
+                const verifiedToken = jwt.verify(token, JWT_SECRET);
+                req.user = {
+                    uid: verifiedToken.userId || verifiedToken.id || verifiedToken.sub,
+                    email: verifiedToken.email,
+                    ...verifiedToken
+                };
+                console.log('✅ Custom JWT verified:', req.user.email);
+                return next();
+            } catch (jwtError) {
+                console.error('Custom JWT verification failed:', jwtError.message);
+                return res.status(403).json({ 
+                    error: 'Invalid custom JWT token',
+                    details: 'Token signature verification failed'
+                });
+            }
+        }
+
         return res.status(403).json({ 
-            error: 'Invalid Firebase ID token',
-            details: 'Token must be a valid Firebase ID token with "kid" claim. Check frontend authentication implementation.'
+            error: 'Unsupported token type',
+            details: 'Token must be either Firebase ID token or custom JWT'
+        });
+
+    } catch (firebaseError) {
+        console.error('Token verification failed:', firebaseError.message);
+        return res.status(403).json({ 
+            error: 'Token verification failed',
+            details: firebaseError.message
         });
     }
 };

@@ -17,22 +17,18 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.24.0",
-    "bcrypt": "^5.1.1",
     "bcryptjs": "^2.4.3",
     "compression": "^1.7.4",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "express-rate-limit": "^7.1.5",
     "firebase-admin": "^11.11.0",
     "helmet": "^7.0.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^7.5.0",
     "multer": "^1.4.5-lts.1",
-    "path": "^0.12.7",
     "pdf-parse": "^1.1.1",
-    "uuid": "^9.0.1",
-    "validator": "^13.11.0"
+    "resend": "^3.4.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
@@ -44,19 +40,12 @@
     "construction",
     "api",
     "nodejs",
-    "express",
-    "firebase",
-    "jwt",
-    "file-upload"
+    "express"
   ],
   "author": "SteelConnect Team",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "your-git-repo-url"
-  },
-  "homepage": "https://steelconnect.com",
-  "bugs": {
-    "url": "your-git-repo-url/issues"
   }
 }

@@ -379,6 +379,274 @@ authNotifyRouter.post('/notify-login', authenticateToken, async (req, res) => {
 app.use('/api/auth', authNotifyRouter);
 console.log('✅ Login notification route added');
 
+// --- ADMIN ROUTES ---
+const adminRouter = express.Router();
+
+// Admin Dashboard - Get system overview
+adminRouter.get('/dashboard', authenticateToken, async (req, res) => {
+    try {
+        // Basic admin check - you might want to enhance this
+        if (!req.user.email || !req.user.email.includes('admin')) {
+            return res.status(403).json({ error: 'Admin access required' });
+        }
+
+        // Get dashboard statistics
+        const [usersSnapshot, jobsSnapshot, quotesSnapshot, notificationsSnapshot] = await Promise.all([
+            adminDb.collection('users').get(),
+            adminDb.collection('jobs').get(),
+            adminDb.collection('quotes').get(),
+            adminDb.collection('notifications').get()
+        ]);
+
+        const stats = {
+            totalUsers: usersSnapshot.size,
+            totalJobs: jobsSnapshot.size,
+            totalQuotes: quotesSnapshot.size,
+            totalNotifications: notificationsSnapshot.size,
+            timestamp: new Date().toISOString()
+        };
+
+        // Get recent activity (last 10 jobs)
+        const recentJobsSnapshot = await adminDb.collection('jobs')
+            .orderBy('createdAt', 'desc')
+            .limit(10)
+            .get();
+
+        const recentJobs = recentJobsSnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            createdAt: doc.data().createdAt?.toDate?.() || null
+        }));
+
+        res.json({
+            success: true,
+            data: {
+                statistics: stats,
+                recentJobs: recentJobs
+            }
+        });
+    } catch (error) {
+        console.error('Admin dashboard error:', error);
+        res.status(500).json({ error: 'Failed to fetch dashboard data' });
+    }
+});
+
+// Admin Users Management
+adminRouter.get('/users', authenticateToken, async (req, res) => {
+    try {
+        if (!req.user.email || !req.user.email.includes('admin')) {
+            return res.status(403).json({ error: 'Admin access required' });
+        }
+
+        const limit = parseInt(req.query.limit) || 50;
+        const snapshot = await adminDb.collection('users').limit(limit).get();
+        
+        const users = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            createdAt: doc.data().createdAt?.toDate?.() || null,
+            updatedAt: doc.data().updatedAt?.toDate?.() || null
+        }));
+
+        res.json({ success: true, data: users });
+    } catch (error) {
+        console.error('Admin users error:', error);
+        res.status(500).json({ error: 'Failed to fetch users' });
+    }
+});
+
+// Admin Jobs Management
+adminRouter.get('/jobs', authenticateToken, async (req, res) => {
+    try {
+        if (!req.user.email || !req.user.email.includes('admin')) {
+            return res.status(403).json({ error: 'Admin access required' });
+        }
+
+        const limit = parseInt(req.query.limit) || 50;
+        const snapshot = await adminDb.collection('jobs')
+            .orderBy('createdAt', 'desc')
+            .limit(limit)
+            .get();
+        
+        const jobs = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            createdAt: doc.data().createdAt?.toDate?.() || null,
+            updatedAt: doc.data().updatedAt?.toDate?.() || null
+        }));
+
+        res.json({ success: true, data: jobs });
+    } catch (error) {
+        console.error('Admin jobs error:', error);
+        res.status(500).json({ error: 'Failed to fetch jobs' });
+    }
+});
+
+app.use('/api/admin', adminRouter);
+console.log('✅ Admin routes registered');
+
+// --- DESIGNER PORTAL ROUTES ---
+const designerRouter = express.Router();
+
+designerRouter.get('/dashboard', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+        
+        // Get designer's quotes and projects
+        const [quotesSnapshot, projectsSnapshot] = await Promise.all([
+            adminDb.collection('quotes').where('designerId', '==', userId).limit(10).get(),
+            adminDb.collection('projects').where('designerId', '==', userId).limit(10).get()
+        ]);
+
+        const quotes = quotesSnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            createdAt: doc.data().createdAt?.toDate?.() || null
+        }));
+
+        const projects = projectsSnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            createdAt: doc.data().createdAt?.toDate?.() || null
+        }));
+
+        res.json({
+            success: true,
+            data: {
+                stats: {
+                    totalQuotes: quotesSnapshot.size,
+                    totalProjects: projectsSnapshot.size
+                },
+                recentQuotes: quotes,
+                recentProjects: projects
+            }
+        });
+    } catch (error) {
+        console.error('Designer dashboard error:', error);
+        res.status(500).json({ error: 'Failed to fetch designer dashboard data' });
+    }
+});
+
+designerRouter.get('/projects', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+        const limit = parseInt(req.query.limit) || 20;
+        
+        const snapshot = await adminDb.collection('projects')
+            .where('designerId', '==', userId)
+            .orderBy('createdAt', 'desc')
+            .limit(limit)
+            .get();
+
+        const projects = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            createdAt: doc.data().createdAt?.toDate?.() || null
+        }));
+
+        res.json({ success: true, data: projects });
+    } catch (error) {
+        console.error('Designer projects error:', error);
+        res.status(500).json({ error: 'Failed to fetch designer projects' });
+    }
+});
+
+app.use('/api/designer', designerRouter);
+console.log('✅ Designer portal routes registered');
+
+// --- CONTRACTOR PORTAL ROUTES ---
+const contractorRouter = express.Router();
+
+contractorRouter.get('/dashboard', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+        
+        // Get contractor's jobs and bids
+        const [jobsSnapshot, bidsSnapshot] = await Promise.all([
+            adminDb.collection('jobs').where('contractorId', '==', userId).limit(10).get(),
+            adminDb.collection('bids').where('contractorId', '==', userId).limit(10).get()
+        ]);
+
+        const jobs = jobsSnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            createdAt: doc.data().createdAt?.toDate?.() || null
+        }));
+
+        const bids = bidsSnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            createdAt: doc.data().createdAt?.toDate?.() || null
+        }));
+
+        res.json({
+            success: true,
+            data: {
+                stats: {
+                    totalJobs: jobsSnapshot.size,
+                    totalBids: bidsSnapshot.size
+                },
+                recentJobs: jobs,
+                recentBids: bids
+            }
+        });
+    } catch (error) {
+        console.error('Contractor dashboard error:', error);
+        res.status(500).json({ error: 'Failed to fetch contractor dashboard data' });
+    }
+});
+
+contractorRouter.get('/jobs', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+        const limit = parseInt(req.query.limit) || 20;
+        
+        const snapshot = await adminDb.collection('jobs')
+            .where('contractorId', '==', userId)
+            .orderBy('createdAt', 'desc')
+            .limit(limit)
+            .get();
+
+        const jobs = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            createdAt: doc.data().createdAt?.toDate?.() || null
+        }));
+
+        res.json({ success: true, data: jobs });
+    } catch (error) {
+        console.error('Contractor jobs error:', error);
+        res.status(500).json({ error: 'Failed to fetch contractor jobs' });
+    }
+});
+
+contractorRouter.get('/bids', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+        const limit = parseInt(req.query.limit) || 20;
+        
+        const snapshot = await adminDb.collection('bids')
+            .where('contractorId', '==', userId)
+            .orderBy('createdAt', 'desc')
+            .limit(limit)
+            .get();
+
+        const bids = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            createdAt: doc.data().createdAt?.toDate?.() || null
+        }));
+
+        res.json({ success: true, data: bids });
+    } catch (error) {
+        console.error('Contractor bids error:', error);
+        res.status(500).json({ error: 'Failed to fetch contractor bids' });
+    }
+});
+
+app.use('/api/contractor', contractorRouter);
+console.log('✅ Contractor portal routes registered');
+
 // --- Error handling middleware ---
 app.use((error, req, res, next) => {
     console.error('❌ Global Error Handler:', error);

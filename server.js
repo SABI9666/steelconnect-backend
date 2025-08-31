@@ -6,14 +6,14 @@ import compression from 'compression';
 import dotenv from 'dotenv';
 import { Resend } from 'resend';
 
-// Import existing routes
+// Import existing routes - UPDATED PATHS for root-level server.js
 import authRoutes from './src/routes/auth.js';
 import jobsRoutes from './src/routes/jobs.js';
 import quotesRoutes from './src/routes/quotes.js';
 import messagesRoutes from './src/routes/messages.js';
 import estimationRoutes from './src/routes/estimation.js';
 
-// Import Firebase services from external file
+// Import Firebase services from firebase.js in same directory
 import { admin, adminDb, adminAuth, adminStorage } from './firebase.js';
 
 dotenv.config();
@@ -30,17 +30,6 @@ if (process.env.RESEND_API_KEY) {
 }
 
 console.log('🚀 SteelConnect Backend Starting...');
-
-// --- Firebase Connection Check ---
-try {
-    console.log('🔥 Testing Firebase connection...');
-    const testCollection = adminDb.collection('_health_check');
-    await testCollection.doc('test').set({ timestamp: admin.firestore.FieldValue.serverTimestamp() });
-    console.log('✅ Firebase Firestore connected successfully');
-} catch (error) {
-    console.error('❌ Firebase connection error:', error.message);
-    // Don't exit - let the server start but log the error
-}
 
 // --- Enhanced CORS Configuration ---
 const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',').filter(Boolean);
@@ -111,8 +100,7 @@ const authenticateToken = async (req, res, next) => {
     }
 
     try {
-        // FIX: Use admin.auth() instead of adminAuth
-        const decodedToken = await admin.auth().verifyIdToken(token);
+        const decodedToken = await adminAuth.verifyIdToken(token);
         req.user = decodedToken;
         next();
     } catch (error) {
@@ -301,7 +289,7 @@ authNotifyRouter.post('/notify-login', authenticateToken, async (req, res) => {
         const ip = req.ip || req.connection.remoteAddress || 'Unknown IP';
         
         await resend.emails.send({
-            from: 'SteelConnect Security <noreply@steelconnect.com>', // Replace with your verified domain
+            from: 'SteelConnect Security <noreply@steelconnect.com>',
             to: email,
             subject: 'New Login to Your SteelConnect Account',
             html: `

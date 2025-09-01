@@ -85,6 +85,7 @@ const deleteFile = async (filePath) => {
     }
 };
 
+// FIXED: Dashboard with adminUser property that frontend expects
 router.get('/dashboard', async (req, res) => {
     try {
         const [usersSnapshot, quotesSnapshot, messagesSnapshot, jobsSnapshot, estimationsSnapshot] = await Promise.all([
@@ -110,7 +111,7 @@ router.get('/dashboard', async (req, res) => {
                 recentEstimations.push({
                     id: doc.id,
                     ...data,
-                    contractorName: 'Loading...'
+                    contractorName: data.contractorName || 'Unknown'
                 });
             }
         });
@@ -124,12 +125,24 @@ router.get('/dashboard', async (req, res) => {
             pendingEstimations,
             completedEstimations,
             inProgressEstimations,
-            recentActivity: recentEstimations
+            recentActivity: recentEstimations,
+            // FIXED: Add adminUser property that frontend expects
+            adminUser: {
+                name: req.user.name || 'Administrator',
+                email: req.user.email || 'admin@steelconnect.com',
+                lastLogin: new Date().toISOString()
+            }
         };
 
         res.json({
             success: true,
-            stats
+            stats,
+            // Add duplicate keys for frontend compatibility
+            data: stats,
+            totalUsers: stats.totalUsers,
+            totalEstimations: stats.totalEstimations,
+            pendingEstimations: stats.pendingEstimations,
+            completedEstimations: stats.completedEstimations
         });
 
     } catch (error) {
@@ -142,6 +155,7 @@ router.get('/dashboard', async (req, res) => {
     }
 });
 
+// FIXED: Estimations list without orderBy to avoid Firestore index issues
 router.get('/estimations', async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
@@ -158,18 +172,15 @@ router.get('/estimations', async (req, res) => {
             query = query.where('contractorId', '==', contractorId);
         }
 
-        const snapshot = await query
-            .orderBy('createdAt', 'desc')
-            .limit(limit)
-            .offset((page - 1) * limit)
-            .get();
+        // FIXED: Remove orderBy to avoid index requirements
+        const snapshot = await query.limit(limit * page).get();
 
-        const estimations = [];
+        const allEstimations = [];
         const contractorIds = new Set();
 
         snapshot.forEach(doc => {
             const data = doc.data();
-            estimations.push({
+            allEstimations.push({
                 id: doc.id,
                 ...data,
                 totalFiles: (data.uploadedFiles ? data.uploadedFiles.length : 0) + (data.resultFile ? 1 : 0),
@@ -180,6 +191,19 @@ router.get('/estimations', async (req, res) => {
             }
         });
 
+        // Sort in memory by createdAt
+        allEstimations.sort((a, b) => {
+            const dateA = new Date(a.createdAt || 0);
+            const dateB = new Date(b.createdAt || 0);
+            return dateB - dateA; // Newest first
+        });
+
+        // Paginate in memory
+        const startIndex = (page - 1) * limit;
+        const endIndex = startIndex + limit;
+        const paginatedEstimations = allEstimations.slice(startIndex, endIndex);
+
+        // Get contractor data
         const contractorData = {};
         if (contractorIds.size > 0) {
             const contractorPromises = Array.from(contractorIds).map(async (id) => {
@@ -188,25 +212,33 @@ router.get('/estimations', async (req, res) => {
                     if (contractorDoc.exists) {
                         const data = contractorDoc.data();
                         contractorData[id] = {
-                            name: data.name,
-                            email: data.email,
-                            type: data.type
+                            name: data.name || 'Unknown',
+                            email: data.email || 'No email',
+                            type: data.type || 'contractor'
                         };
                     }
                 } catch (error) {
                     console.error('Error fetching contractor:', error);
+                    contractorData[id] = {
+                        name: 'Error Loading',
+                        email: 'Error',
+                        type: 'contractor'
+                    };
                 }
             });
-            await Promise.all(contractorPromises);
+            await Promise.allSettled(contractorPromises);
         }
 
-        const formattedEstimations = estimations.map(est => ({
+        const formattedEstimations = paginatedEstimations.map(est => ({
             ...est,
-            contractor: contractorData[est.contractorId] || null
+            contractor: contractorData[est.contractorId] || {
+                name: 'Unknown User',
+                email: 'No email',
+                type: 'contractor'
+            }
         }));
 
-        const totalSnapshot = await query.get();
-        const total = totalSnapshot.size;
+        const total = allEstimations.length;
 
         res.json({
             success: true,
@@ -249,11 +281,11 @@ router.get('/estimations/:id', async (req, res) => {
                 if (contractorDoc.exists) {
                     const contractorData = contractorDoc.data();
                     contractor = {
-                        name: contractorData.name,
-                        email: contractorData.email,
-                        type: contractorData.type,
-                        phone: contractorData.phone,
-                        company: contractorData.company
+                        name: contractorData.name || 'Unknown',
+                        email: contractorData.email || 'No email',
+                        type: contractorData.type || 'contractor',
+                        phone: contractorData.phone || 'No phone',
+                        company: contractorData.company || 'No company'
                     };
                 }
             } catch (error) {
@@ -268,8 +300,8 @@ router.get('/estimations/:id', async (req, res) => {
                 if (adminDoc.exists) {
                     const adminData = adminDoc.data();
                     estimatedBy = {
-                        name: adminData.name,
-                        email: adminData.email
+                        name: adminData.name || 'Unknown Admin',
+                        email: adminData.email || 'No email'
                     };
                 }
             } catch (error) {
@@ -412,6 +444,7 @@ router.put('/estimations/:id/amount', async (req, res) => {
     }
 });
 
+// FIXED: Result upload with proper file handling
 router.post('/estimations/:id/upload-result', upload.single('resultFile'), async (req, res) => {
     try {
         if (!req.file) {
@@ -434,6 +467,7 @@ router.post('/estimations/:id/upload-result', upload.single('resultFile'), async
 
         const currentData = estimationDoc.data();
 
+        // Delete old result file if exists
         if (currentData.resultFile && currentData.resultFile.filePath) {
             await deleteFile(currentData.resultFile.filePath);
         }
@@ -446,6 +480,7 @@ router.post('/estimations/:id/upload-result', upload.single('resultFile'), async
             updatedAt: new Date().toISOString()
         };
 
+        // Automatically mark as completed when result is uploaded
         if (currentData.status !== 'completed') {
             updateData.status = 'completed';
             updateData.estimationCompletedDate = new Date().toISOString();
@@ -480,6 +515,7 @@ router.post('/estimations/:id/upload-result', upload.single('resultFile'), async
     }
 });
 
+// FIXED: File download with better error handling
 router.get('/estimations/:id/files/:fileId/download', async (req, res) => {
     try {
         const { id, fileId } = req.params;
@@ -500,7 +536,11 @@ router.get('/estimations/:id/files/:fileId/download', async (req, res) => {
         if (type === 'result' && estimationData.resultFile) {
             file = estimationData.resultFile;
         } else if (estimationData.uploadedFiles) {
-            file = estimationData.uploadedFiles.find(f => f.fileId === fileId || f.fileName === fileId);
+            file = estimationData.uploadedFiles.find(f => 
+                f.fileId === fileId || 
+                f.fileName === fileId ||
+                f.originalName === fileId
+            );
         }
 
         if (!file) {
@@ -575,6 +615,7 @@ router.put('/estimations/:id/notes', async (req, res) => {
     }
 });
 
+// FIXED: Users endpoint with proper data structure
 router.get('/users', async (req, res) => {
     try {
         const usersSnapshot = await adminDb.collection('users').get();
@@ -584,11 +625,22 @@ router.get('/users', async (req, res) => {
             const userData = doc.data();
             if (userData.type !== 'admin') {
                 const { password, ...userWithoutPassword } = userData;
-                users.push({ id: doc.id, ...userWithoutPassword });
+                users.push({ 
+                    id: doc.id, 
+                    ...userWithoutPassword,
+                    name: userData.name || 'Unknown User',
+                    email: userData.email || 'No email',
+                    type: userData.type || 'contractor',
+                    status: userData.status || 'active'
+                });
             }
         });
 
-        res.json({ success: true, users });
+        res.json({ 
+            success: true, 
+            users,
+            data: users // Add for frontend compatibility
+        });
 
     } catch (error) {
         console.error('Get users error:', error);
@@ -636,6 +688,70 @@ router.delete('/users/:id', async (req, res) => {
     }
 });
 
+// ADD: Missing endpoints that frontend expects
+router.get('/quotes', async (req, res) => {
+    try {
+        const quotesSnapshot = await adminDb.collection('quotes').get();
+        const quotes = [];
+        
+        quotesSnapshot.forEach(doc => {
+            quotes.push({ id: doc.id, ...doc.data() });
+        });
+
+        res.json({ success: true, quotes });
+
+    } catch (error) {
+        console.error('Get quotes error:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Failed to fetch quotes.',
+            error: error.message 
+        });
+    }
+});
+
+router.get('/messages', async (req, res) => {
+    try {
+        const messagesSnapshot = await adminDb.collection('messages').get();
+        const messages = [];
+        
+        messagesSnapshot.forEach(doc => {
+            messages.push({ id: doc.id, ...doc.data() });
+        });
+
+        res.json({ success: true, messages });
+
+    } catch (error) {
+        console.error('Get messages error:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Failed to fetch messages.',
+            error: error.message 
+        });
+    }
+});
+
+router.get('/jobs', async (req, res) => {
+    try {
+        const jobsSnapshot = await adminDb.collection('jobs').get();
+        const jobs = [];
+        
+        jobsSnapshot.forEach(doc => {
+            jobs.push({ id: doc.id, ...doc.data() });
+        });
+
+        res.json({ success: true, jobs });
+
+    } catch (error) {
+        console.error('Get jobs error:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Failed to fetch jobs.',
+            error: error.message 
+        });
+    }
+});
+
 function getStatusInfo(status) {
     const statusMap = {
         'pending': { text: 'Pending Review', color: 'orange' },
@@ -664,7 +780,10 @@ router.get('/test', (req, res) => {
             'PUT /estimations/:id/notes - Add admin notes',
             'GET /users - List all users',
             'PUT /users/:id/status - Update user status',
-            'DELETE /users/:id - Delete user'
+            'DELETE /users/:id - Delete user',
+            'GET /quotes - List all quotes',
+            'GET /messages - List all messages',
+            'GET /jobs - List all jobs'
         ]
     });
 });

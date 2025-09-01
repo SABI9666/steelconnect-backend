@@ -1,41 +1,30 @@
-// Load contractor's estimations
-async function loadEstimations() {
-    try {
-        // FIX: Added `/api` prefix for consistency with the fetch call below
-        const response = await apiCall('/api/contractor/estimations');
-        const estimations = response.estimations || [];
-        
-        const container = document.getElementById('estimations-list');
-        container.innerHTML = estimations.map(est => `
-            <div class="estimation-item">
-                <h3>${est.projectTitle}</h3>
-                <p>Status: <span class="status ${est.status}">${est.status}</span></p>
-                <p>Submitted: ${new Date(est.createdAt).toLocaleDateString()}</p>
-                ${est.estimatedAmount ? `<p>Estimated Amount: $${est.estimatedAmount}</p>` : ''}
-                <div class="actions">
-                    <button onclick="viewDetails('${est._id}')">View Details</button>
-                    ${est.resultFile ? `<button onclick="downloadResult('${est._id}')">Download Result</button>` : ''}
-                </div>
-            </div>
-        `).join('');
-    } catch (error) {
-        console.error('Failed to load estimations');
-    }
-}
+import express from 'express';
+import { authenticateToken, isContractor } from '../middleware/auth.js'; // Adjust path if needed
+// You will need a controller to handle the logic
+// import { getMyEstimations, createEstimationRequest } from '../controllers/estimationController.js';
 
-// Submit new estimation
-async function submitEstimation(formData) {
-    try {
-        const response = await fetch('/api/contractor/estimations', {
-            method: 'POST',
-            body: formData // FormData with files
-        });
-        
-        if (response.ok) {
-            alert('Estimation request submitted successfully!');
-            window.location.href = 'estimations.html';
-        }
-    } catch (error) {
-        alert('Failed to submit estimation request');
-    }
-}
+const router = express.Router();
+
+// Mock controller functions for demonstration
+// Replace these with your actual controller logic
+const getMyEstimations = async (req, res) => {
+    // Logic to fetch estimations for the logged-in contractor (req.user.id)
+    res.json({ estimations: [{ projectTitle: 'Sample Project', status: 'Pending', _id: '123' }] });
+};
+
+const createEstimationRequest = async (req, res) => {
+    // Logic to handle file uploads and create a new estimation request
+    console.log(req.body); // form fields
+    console.log(req.files); // uploaded files
+    res.json({ success: true, message: 'Estimation created successfully.' });
+};
+
+// GET /api/contractor/estimations
+router.get('/estimations', authenticateToken, isContractor, getMyEstimations);
+
+// POST /api/contractor/estimations
+router.post('/estimations', authenticateToken, isContractor, createEstimationRequest);
+
+
+// FIX: Use a default export at the end of the file
+export default router;

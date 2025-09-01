@@ -1,122 +1,100 @@
-// src/routes/admin.js - CORRECTED with Firebase Storage
-
 import express from 'express';
-import multer from 'multer';
-import path from 'path';
-import jwt from 'jsonwebtoken';
-import { adminDb, adminStorage } from '../config/firebase.js'; // Assuming you export storage
+import { isAdmin } from '../middleware/authMiddleware.js'; // Assuming this path
+import { adminDb } from '../config/firebase.js'; // This is from your log, but will be replaced with Mongoose in a complete system
+import User from '../models/User.js';
+import Quote from '../models/Quote.js';
+import Message from '../models/Message.js';
+import Job from '../models/Job.js';
 
 const router = express.Router();
-const bucket = adminStorage.bucket();
 
-// --- (isAdmin middleware remains the same) ---
-const isAdmin = (req, res, next) => {
-    // ... your isAdmin logic
-};
+// Middleware to use on all admin routes
 router.use(isAdmin);
 
-
-// --- CORRECTED: Use multer's memoryStorage for admin uploads ---
-const upload = multer({
-    storage: multer.memoryStorage(),
-    limits: { fileSize: 50 * 1024 * 1024 },
-    fileFilter: (req, file, cb) => {
-        if (file.mimetype === 'application/pdf') cb(null, true);
-        else cb(new Error('Only PDF files are allowed'), false);
-    }
-});
-
-
-// --- CORRECTED: Route to upload result PDF directly to Firebase ---
-router.post('/estimations/:id/upload-result', upload.single('resultFile'), async (req, res) => {
+// --- Admin Dashboard Stats Route ---
+router.get('/dashboard', async (req, res) => {
     try {
-        const estimationId = req.params.id;
-        const file = req.file;
+        const totalUsers = await User.countDocuments();
+        const totalQuotes = await Quote.countDocuments();
+        const totalMessages = await Message.countDocuments();
+        const totalJobs = await Job.countDocuments();
 
-        if (!file) {
-            return res.status(400).json({ success: false, message: 'No file provided' });
-        }
-
-        const ref = adminDb.collection('estimations').doc(estimationId);
-        const doc = await ref.get();
-        if (!doc.exists) {
-            return res.status(404).json({ success: false, message: 'Estimation not found' });
-        }
-        
-        // Upload file to Firebase Storage
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        const newFileName = `result-${uniqueSuffix}.pdf`;
-        const filePath = `results/${estimationId}/${newFileName}`; // Store results in a separate folder
-
-        const blob = bucket.file(filePath);
-        const blobStream = blob.createWriteStream({
-            metadata: { contentType: file.mimetype }
-        });
-
-        blobStream.on('error', (err) => {
-            throw err;
-        });
-
-        blobStream.on('finish', async () => {
-            // Prepare metadata to save in Firestore
-            const resultFileMetadata = {
-                fileId: uniqueSuffix,
-                originalName: file.originalname,
-                storagePath: filePath,
-                mimeType: file.mimetype,
-                fileSize: file.size,
-                uploadDate: new Date().toISOString()
-            };
-
-            const updateData = {
-                resultFile: resultFileMetadata,
-                status: 'completed',
-                updatedAt: new Date().toISOString()
-            };
-            if (req.body.amount) {
-                updateData.estimatedAmount = parseFloat(req.body.amount);
+        res.status(200).json({
+            success: true,
+            stats: {
+                totalUsers,
+                totalQuotes,
+                totalMessages,
+                totalJobs,
+                loginCount: '...', // You could implement this by adding a counter to the User model
             }
-            
-            await ref.update(updateData);
-            res.json({ success: true, message: 'Result uploaded successfully' });
         });
-
-        blobStream.end(file.buffer);
-
     } catch (error) {
-        console.error("Upload result error:", error);
-        res.status(500).json({ success: false, error: error.message });
+        console.error('Error fetching dashboard stats:', error);
+        res.status(500).json({ success: false, error: 'Failed to fetch dashboard statistics.' });
     }
 });
 
-
-// --- CORRECTED: Download route for contractor-uploaded files (as seen by admin) ---
-router.get('/estimations/:id/files/:fileId/download', async (req, res) => {
+// --- User Management Routes ---
+router.get('/users', async (req, res) => {
     try {
-        const { id, fileId } = req.params;
-        const doc = await adminDb.collection('estimations').doc(id).get();
-        if (!doc.exists) return res.status(404).send('Estimation not found');
-        
-        const data = doc.data();
-        const file = data.uploadedFiles?.find(f => f.fileId === fileId || f.fileName === fileId);
-        
-        if (!file || !file.storagePath) {
-            return res.status(404).send('File record not found in estimation.');
-        }
-
-        const [url] = await bucket.file(file.storagePath).getSignedUrl({
-            action: 'read',
-            expires: Date.now() + 15 * 60 * 1000, // 15 minutes
-        });
-
-        res.redirect(url);
-
+        const users = await User.find({ role: { $ne: 'admin' } }, '-password').lean();
+        res.status(200).json({ success: true, users });
     } catch (error) {
-        console.error('Admin download file error:', error);
-        res.status(500).json({ success: false, error: 'Failed to process file download.' });
+        console.error('Error fetching users:', error);
+        res.status(500).json({ success: false, error: 'Failed to fetch users.' });
     }
 });
 
-// ... (Other routes like get estimations, update status, etc., remain the same) ...
+router.put('/users/:id/status', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+        await User.findByIdAndUpdate(id, { status });
+        res.status(200).json({ success: true, message: 'User status updated successfully.' });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Failed to update user status.' });
+    }
+});
+
+router.delete('/users/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        await User.findByIdAndDelete(id);
+        res.status(200).json({ success: true, message: 'User deleted successfully.' });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Failed to delete user.' });
+    }
+});
+
+// --- Quotes Management Routes ---
+router.get('/quotes', async (req, res) => {
+    try {
+        const quotes = await Quote.find().populate('userId', 'name email').lean();
+        res.status(200).json({ success: true, quotes });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Failed to fetch quotes.' });
+    }
+});
+
+// --- Messages Management Routes ---
+router.get('/messages', async (req, res) => {
+    try {
+        const messages = await Message.find().populate('senderId', 'name email').lean();
+        res.status(200).json({ success: true, messages });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Failed to fetch messages.' });
+    }
+});
+
+// --- Jobs Management Routes ---
+router.get('/jobs', async (req, res) => {
+    try {
+        const jobs = await Job.find().lean();
+        res.status(200).json({ success: true, jobs });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Failed to fetch jobs.' });
+    }
+});
 
 export default router;

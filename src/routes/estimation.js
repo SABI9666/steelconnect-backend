@@ -1,105 +1,41 @@
-import express from 'express';
-import multer from 'multer';
-import { v4 as uuidv4 } from 'uuid';
-
-// Import the pre-initialized db and bucket from our central firebase config
-import { db, bucket } from '../config/firebase.js'; 
-import { authenticate } from '../middleware/auth.js';
-
-const router = express.Router();
-
-// Configure multer to handle file uploads in memory.
-const upload = multer({
-    storage: multer.memoryStorage(),
-    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB file size limit
-});
-
-/**
- * @route   GET /api/estimation/contractor/:email
- * @desc    Get all estimations for a specific contractor
- * @access  Private
- */
-router.get('/contractor/:email', authenticate, async (req, res) => {
+// Load contractor's estimations
+async function loadEstimations() {
     try {
-        const { email } = req.params;
-        console.log(`Fetching estimations from Firestore for: ${email}`);
+        // FIX: Added `/api` prefix for consistency with the fetch call below
+        const response = await apiCall('/api/contractor/estimations');
+        const estimations = response.estimations || [];
         
-        const estimationsRef = db.collection('estimations');
-        const snapshot = await estimationsRef.where('contractorEmail', '==', email).get();
-
-        if (snapshot.empty) {
-            // It's not an error if a user has no estimations, so return an empty array.
-            return res.status(200).json({ success: true, estimations: [] });
-        }
-
-        const estimations = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        res.status(200).json({ success: true, estimations });
-
+        const container = document.getElementById('estimations-list');
+        container.innerHTML = estimations.map(est => `
+            <div class="estimation-item">
+                <h3>${est.projectTitle}</h3>
+                <p>Status: <span class="status ${est.status}">${est.status}</span></p>
+                <p>Submitted: ${new Date(est.createdAt).toLocaleDateString()}</p>
+                ${est.estimatedAmount ? `<p>Estimated Amount: $${est.estimatedAmount}</p>` : ''}
+                <div class="actions">
+                    <button onclick="viewDetails('${est._id}')">View Details</button>
+                    ${est.resultFile ? `<button onclick="downloadResult('${est._id}')">Download Result</button>` : ''}
+                </div>
+            </div>
+        `).join('');
     } catch (error) {
-        console.error('❌ Error fetching estimations by contractor:', error);
-        res.status(500).json({ success: false, error: 'Failed to fetch estimations.' });
+        console.error('Failed to load estimations');
     }
-});
+}
 
-/**
- * @route   POST /api/estimation/
- * @desc    Create a new estimation with a file upload
- * @access  Private
- */
-router.post('/', authenticate, upload.single('file'), async (req, res) => {
+// Submit new estimation
+async function submitEstimation(formData) {
     try {
-        const { projectTitle, contractorEmail } = req.body;
-
-        // Validate that all required data is present.
-        if (!projectTitle || !contractorEmail || !req.file) {
-            return res.status(400).json({ success: false, error: 'Missing required fields or file.' });
+        const response = await fetch('/api/contractor/estimations', {
+            method: 'POST',
+            body: formData // FormData with files
+        });
+        
+        if (response.ok) {
+            alert('Estimation request submitted successfully!');
+            window.location.href = 'estimations.html';
         }
-
-        console.log(`Creating new estimation for ${contractorEmail} with file: ${req.file.originalname}`);
-
-        // Create a unique name for the file to prevent overwrites in storage.
-        const fileName = `${uuidv4()}-${req.file.originalname}`;
-        const fileUpload = bucket.file(fileName);
-
-        // Create a writable stream to upload the file buffer.
-        const blobStream = fileUpload.createWriteStream({
-            metadata: { contentType: req.file.mimetype },
-        });
-
-        blobStream.on('error', (error) => {
-            throw new Error('File upload to Firebase Storage failed:', error);
-        });
-
-        blobStream.on('finish', async () => {
-            // The file is now uploaded.
-            const publicUrl = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
-            
-            // Now, save the estimation details (including the file URL) to Firestore.
-            const newEstimation = {
-                projectTitle,
-                contractorEmail,
-                fileUrl: publicUrl,
-                originalFileName: req.file.originalname,
-                status: 'Submitted',
-                createdAt: new Date().toISOString(),
-            };
-            const docRef = await db.collection('estimations').add(newEstimation);
-
-            res.status(201).json({ 
-                success: true, 
-                message: 'Estimation created successfully!',
-                estimationId: docRef.id 
-            });
-        });
-
-        // Start the upload by writing the file buffer to the stream.
-        blobStream.end(req.file.buffer);
-
     } catch (error) {
-        console.error('❌ Error creating estimation:', error);
-        res.status(500).json({ success: false, error: 'Failed to create estimation.' });
+        alert('Failed to submit estimation request');
     }
-});
-
-export default router;
-
+}

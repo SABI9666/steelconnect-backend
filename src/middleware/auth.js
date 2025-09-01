@@ -1,57 +1,57 @@
 import jwt from 'jsonwebtoken';
-import { adminDb } from '../config/firebase.js';
 
-export const authenticateToken = async (req, res, next) => {
-  try {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // Format: "Bearer TOKEN"
+/**
+ * Middleware to authenticate users using a JWT.
+ * It checks for a valid token in the Authorization header.
+ */
+export const authenticate = (req, res, next) => {
+    // Look for the token in the Authorization header.
+    const authHeader = req.headers.authorization;
 
-    if (!token) {
-      return res.status(401).json({ success: false, message: 'Access token is required for authentication.' });
+    // If the header is missing or doesn't start with "Bearer ", the user is unauthorized.
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ 
+            success: false, 
+            error: 'Authorization token is required.' 
+        });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_default_secret_key');
+    // Extract the token from the header (format: "Bearer <token>").
+    const token = authHeader.split(' ')[1];
 
-    // --- FIX: Looks for 'decoded.userId' to correctly read the token payload ---
-    if (!decoded || !decoded.userId) {
-      return res.status(403).json({ success: false, message: 'Token is malformed or invalid.' });
+    try {
+        // Verify the token using the secret key.
+        // This will throw an error if the token is invalid or expired.
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_default_secret_key_change_in_production');
+        
+        // If the token is valid, add the decoded user payload to the request object.
+        // This makes the user's information (like ID and email) available to the route handlers.
+        req.user = decoded; 
+        
+        // Pass control to the next middleware or the route handler.
+        next();
+    } catch (error) {
+        // If verification fails, the token is invalid or expired.
+        console.error('❌ JWT Verification Error:', error.message);
+        return res.status(401).json({ 
+            success: false, 
+            error: 'Invalid or expired token.' 
+        });
     }
-    const userDoc = await adminDb.collection('users').doc(decoded.userId).get();
+};
 
-    if (!userDoc.exists) {
-      return res.status(401).json({ success: false, message: 'User associated with this token not found.' });
+/**
+ * Middleware to check if the authenticated user is an admin.
+ * This should be used *after* the `authenticate` middleware.
+ */
+export const isAdmin = (req, res, next) => {
+    // The `authenticate` middleware should have already run and added `req.user`.
+    if (!req.user || (req.user.type !== 'admin' && req.user.role !== 'admin')) {
+        return res.status(403).json({ 
+            success: false, 
+            error: 'Access denied. Admin privileges required.' 
+        });
     }
-
-    const userData = userDoc.data();
-    // Attach user information to the request object
-    req.user = {
-      id: userDoc.id,
-      userId: userDoc.id, // Added userId to match controller expectations
-      email: userData.email,
-      name: userData.name,
-      type: userData.type,
-    };
-
     next();
-  } catch (error) {
-    console.error("Authentication Error:", error.message);
-    return res.status(403).json({ success: false, message: 'Invalid or expired token.' });
-  }
 };
 
-export const isContractor = (req, res, next) => {
-    if (req.user && req.user.type === 'contractor') {
-        next();
-    } else {
-        return res.status(403).json({ success: false, message: 'Access denied. Contractor role required.' });
-    }
-};
-
-// Added missing isDesigner function
-export const isDesigner = (req, res, next) => {
-    if (req.user && req.user.type === 'designer') {
-        next();
-    } else {
-        return res.status(403).json({ success: false, message: 'Access denied. Designer role required.' });
-    }
-};

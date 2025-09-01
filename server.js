@@ -6,7 +6,7 @@ import dotenv from 'dotenv';
 
 // IMPORTANT: This line initializes Firebase for the entire application.
 // It must be imported before any of your routes.
-import './src/config/firebase.js'; 
+import './src/config/firebase.js';
 
 // Import all your application routes
 import authRoutes from './src/routes/auth.js';
@@ -26,7 +26,7 @@ console.log('🚀 SteelConnect Backend Starting...');
 // Enable CORS for all origins. You can restrict this in production if needed.
 app.use(cors({ credentials: true, origin: true }));
 // Basic security headers
-app.use(helmet({ 
+app.use(helmet({
     contentSecurityPolicy: false,
     crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
@@ -48,7 +48,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/jobs', jobsRoutes);
 app.use('/api/quotes', quotesRoutes);
 app.use('/api/messages', messagesRoutes);
-app.use('/api/estimation', estimationRoutes);
+// FIX: Corrected the base path to match frontend calls
+app.use('/api/contractor', estimationRoutes);
 console.log('✅ All API routes have been registered.');
 
 // --- Health Check Endpoint ---
@@ -68,8 +69,8 @@ app.use((req, res, next) => {
 // This catches any errors thrown from your route handlers.
 app.use((error, req, res, next) => {
     console.error('❌ An unexpected error occurred:', error);
-    res.status(500).json({ 
-        success: false, 
+    res.status(500).json({
+        success: false,
         error: 'Internal Server Error. Please try again later.',
     });
 });
@@ -79,4 +80,3 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🎉 Server is live and listening on port ${PORT}`);
     console.log(`🔗 Health check available at http://localhost:${PORT}/health`);
 });
-

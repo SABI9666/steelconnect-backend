@@ -1,301 +1,206 @@
 import express from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import { adminDb } from '../config/firebase.js';
+import { adminDb, adminStorage } from '../config/firebase.js';
+import { authMiddleware } from '../middleware/authMiddleware.js';
+import multer from 'multer';
+import { Resend } from 'resend';
 
 const router = express.Router();
+const resend = new Resend(process.env.RESEND_API_KEY);
 
-// --- Admin Login Route ---
-router.post('/login/admin', async (req, res) => {
-    try {
-        console.log('--- ADMIN LOGIN ATTEMPT ---');
-        const { email, password } = req.body;
-
-        if (!email || !password) {
-            console.log('❌ Login failed: Missing email or password.');
-            return res.status(400).json({ 
-                success: false,
-                error: 'Email and password are required.' 
-            });
-        }
-        
-        console.log(`Admin login attempt: ${email}`);
-
-        // Method 1: Environment Variable Admin (Backup)
-        const adminEmail = process.env.ADMIN_EMAIL;
-        const adminPassword = process.env.ADMIN_PASSWORD;
-        
-        if (adminEmail && adminPassword && email.toLowerCase() === adminEmail.toLowerCase() && password === adminPassword) {
-            console.log('✅ Environment admin login successful');
-            
-            const payload = {
-                userId: 'env_admin',
-                email: adminEmail,
-                type: 'admin',
-                name: 'Environment Admin',
-                role: 'admin'
-            };
-            
-            const token = jwt.sign(payload, process.env.JWT_SECRET || 'your_secret', { expiresIn: '24h' });
-            
-            console.log('Admin login successful (temporary auth):', adminEmail);
-            
-            return res.status(200).json({
-                message: 'Admin login successful',
-                success: true,
-                token: token,
-                user: { 
-                    id: 'env_admin', 
-                    userId: 'env_admin',
-                    name: 'Environment Admin', 
-                    email: adminEmail, 
-                    type: 'admin', 
-                    role: 'admin' 
-                }
-            });
-        }
-        
-        console.log('Not environment admin, checking database...');
-
-        // Method 2: Database Admin Check
-        if (!adminDb) {
-            console.error('❌ FATAL: adminDb is not available!');
-            return res.status(500).json({ 
-                success: false,
-                error: 'Database service is not available.' 
-            });
-        }
-
-        const usersRef = adminDb.collection('users');
-        const userSnapshot = await usersRef
-            .where('email', '==', email.toLowerCase().trim())
-            .where('type', '==', 'admin')
-            .limit(1)
-            .get();
-
-        console.log(`Firestore query completed. Found ${userSnapshot.size} admin user(s).`);
-        
-        if (userSnapshot.empty) {
-            console.log('❌ No admin user found in database');
-            return res.status(401).json({ 
-                success: false,
-                error: 'Invalid admin credentials.' 
-            });
-        }
-
-        const adminDoc = userSnapshot.docs[0];
-        const adminData = adminDoc.data();
-
-        const isMatch = await bcrypt.compare(password, adminData.password);
-        if (!isMatch) {
-            console.log('❌ Password mismatch for admin');
-            return res.status(401).json({ 
-                success: false,
-                error: 'Invalid admin credentials.' 
-            });
-        }
-
-        console.log('✅ Database admin login successful');
-        
-        const payload = {
-            userId: adminDoc.id,
-            email: adminData.email,
-            type: 'admin',
-            name: adminData.name,
-            role: 'admin'
-        };
-        
-        const token = jwt.sign(payload, process.env.JWT_SECRET || 'your_secret', { expiresIn: '24h' });
-        
-        return res.status(200).json({
-            message: 'Admin login successful',
-            success: true,
-            token: token,
-            user: { 
-                id: adminDoc.id, 
-                userId: adminDoc.id,
-                name: adminData.name, 
-                email: adminData.email, 
-                type: 'admin', 
-                role: 'admin' 
-            }
-        });
-
-    } catch (error) {
-        console.error('❌ ADMIN LOGIN ERROR:', error);
-        res.status(500).json({
-            success: false,
-            error: 'A server error occurred during admin login.',
-            details: error.message
-        });
-    }
+// Multer setup for handling file uploads in memory
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 15 * 1024 * 1024 }, // 15MB limit per file
 });
 
-// --- Regular User Registration ---
+
+// --- User Registration ---
 router.post('/register', async (req, res) => {
-    try {
-        const { email, password, name, type } = req.body;
-
-        console.log(`Registration attempt: ${email} as ${type}`);
-
-        if (!email || !password || !name || !type) {
-            return res.status(400).json({ 
-                success: false,
-                error: 'Email, password, name, and type are required.' 
-            });
-        }
-        
-        if (type !== 'contractor' && type !== 'designer') {
-            return res.status(400).json({ 
-                success: false,
-                error: 'User type must be either "contractor" or "designer".' 
-            });
-        }
-        
-        if (password.length < 6) {
-            return res.status(400).json({ 
-                success: false,
-                error: 'Password must be at least 6 characters long.' 
-            });
-        }
-
-        const existingUser = await adminDb.collection('users').where('email', '==', email.toLowerCase()).get();
-        if (!existingUser.empty) {
-            return res.status(409).json({ 
-                success: false,
-                error: 'User with this email already exists.' 
-            });
-        }
-
-        const hashedPassword = await bcrypt.hash(password, 12);
-        const newUser = {
-            email: email.toLowerCase().trim(),
-            password: hashedPassword,
-            name: name.trim(),
-            type,
-            role: 'user',
-            status: 'active',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            subscription: { status: 'inactive', endDate: null }
-        };
-
-        const userRef = await adminDb.collection('users').add(newUser);
-        const { password: _, ...userToReturn } = newUser;
-
-        const payload = { 
-            userId: userRef.id, 
-            email: newUser.email, 
-            type: newUser.type, 
-            name: newUser.name,
-            role: newUser.role
-        };
-        
-        const token = jwt.sign(payload, process.env.JWT_SECRET || 'your_secret', { expiresIn: '7d' });
-
-        console.log(`✅ User registered successfully: ${email} (ID: ${userRef.id})`);
-
-        res.status(201).json({
-            message: 'User registered successfully.',
-            success: true,
-            token,
-            user: { 
-                id: userRef.id, 
-                userId: userRef.id,
-                ...userToReturn 
-            }
-        });
-
-    } catch (error) {
-        console.error('❌ REGISTRATION ERROR:', error);
-        res.status(500).json({ 
-            success: false,
-            error: 'An error occurred during registration.' 
-        });
+  try {
+    const { email, password, name, type } = req.body;
+    if (!email || !password || !name || !type) {
+      return res.status(400).json({ error: 'All fields are required.', success: false });
     }
+    if (type !== 'contractor' && type !== 'designer') {
+      return res.status(400).json({ error: 'Invalid user type.', success: false });
+    }
+    const existingUser = await adminDb.collection('users').where('email', '==', email.toLowerCase()).get();
+    if (!existingUser.empty) {
+      return res.status(409).json({ error: 'User with this email already exists.', success: false });
+    }
+    const hashedPassword = await bcrypt.hash(password, 12);
+    const newUser = {
+      email: email.toLowerCase().trim(),
+      password: hashedPassword,
+      name: name.trim(),
+      type,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      isActive: true
+    };
+    const userRef = await adminDb.collection('users').add(newUser);
+    res.status(201).json({ message: 'User registered successfully.', success: true, userId: userRef.id });
+  } catch (error) {
+    console.error('REGISTRATION ERROR:', error);
+    res.status(500).json({ error: 'An error occurred during registration.', success: false });
+  }
 });
 
-// --- Regular User Login ---
+
+// --- Regular User Login with Email Notification ---
 router.post('/login', async (req, res) => {
     try {
         const { email, password } = req.body;
-
-        console.log(`Login attempt: ${email}`);
-
         if (!email || !password) {
-            return res.status(400).json({ 
-                success: false,
-                error: 'Email and password are required.' 
-            });
+            return res.status(400).json({ error: 'Email and password are required.', success: false });
         }
-
-        const userSnapshot = await adminDb.collection('users')
+        const usersRef = adminDb.collection('users');
+        const userSnapshot = await usersRef
             .where('email', '==', email.toLowerCase().trim())
             .where('type', 'in', ['contractor', 'designer'])
             .limit(1)
             .get();
 
         if (userSnapshot.empty) {
-            console.log(`❌ No user found: ${email}`);
-            return res.status(401).json({ 
-                success: false,
-                error: 'Invalid credentials.' 
-            });
+            return res.status(401).json({ error: 'Invalid credentials.', success: false });
         }
-
         const userDoc = userSnapshot.docs[0];
         const userData = userDoc.data();
-
-        if (userData.status === 'suspended') {
-            console.log(`❌ Account suspended: ${email}`);
-            return res.status(403).json({ 
-                success: false,
-                error: 'Your account has been suspended.' 
-            });
+        if (userData.isActive === false) {
+            return res.status(401).json({ error: 'Account is deactivated.', success: false });
         }
-
         const isMatch = await bcrypt.compare(password, userData.password);
         if (!isMatch) {
-            console.log(`❌ Password mismatch: ${email}`);
-            return res.status(401).json({ 
-                success: false,
-                error: 'Invalid credentials.' 
-            });
+            return res.status(401).json({ error: 'Invalid credentials.', success: false });
+        }
+        await userDoc.ref.update({ lastLoginAt: new Date().toISOString() });
+
+        const payload = { userId: userDoc.id, email: userData.email, type: userData.type, name: userData.name };
+        const token = jwt.sign(payload, process.env.JWT_SECRET || 'your_default_secret_key', { expiresIn: '7d' });
+
+        // --- Send login notification email via Resend ---
+        if (process.env.RESEND_API_KEY && process.env.RESEND_FROM_EMAIL) {
+            try {
+                await resend.emails.send({
+                    from: `SteelConnect <${process.env.RESEND_FROM_EMAIL}>`,
+                    to: userData.email,
+                    subject: 'New Login to Your SteelConnect Account',
+                    html: `<p>Hi ${userData.name},</p><p>We detected a new login to your account at ${new Date().toLocaleString()}. If this was not you, please secure your account immediately.</p>`,
+                });
+                console.log(`✅ Login notification sent to ${userData.email}`);
+            } catch (emailError) {
+                console.error('❌ Failed to send login notification email:', emailError);
+            }
+        } else {
+            console.warn('⚠️ RESEND_API_KEY or RESEND_FROM_EMAIL not set. Skipping login notification.');
         }
 
-        const payload = { 
-            userId: userDoc.id, 
-            email: userData.email, 
-            type: userData.type, 
-            name: userData.name,
-            role: userData.role || 'user'
-        };
-        
-        const token = jwt.sign(payload, process.env.JWT_SECRET || 'your_secret', { expiresIn: '7d' });
-
-        console.log(`✅ Login successful: ${email} (ID: ${userDoc.id}, Type: ${userData.type})`);
-
+        const { password: _, ...userToReturn } = userData;
         res.status(200).json({
             message: 'Login successful',
             success: true,
             token: token,
-            user: {
-                id: userDoc.id,
-                userId: userDoc.id,
-                name: userData.name,
-                email: userData.email,
-                type: userData.type,
-                role: userData.role || 'user'
-            }
+            user: { id: userDoc.id, ...userToReturn }
         });
-
     } catch (error) {
-        console.error('❌ LOGIN ERROR:', error);
-        res.status(500).json({ 
-            success: false,
-            error: 'An error occurred during login.' 
-        });
+        console.error('LOGIN ERROR:', error);
+        res.status(500).json({ error: 'An error occurred during login.', success: false });
     }
 });
+
+// --- Get Current User Profile ---
+router.get('/profile', authMiddleware, async (req, res) => {
+    try {
+        const userDoc = await adminDb.collection('users').doc(req.user.userId).get();
+        if (!userDoc.exists) {
+            return res.status(404).json({ error: 'User not found.', success: false });
+        }
+        const { password, ...userProfile } = userDoc.data();
+        res.status(200).json({ success: true, user: { id: userDoc.id, ...userProfile } });
+    } catch (error) {
+        console.error('PROFILE ERROR:', error);
+        res.status(500).json({ error: 'Error fetching profile.', success: false });
+    }
+});
+
+
+// --- UPDATE User Profile (Contractor & Designer) ---
+router.put('/profile', authMiddleware, upload.fields([
+    { name: 'resume', maxCount: 1 },
+    { name: 'certificates' }
+]), async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        const userRef = adminDb.collection('users').doc(userId);
+        const userDoc = await userRef.get();
+
+        if (!userDoc.exists) {
+            return res.status(404).json({ success: false, error: 'User not found.' });
+        }
+        const userData = userDoc.data();
+        const updateData = { updatedAt: new Date().toISOString() };
+        
+        if (req.body.name) updateData.name = req.body.name.trim();
+
+        const uploadFile = async (file, path) => {
+            const bucket = adminStorage.bucket();
+            const blob = bucket.file(path);
+            const blobStream = blob.createWriteStream({ metadata: { contentType: file.mimetype } });
+            return new Promise((resolve, reject) => {
+                blobStream.on('error', reject);
+                blobStream.on('finish', async () => {
+                    await blob.makePublic();
+                    resolve(blob.publicUrl());
+                });
+                blobStream.end(file.buffer);
+            });
+        };
+
+        if (userData.type === 'contractor') {
+            if (req.body.companyName) updateData.companyName = req.body.companyName;
+            if (req.body.linkedInUrl) updateData.linkedInUrl = req.body.linkedInUrl;
+        } else if (userData.type === 'designer') {
+            if (req.body.skills) {
+                try {
+                    updateData.skills = JSON.parse(req.body.skills);
+                } catch { /* ignore invalid JSON */ }
+            }
+            if (req.files && req.files.resume) {
+                const resumeFile = req.files.resume[0];
+                const filePath = `profiles/${userId}/resume/${Date.now()}-${resumeFile.originalname}`;
+                updateData.resumeUrl = await uploadFile(resumeFile, filePath);
+            }
+            if (req.files && req.files.certificates) {
+                const existingCerts = userData.certificates || [];
+                const uploadPromises = req.files.certificates.map(file => {
+                    const filePath = `profiles/${userId}/certificates/${Date.now()}-${file.originalname}`;
+                    return uploadFile(file, filePath).then(url => ({
+                        url,
+                        name: file.originalname,
+                        uploadedAt: new Date().toISOString()
+                    }));
+                });
+                const newCerts = await Promise.all(uploadPromises);
+                updateData.certificates = [...existingCerts, ...newCerts];
+            }
+        }
+        
+        await userRef.update(updateData);
+        const updatedUserDoc = await userRef.get();
+        const { password, ...userProfile } = updatedUserDoc.data();
+        
+        res.status(200).json({
+            success: true,
+            message: 'Profile updated successfully.',
+            data: { id: updatedUserDoc.id, ...userProfile },
+        });
+    } catch (error) {
+        console.error('PROFILE UPDATE ERROR:', error);
+        res.status(500).json({ success: false, error: 'An error occurred while updating profile.' });
+    }
+});
+
 
 export default router;

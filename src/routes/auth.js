@@ -1,5 +1,5 @@
 import express from 'express';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs'; // Corrected import
 import jwt from 'jsonwebtoken';
 import { adminDb, adminStorage } from '../config/firebase.js';
 import { authMiddleware } from '../middleware/authMiddleware.js';

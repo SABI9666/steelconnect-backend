@@ -1,695 +1,167 @@
-// server.js - SteelConnect Backend API Server
+// server.js - SIMPLIFIED VERSION with Direct Imports
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import dotenv from 'dotenv';
-// Add jsonwebtoken import at the top
-import { Resend } from 'resend';
-import jwt from 'jsonwebtoken';
+import mongoose from 'mongoose';
 
-// Import existing routes - UPDATED PATHS for root-level server.js
+// Import routes directly
 import authRoutes from './src/routes/auth.js';
 import jobsRoutes from './src/routes/jobs.js';
 import quotesRoutes from './src/routes/quotes.js';
 import messagesRoutes from './src/routes/messages.js';
-import estimationRoutes from './src/routes/estimation.js';
+import notificationsRoutes from './src/routes/notifications.js'; // Added
 
-// Import Firebase services from firebase.js in same directory
-import { admin, adminDb, adminAuth, adminStorage } from './firebase.js';
+// Import estimation routes (now fixed)
+let estimationRoutes;
+try {
+    const estimationModule = await import('./src/routes/estimation.js');
+    estimationRoutes = estimationModule.default;
+    console.log('✅ Estimation routes imported successfully');
+} catch (error) {
+    console.warn('⚠️ Estimation routes not available:', error.message);
+}
 
 dotenv.config();
+
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Initialize Resend only if API key is available
-let resend = null;
-if (process.env.RESEND_API_KEY) {
-    resend = new Resend(process.env.RESEND_API_KEY);
-    console.log('✅ Resend email service initialized');
+console.log('🚀 SteelConnect Backend Starting...');
+console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
+console.log(`⏰ Started at: ${new Date().toISOString()}`);
+
+// --- Database Connection ---
+if (process.env.MONGODB_URI) {
+    mongoose.connect(process.env.MONGODB_URI)
+        .then(() => console.log('✅ MongoDB connected'))
+        .catch(err => console.error('❌ MongoDB connection error:', err));
 } else {
-    console.warn('⚠️ RESEND_API_KEY not found - email notifications disabled');
+    console.warn('⚠️ MONGODB_URI not found in environment variables');
 }
 
-console.log('🚀 SteelConnect Backend Starting...');
+// --- Middleware ---
+const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',').filter(origin => origin.trim());
 
-// --- Enhanced CORS Configuration ---
-const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',').filter(Boolean);
-
-// Function to check if origin is allowed
-const isOriginAllowed = (origin) => {
-    if (!origin) return true; // Allow requests with no origin (mobile apps, etc.)
-    
-    // Check explicit allowed origins
-    if (allowedOrigins.includes(origin)) return true;
-    
-    // Allow Vercel deployments
-    if (origin.endsWith('.vercel.app')) return true;
-    
-    // Allow localhost for development
-    if (origin.includes('localhost') || origin.includes('127.0.0.1')) return true;
-    
-    return false;
-};
-
-app.use(cors({
+const corsOptions = {
     origin: (origin, callback) => {
-        if (isOriginAllowed(origin)) {
+        if (!origin) return callback(null, true);
+
+        if (allowedOrigins.includes(origin) ||
+            origin.endsWith('.vercel.app') ||
+            origin.includes('localhost') ||
+            origin.includes('127.0.0.1')) {
             callback(null, true);
         } else {
-            console.warn(`❌ CORS blocked origin: ${origin}`);
-            callback(new Error('Not allowed by CORS'));
+            console.warn(`⚠️ CORS Warning: Origin "${origin}" not in allowed list`);
+            if (process.env.NODE_ENV !== 'production') {
+                callback(null, true);
+            } else {
+                callback(new Error('Not allowed by CORS'));
+            }
         }
     },
     credentials: true,
-}));
+};
 
-app.use(helmet({ 
-    contentSecurityPolicy: false, 
-    crossOriginResourcePolicy: { policy: "cross-origin" } 
+app.use(cors(corsOptions));
+app.use(helmet({
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
 app.use(compression());
 app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// --- Enhanced Request logging middleware ---
+// --- Request logging middleware ---
 app.use((req, res, next) => {
-    const timestamp = new Date().toISOString();
-    const origin = req.headers.origin || 'No Origin';
-    const auth = req.headers.authorization ? 'Bearer ***' : 'No Auth';
-    
-    console.log(`${timestamp} - ${req.method} ${req.url}`);
-    console.log(`  Origin: ${origin} | Auth: ${auth}`);
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
     next();
 });
 
 // --- Health check route ---
 app.get('/health', (req, res) => {
-    res.json({ 
-        success: true, 
-        message: 'Backend is healthy',
+    res.json({
+        success: true,
+        message: 'SteelConnect Backend is healthy',
         timestamp: new Date().toISOString(),
-        environment: process.env.NODE_ENV || 'development'
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        environment: process.env.NODE_ENV || 'development',
+        version: '1.0.0'
     });
 });
 
-// --- Enhanced Token Authentication Middleware ---
-const authenticateToken = async (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-    
-    if (!token) {
-        return res.status(401).json({ error: 'Unauthorized - No token provided' });
-    }
-
-    // TEMPORARY BYPASS for development - Remove in production
-    if (process.env.NODE_ENV === 'development' || process.env.SKIP_TOKEN_VERIFICATION === 'true') {
-        console.warn('⚠️ Token verification bypassed for development');
-        req.user = { uid: 'dev-user-id', email: 'dev@test.com' };
-        return next();
-    }
-
-    try {
-        // First decode to check token type
-        const decoded = jwt.decode(token, { complete: true });
-        
-        if (!decoded) {
-            return res.status(403).json({ error: 'Invalid token format' });
+// --- Root route ---
+app.get('/', (req, res) => {
+    res.json({
+        message: 'SteelConnect Backend API is running',
+        version: '1.0.0',
+        status: 'healthy',
+        endpoints: {
+            health: '/health',
+            auth: '/api/auth',
+            jobs: '/api/jobs',
+            quotes: '/api/quotes',
+            messages: '/api/messages',
+            estimation: '/api/estimation',
+            notifications: '/api/notifications' // Added
         }
-
-        console.log('Token debug info:', {
-            header: decoded.header,
-            hasKid: !!decoded.header?.kid,
-            iss: decoded.payload?.iss,
-            aud: decoded.payload?.aud,
-            tokenLength: token.length,
-            alg: decoded.header?.alg
-        });
-
-        // Check if it's a Firebase ID token (has kid and RS256)
-        if (decoded.header?.kid && decoded.header?.alg === 'RS256') {
-            // Try Firebase verification
-            const decodedToken = await adminAuth.verifyIdToken(token);
-            req.user = decodedToken;
-            return next();
-        }
-        
-        // Handle custom JWT tokens (HS256)
-        if (decoded.header?.alg === 'HS256') {
-            const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
-            
-            try {
-                const verifiedToken = jwt.verify(token, JWT_SECRET);
-                req.user = {
-                    uid: verifiedToken.userId || verifiedToken.id || verifiedToken.sub,
-                    email: verifiedToken.email,
-                    ...verifiedToken
-                };
-                console.log('✅ Custom JWT verified:', req.user.email);
-                return next();
-            } catch (jwtError) {
-                console.error('Custom JWT verification failed:', jwtError.message);
-                return res.status(403).json({ 
-                    error: 'Invalid custom JWT token',
-                    details: 'Token signature verification failed'
-                });
-            }
-        }
-
-        return res.status(403).json({ 
-            error: 'Unsupported token type',
-            details: 'Token must be either Firebase ID token or custom JWT'
-        });
-
-    } catch (firebaseError) {
-        console.error('Token verification failed:', firebaseError.message);
-        return res.status(403).json({ 
-            error: 'Token verification failed',
-            details: firebaseError.message
-        });
-    }
-};
-
-// --- Middleware to attach Firebase services to req ---
-app.use((req, res, next) => {
-    req.firebase = {
-        admin,
-        adminDb,
-        adminAuth,
-        adminStorage
-    };
-    next();
+    });
 });
 
-// --- Register Existing Routes ---
+// --- Register Routes ---
+console.log('🔄 Registering routes...');
+
 app.use('/api/auth', authRoutes);
 app.use('/api/jobs', jobsRoutes);
 app.use('/api/quotes', quotesRoutes);
 app.use('/api/messages', messagesRoutes);
-app.use('/api/estimation', estimationRoutes);
+app.use('/api/notifications', notificationsRoutes); // Added
+if (estimationRoutes) {
+    app.use('/api/estimation', estimationRoutes);
+    console.log('✅ Estimation routes registered');
+} else {
+    console.warn('⚠️ Estimation routes unavailable - some services may be missing');
+}
+console.log('📦 All routes registered');
 
-// --- IMPLEMENT MISSING ROUTES ---
-
-// 1. Profile Route (PUT /api/profile)
-const profileRouter = express.Router();
-
-profileRouter.get('/', authenticateToken, async (req, res) => {
-    try {
-        const userId = req.user.uid;
-        const userDoc = await adminDb.collection('users').doc(userId).get();
-        
-        if (!userDoc.exists) {
-            return res.status(404).json({ error: 'Profile not found' });
-        }
-        
-        res.json({ success: true, data: userDoc.data() });
-    } catch (error) {
-        console.error("Error fetching profile:", error);
-        res.status(500).json({ error: 'Failed to fetch profile.' });
-    }
-});
-
-profileRouter.put('/', authenticateToken, async (req, res) => {
-    try {
-        const userId = req.user.uid;
-        const profileData = {
-            ...req.body,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        };
-        
-        await adminDb.collection('users').doc(userId).set(profileData, { merge: true });
-        res.json({ success: true, message: 'Profile updated successfully.' });
-    } catch (error) {
-        console.error("Error updating profile:", error);
-        res.status(500).json({ error: 'Failed to update profile.' });
-    }
-});
-
-app.use('/api/profile', profileRouter);
-console.log('✅ Profile routes registered');
-
-// 2. Notifications Routes
-const notificationsRouter = express.Router();
-
-notificationsRouter.get('/', authenticateToken, async (req, res) => {
-    try {
-        const userId = req.user.uid;
-        const limit = parseInt(req.query.limit) || 20;
-        
-        const snapshot = await adminDb.collection('notifications')
-            .where('recipientId', '==', userId)
-            .orderBy('createdAt', 'desc')
-            .limit(limit)
-            .get();
-            
-        const notifications = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-            createdAt: doc.data().createdAt?.toDate?.() || null
-        }));
-        
-        res.json({ success: true, data: notifications });
-    } catch (error) {
-        console.error("Error fetching notifications:", error);
-        res.status(500).json({ error: 'Failed to fetch notifications.' });
-    }
-});
-
-notificationsRouter.post('/', authenticateToken, async (req, res) => {
-    try {
-        const { recipientId, title, message, type = 'info' } = req.body;
-        
-        if (!recipientId || !title || !message) {
-            return res.status(400).json({ error: 'Missing required fields: recipientId, title, message' });
-        }
-        
-        const notification = {
-            recipientId,
-            title,
-            message,
-            type,
-            read: false,
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            createdBy: req.user.uid
-        };
-        
-        const docRef = await adminDb.collection('notifications').add(notification);
-        res.json({ success: true, id: docRef.id, message: 'Notification created successfully.' });
-    } catch (error) {
-        console.error("Error creating notification:", error);
-        res.status(500).json({ error: 'Failed to create notification.' });
-    }
-});
-
-notificationsRouter.patch('/:id/read', authenticateToken, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const userId = req.user.uid;
-        
-        // Verify the notification belongs to the user
-        const notificationDoc = await adminDb.collection('notifications').doc(id).get();
-        if (!notificationDoc.exists || notificationDoc.data().recipientId !== userId) {
-            return res.status(404).json({ error: 'Notification not found' });
-        }
-        
-        await adminDb.collection('notifications').doc(id).update({
-            read: true,
-            readAt: admin.firestore.FieldValue.serverTimestamp()
-        });
-        
-        res.json({ success: true, message: 'Notification marked as read.' });
-    } catch (error) {
-        console.error("Error updating notification:", error);
-        res.status(500).json({ error: 'Failed to update notification.' });
-    }
-});
-
-notificationsRouter.delete('/', authenticateToken, async (req, res) => {
-    try {
-        const userId = req.user.uid;
-        const snapshot = await adminDb.collection('notifications')
-            .where('recipientId', '==', userId)
-            .get();
-        
-        if (snapshot.empty) {
-            return res.json({ success: true, message: 'No notifications to delete.' });
-        }
-        
-        const batch = adminDb.batch();
-        snapshot.docs.forEach(doc => batch.delete(doc.ref));
-        await batch.commit();
-        
-        res.json({ success: true, message: `${snapshot.docs.length} notifications deleted.` });
-    } catch (error) {
-        console.error("Error deleting notifications:", error);
-        res.status(500).json({ error: 'Failed to delete notifications.' });
-    }
-});
-
-app.use('/api/notifications', notificationsRouter);
-console.log('✅ Notification routes registered');
-
-// 3. Login Notification Route (POST /api/auth/notify-login)
-const authNotifyRouter = express.Router();
-
-authNotifyRouter.post('/notify-login', authenticateToken, async (req, res) => {
-    try {
-        const { name, email } = req.body;
-        
-        if (!name || !email) {
-            return res.status(400).json({ error: 'Name and email are required.' });
-        }
-        
-        if (!resend) {
-            console.warn('⚠️ Resend not configured - login notification skipped');
-            return res.json({ success: true, message: 'Login notification skipped (email service not configured).' });
-        }
-
-        const loginTime = new Date().toLocaleString();
-        const userAgent = req.headers['user-agent'] || 'Unknown device';
-        const ip = req.ip || req.connection.remoteAddress || 'Unknown IP';
-        
-        await resend.emails.send({
-            from: 'SteelConnect Security <noreply@steelconnect.com>',
-            to: email,
-            subject: 'New Login to Your SteelConnect Account',
-            html: `
-                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                    <h2 style="color: #333;">New Login Detected</h2>
-                    <p>Hi ${name},</p>
-                    <p>We detected a new login to your SteelConnect account:</p>
-                    <ul>
-                        <li><strong>Time:</strong> ${loginTime}</li>
-                        <li><strong>Device:</strong> ${userAgent}</li>
-                        <li><strong>IP Address:</strong> ${ip}</li>
-                    </ul>
-                    <p>If this was not you, please secure your account immediately by changing your password.</p>
-                    <p>Best regards,<br>The SteelConnect Team</p>
-                </div>
-            `,
-        });
-
-        res.json({ success: true, message: 'Login notification sent successfully.' });
-    } catch (error) {
-        console.error('Error sending login notification:', error);
-        res.status(500).json({ error: 'Could not send notification email.' });
-    }
-});
-
-// Mount the auth notification routes
-app.use('/api/auth', authNotifyRouter);
-console.log('✅ Login notification route added');
-
-// --- ADMIN ROUTES ---
-const adminRouter = express.Router();
-
-// Admin Dashboard - Get system overview
-adminRouter.get('/dashboard', authenticateToken, async (req, res) => {
-    try {
-        // Basic admin check - you might want to enhance this
-        if (!req.user.email || !req.user.email.includes('admin')) {
-            return res.status(403).json({ error: 'Admin access required' });
-        }
-
-        // Get dashboard statistics
-        const [usersSnapshot, jobsSnapshot, quotesSnapshot, notificationsSnapshot] = await Promise.all([
-            adminDb.collection('users').get(),
-            adminDb.collection('jobs').get(),
-            adminDb.collection('quotes').get(),
-            adminDb.collection('notifications').get()
-        ]);
-
-        const stats = {
-            totalUsers: usersSnapshot.size,
-            totalJobs: jobsSnapshot.size,
-            totalQuotes: quotesSnapshot.size,
-            totalNotifications: notificationsSnapshot.size,
-            timestamp: new Date().toISOString()
-        };
-
-        // Get recent activity (last 10 jobs)
-        const recentJobsSnapshot = await adminDb.collection('jobs')
-            .orderBy('createdAt', 'desc')
-            .limit(10)
-            .get();
-
-        const recentJobs = recentJobsSnapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-            createdAt: doc.data().createdAt?.toDate?.() || null
-        }));
-
-        res.json({
-            success: true,
-            data: {
-                statistics: stats,
-                recentJobs: recentJobs
-            }
-        });
-    } catch (error) {
-        console.error('Admin dashboard error:', error);
-        res.status(500).json({ error: 'Failed to fetch dashboard data' });
-    }
-});
-
-// Admin Users Management
-adminRouter.get('/users', authenticateToken, async (req, res) => {
-    try {
-        if (!req.user.email || !req.user.email.includes('admin')) {
-            return res.status(403).json({ error: 'Admin access required' });
-        }
-
-        const limit = parseInt(req.query.limit) || 50;
-        const snapshot = await adminDb.collection('users').limit(limit).get();
-        
-        const users = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-            createdAt: doc.data().createdAt?.toDate?.() || null,
-            updatedAt: doc.data().updatedAt?.toDate?.() || null
-        }));
-
-        res.json({ success: true, data: users });
-    } catch (error) {
-        console.error('Admin users error:', error);
-        res.status(500).json({ error: 'Failed to fetch users' });
-    }
-});
-
-// Admin Jobs Management
-adminRouter.get('/jobs', authenticateToken, async (req, res) => {
-    try {
-        if (!req.user.email || !req.user.email.includes('admin')) {
-            return res.status(403).json({ error: 'Admin access required' });
-        }
-
-        const limit = parseInt(req.query.limit) || 50;
-        const snapshot = await adminDb.collection('jobs')
-            .orderBy('createdAt', 'desc')
-            .limit(limit)
-            .get();
-        
-        const jobs = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-            createdAt: doc.data().createdAt?.toDate?.() || null,
-            updatedAt: doc.data().updatedAt?.toDate?.() || null
-        }));
-
-        res.json({ success: true, data: jobs });
-    } catch (error) {
-        console.error('Admin jobs error:', error);
-        res.status(500).json({ error: 'Failed to fetch jobs' });
-    }
-});
-
-app.use('/api/admin', adminRouter);
-console.log('✅ Admin routes registered');
-
-// --- DESIGNER PORTAL ROUTES ---
-const designerRouter = express.Router();
-
-designerRouter.get('/dashboard', authenticateToken, async (req, res) => {
-    try {
-        const userId = req.user.uid;
-        
-        // Get designer's quotes and projects
-        const [quotesSnapshot, projectsSnapshot] = await Promise.all([
-            adminDb.collection('quotes').where('designerId', '==', userId).limit(10).get(),
-            adminDb.collection('projects').where('designerId', '==', userId).limit(10).get()
-        ]);
-
-        const quotes = quotesSnapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-            createdAt: doc.data().createdAt?.toDate?.() || null
-        }));
-
-        const projects = projectsSnapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-            createdAt: doc.data().createdAt?.toDate?.() || null
-        }));
-
-        res.json({
-            success: true,
-            data: {
-                stats: {
-                    totalQuotes: quotesSnapshot.size,
-                    totalProjects: projectsSnapshot.size
-                },
-                recentQuotes: quotes,
-                recentProjects: projects
-            }
-        });
-    } catch (error) {
-        console.error('Designer dashboard error:', error);
-        res.status(500).json({ error: 'Failed to fetch designer dashboard data' });
-    }
-});
-
-designerRouter.get('/projects', authenticateToken, async (req, res) => {
-    try {
-        const userId = req.user.uid;
-        const limit = parseInt(req.query.limit) || 20;
-        
-        const snapshot = await adminDb.collection('projects')
-            .where('designerId', '==', userId)
-            .orderBy('createdAt', 'desc')
-            .limit(limit)
-            .get();
-
-        const projects = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-            createdAt: doc.data().createdAt?.toDate?.() || null
-        }));
-
-        res.json({ success: true, data: projects });
-    } catch (error) {
-        console.error('Designer projects error:', error);
-        res.status(500).json({ error: 'Failed to fetch designer projects' });
-    }
-});
-
-app.use('/api/designer', designerRouter);
-console.log('✅ Designer portal routes registered');
-
-// --- CONTRACTOR PORTAL ROUTES ---
-const contractorRouter = express.Router();
-
-contractorRouter.get('/dashboard', authenticateToken, async (req, res) => {
-    try {
-        const userId = req.user.uid;
-        
-        // Get contractor's jobs and bids
-        const [jobsSnapshot, bidsSnapshot] = await Promise.all([
-            adminDb.collection('jobs').where('contractorId', '==', userId).limit(10).get(),
-            adminDb.collection('bids').where('contractorId', '==', userId).limit(10).get()
-        ]);
-
-        const jobs = jobsSnapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-            createdAt: doc.data().createdAt?.toDate?.() || null
-        }));
-
-        const bids = bidsSnapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-            createdAt: doc.data().createdAt?.toDate?.() || null
-        }));
-
-        res.json({
-            success: true,
-            data: {
-                stats: {
-                    totalJobs: jobsSnapshot.size,
-                    totalBids: bidsSnapshot.size
-                },
-                recentJobs: jobs,
-                recentBids: bids
-            }
-        });
-    } catch (error) {
-        console.error('Contractor dashboard error:', error);
-        res.status(500).json({ error: 'Failed to fetch contractor dashboard data' });
-    }
-});
-
-contractorRouter.get('/jobs', authenticateToken, async (req, res) => {
-    try {
-        const userId = req.user.uid;
-        const limit = parseInt(req.query.limit) || 20;
-        
-        const snapshot = await adminDb.collection('jobs')
-            .where('contractorId', '==', userId)
-            .orderBy('createdAt', 'desc')
-            .limit(limit)
-            .get();
-
-        const jobs = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-            createdAt: doc.data().createdAt?.toDate?.() || null
-        }));
-
-        res.json({ success: true, data: jobs });
-    } catch (error) {
-        console.error('Contractor jobs error:', error);
-        res.status(500).json({ error: 'Failed to fetch contractor jobs' });
-    }
-});
-
-contractorRouter.get('/bids', authenticateToken, async (req, res) => {
-    try {
-        const userId = req.user.uid;
-        const limit = parseInt(req.query.limit) || 20;
-        
-        const snapshot = await adminDb.collection('bids')
-            .where('contractorId', '==', userId)
-            .orderBy('createdAt', 'desc')
-            .limit(limit)
-            .get();
-
-        const bids = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-            createdAt: doc.data().createdAt?.toDate?.() || null
-        }));
-
-        res.json({ success: true, data: bids });
-    } catch (error) {
-        console.error('Contractor bids error:', error);
-        res.status(500).json({ error: 'Failed to fetch contractor bids' });
-    }
-});
-
-app.use('/api/contractor', contractorRouter);
-console.log('✅ Contractor portal routes registered');
 
 // --- Error handling middleware ---
 app.use((error, req, res, next) => {
     console.error('❌ Global Error Handler:', error);
-    
+
     if (error.code === 'LIMIT_FILE_SIZE') {
-        return res.status(413).json({ error: 'File too large. Maximum size is 50MB.' });
+        return res.status(413).json({
+            success: false,
+            error: 'File too large. Maximum size is 50MB.'
+        });
     }
-    
+
     if (error.message === 'Not allowed by CORS') {
-        return res.status(403).json({ error: 'CORS policy violation' });
+        return res.status(403).json({
+            success: false,
+            error: 'CORS policy violation'
+        });
     }
-    
-    // Firebase errors
-    if (error.code && error.code.includes('auth/')) {
-        return res.status(401).json({ error: 'Authentication error: ' + error.message });
-    }
-    
-    res.status(error.status || 500).json({ 
+
+    res.status(error.status || 500).json({
+        success: false,
         error: error.message || 'Internal Server Error',
         timestamp: new Date().toISOString()
     });
 });
 
-// --- Enhanced 404 handler ---
+// --- 404 handler ---
 app.use('*', (req, res) => {
-    const timestamp = new Date().toISOString();
-    const origin = req.headers.origin || 'No Origin';
-    
-    console.log(`❌ 404 - Route not found: ${req.method} ${req.originalUrl}`);
-    console.log(`    Origin: ${origin}`);
-    
-    res.status(404).json({ 
-        error: `Route ${req.method} ${req.originalUrl} not found`,
-        timestamp: timestamp
+    res.status(404).json({
+        success: false,
+        error: `Route ${req.originalUrl} not found`
     });
 });
 
 // --- Start Server ---
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n🎉 SteelConnect Backend Server Started Successfully!`);
-    console.log(`🔗 Server running on: http://localhost:${PORT}`);
-    console.log(`🔗 Health check: http://localhost:${PORT}/health`);
-    console.log(`📱 CORS origins configured: ${allowedOrigins.length > 0 ? allowedOrigins.join(', ') : 'Development mode (all Vercel/localhost origins allowed)'}`);
-    console.log(`🔥 Firebase Admin initialized: ${admin.apps.length > 0 ? '✅' : '❌'}`);
-    console.log(`💾 Database: Firebase Firestore`);
+    console.log(`🎉 SteelConnect Backend Server Started on port ${PORT}`);
 });

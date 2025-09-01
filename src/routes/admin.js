@@ -1,4 +1,4 @@
-// src/routes/admin.js - CORRECTED VERSION 2
+// src/routes/admin.js - FIXED VERSION
 
 import express from 'express';
 import multer from 'multer';
@@ -72,6 +72,26 @@ const deleteFile = (filePath) => {
     }
 };
 
+const formatFileSize = (bytes) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+};
+
+const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    const date = new Date(dateString);
+    return date.toLocaleString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+};
+
 // --- ROUTES ---
 
 // Dashboard Stats
@@ -113,7 +133,7 @@ router.get('/users', async (req, res) => {
     }
 });
 
-// FIX: Added new route to activate/deactivate a user
+// Update user status (activate/deactivate)
 router.patch('/users/:id/status', async (req, res) => {
     try {
         const { id } = req.params;
@@ -124,12 +144,21 @@ router.patch('/users/:id/status', async (req, res) => {
         }
 
         const userRef = adminDb.collection('users').doc(id);
+        const userDoc = await userRef.get();
+        
+        if (!userDoc.exists) {
+            return res.status(404).json({ success: false, error: 'User not found.' });
+        }
+
         await userRef.update({
             isActive: isActive,
             updatedAt: new Date().toISOString()
         });
 
-        res.json({ success: true, message: `User status updated successfully.` });
+        res.json({ 
+            success: true, 
+            message: `User ${isActive ? 'activated' : 'deactivated'} successfully.` 
+        });
     } catch (error) {
         console.error('Update user status error:', error);
         res.status(500).json({ success: false, error: 'Failed to update user status.' });
@@ -158,7 +187,7 @@ router.get('/estimations/:id', async (req, res) => {
     }
 });
 
-// FIX: Corrected this route to generate a relative URL without the /api prefix
+// FIXED: Corrected file listing with proper URLs and date formatting
 router.get('/estimations/:id/files', async (req, res) => {
     try {
         const doc = await adminDb.collection('estimations').doc(req.params.id).get();
@@ -167,8 +196,11 @@ router.get('/estimations/:id/files', async (req, res) => {
         const data = doc.data();
         const files = (data.uploadedFiles || []).map(file => ({
             name: file.originalName,
-            // Generate a relative URL. The frontend will add the API base.
-            url: `/admin/estimations/${req.params.id}/files/${file.fileName || 'file'}/download`,
+            size: formatFileSize(file.fileSize),
+            uploadedAt: formatDate(file.uploadDate || file.createdAt),
+            mimeType: file.mimeType,
+            // FIXED: Use the correct fileId for URL construction
+            url: `/admin/estimations/${req.params.id}/files/${file.fileId || file.fileName}/download`,
         }));
         res.json({ success: true, files });
     } catch (error) {
@@ -176,6 +208,7 @@ router.get('/estimations/:id/files', async (req, res) => {
     }
 });
 
+// FIXED: Corrected file download route
 router.get('/estimations/:id/files/:fileId/download', async (req, res) => {
     try {
         const { id, fileId } = req.params;
@@ -183,15 +216,42 @@ router.get('/estimations/:id/files/:fileId/download', async (req, res) => {
         if (!doc.exists) return res.status(404).send('Estimation not found');
         
         const data = doc.data();
-        // FIX: Added a fallback for fileId to make it more robust
-        const file = data.uploadedFiles?.find(f => f.fileName === fileId || f.fileId === fileId);
-        if (!file || !file.filePath) return res.status(404).send('File not found');
+        // FIXED: Search by both fileId and fileName for better compatibility
+        const file = data.uploadedFiles?.find(f => 
+            f.fileId === fileId || 
+            f.fileName === fileId || 
+            f.originalName === fileId
+        );
+        
+        if (!file || !file.filePath) {
+            console.log('File not found. Available files:', data.uploadedFiles?.map(f => ({
+                fileId: f.fileId,
+                fileName: f.fileName,
+                originalName: f.originalName
+            })));
+            return res.status(404).send('File not found');
+        }
 
         const filePath = path.resolve(file.filePath);
-        if (!fs.existsSync(filePath)) return res.status(404).send('File not found on server');
+        if (!fs.existsSync(filePath)) {
+            console.log('File path does not exist:', filePath);
+            return res.status(404).send('File not found on server');
+        }
 
-        res.download(filePath, file.originalName);
+        // Set proper headers for download
+        res.setHeader('Content-Disposition', `attachment; filename="${file.originalName}"`);
+        res.setHeader('Content-Type', file.mimeType || 'application/octet-stream');
+        
+        // Stream the file
+        const fileStream = fs.createReadStream(filePath);
+        fileStream.on('error', (error) => {
+            console.error('File stream error:', error);
+            res.status(500).send('Error reading file');
+        });
+        
+        fileStream.pipe(res);
     } catch (error) {
+        console.error('Download file error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -211,7 +271,10 @@ router.post('/estimations/:id/upload-result', upload.single('resultFile'), async
         if (currentData.resultFile?.filePath) deleteFile(currentData.resultFile.filePath);
 
         const updateData = {
-            resultFile: getFileInfo(req.file),
+            resultFile: {
+                ...getFileInfo(req.file),
+                uploadDate: new Date().toISOString()
+            },
             status: 'completed',
             updatedAt: new Date().toISOString()
         };
@@ -219,7 +282,7 @@ router.post('/estimations/:id/upload-result', upload.single('resultFile'), async
 
         await ref.update(updateData);
         const updatedDoc = await ref.get();
-        res.json({ success: true, message: 'Result uploaded', estimation: updatedDoc.data() });
+        res.json({ success: true, message: 'Result uploaded successfully', estimation: updatedDoc.data() });
     } catch (error) {
         if (req.file) deleteFile(req.file.path);
         res.status(500).json({ success: false, error: error.message });
@@ -228,18 +291,28 @@ router.post('/estimations/:id/upload-result', upload.single('resultFile'), async
 
 router.patch('/estimations/:id/status', async (req, res) => {
     try {
-        await adminDb.collection('estimations').doc(req.params.id).update({ status: req.body.status });
-        res.json({ success: true, message: 'Status updated' });
+        const { status } = req.body;
+        const validStatuses = ['pending', 'in-progress', 'completed', 'rejected'];
+        
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({ success: false, error: 'Invalid status provided' });
+        }
+
+        await adminDb.collection('estimations').doc(req.params.id).update({ 
+            status: status,
+            updatedAt: new Date().toISOString()
+        });
+        
+        res.json({ success: true, message: 'Status updated successfully' });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-
 // --- Other Data Routes (Jobs, Quotes, Messages) ---
 router.get('/jobs', async (req, res) => {
     try {
-        const snapshot = await adminDb.collection('jobs').get();
+        const snapshot = await adminDb.collection('jobs').orderBy('createdAt', 'desc').get();
         const jobs = [];
         snapshot.forEach(doc => jobs.push({ id: doc.id, ...doc.data() }));
         res.json({ success: true, data: jobs });
@@ -250,7 +323,7 @@ router.get('/jobs', async (req, res) => {
 
 router.get('/quotes', async (req, res) => {
     try {
-        const snapshot = await adminDb.collection('quotes').get();
+        const snapshot = await adminDb.collection('quotes').orderBy('createdAt', 'desc').get();
         const quotes = [];
         snapshot.forEach(doc => quotes.push({ id: doc.id, ...doc.data() }));
         res.json({ success: true, data: quotes });
@@ -261,7 +334,7 @@ router.get('/quotes', async (req, res) => {
 
 router.get('/messages', async (req, res) => {
     try {
-        const snapshot = await adminDb.collection('messages').get();
+        const snapshot = await adminDb.collection('messages').orderBy('createdAt', 'desc').get();
         const messages = [];
         snapshot.forEach(doc => messages.push({ id: doc.id, ...doc.data() }));
         res.json({ success: true, data: messages });

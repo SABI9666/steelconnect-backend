@@ -1,3 +1,5 @@
+// src/routes/admin.js - CORRECTED VERSION
+
 import express from 'express';
 import multer from 'multer';
 import path from 'path';
@@ -7,6 +9,7 @@ import { adminDb } from '../config/firebase.js';
 
 const router = express.Router();
 
+// Middleware to check for admin privileges
 const isAdmin = (req, res, next) => {
     const authHeader = req.headers.authorization;
 
@@ -41,6 +44,7 @@ const isAdmin = (req, res, next) => {
 
 router.use(isAdmin);
 
+// Multer setup for file uploads
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
         const uploadDir = 'uploads/results';
@@ -57,7 +61,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
     storage: storage,
-    limits: { fileSize: 50 * 1024 * 1024 },
+    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
     fileFilter: (req, file, cb) => {
         if (file.mimetype === 'application/pdf') {
             cb(null, true);
@@ -67,6 +71,7 @@ const upload = multer({
     }
 });
 
+// Helper functions
 const getFileInfo = (file) => ({
     originalName: file.originalname,
     fileName: file.filename,
@@ -85,7 +90,20 @@ const deleteFile = async (filePath) => {
     }
 };
 
-// FIXED: Dashboard with adminUser property that frontend expects
+function getStatusInfo(status) {
+    const statusMap = {
+        'pending': { text: 'Pending Review', color: 'orange' },
+        'in-progress': { text: 'In Progress', color: 'blue' },
+        'completed': { text: 'Completed', color: 'green' },
+        'rejected': { text: 'Rejected', color: 'red' },
+        'cancelled': { text: 'Cancelled', color: 'gray' }
+    };
+    return statusMap[status] || { text: status, color: 'gray' };
+}
+
+// --- ROUTES ---
+
+// Dashboard Stats
 router.get('/dashboard', async (req, res) => {
     try {
         const [usersSnapshot, quotesSnapshot, messagesSnapshot, jobsSnapshot, estimationsSnapshot] = await Promise.all([
@@ -96,53 +114,18 @@ router.get('/dashboard', async (req, res) => {
             adminDb.collection('estimations').get()
         ]);
 
-        let pendingEstimations = 0;
-        let completedEstimations = 0;
-        let inProgressEstimations = 0;
-        const recentEstimations = [];
-
-        estimationsSnapshot.forEach(doc => {
-            const data = doc.data();
-            if (data.status === 'pending') pendingEstimations++;
-            if (data.status === 'completed') completedEstimations++;
-            if (data.status === 'in-progress') inProgressEstimations++;
-            
-            if (recentEstimations.length < 5) {
-                recentEstimations.push({
-                    id: doc.id,
-                    ...data,
-                    contractorName: data.contractorName || 'Unknown'
-                });
-            }
-        });
-
         const stats = {
             totalUsers: usersSnapshot.size,
             totalQuotes: quotesSnapshot.size,
             totalMessages: messagesSnapshot.size,
             totalJobs: jobsSnapshot.size,
             totalEstimations: estimationsSnapshot.size,
-            pendingEstimations,
-            completedEstimations,
-            inProgressEstimations,
-            recentActivity: recentEstimations,
-            // FIXED: Add adminUser property that frontend expects
-            adminUser: {
-                name: req.user.name || 'Administrator',
-                email: req.user.email || 'admin@steelconnect.com',
-                lastLogin: new Date().toISOString()
-            }
+            adminUser: req.user.email
         };
 
         res.json({
             success: true,
-            stats,
-            // Add duplicate keys for frontend compatibility
-            data: stats,
-            totalUsers: stats.totalUsers,
-            totalEstimations: stats.totalEstimations,
-            pendingEstimations: stats.pendingEstimations,
-            completedEstimations: stats.completedEstimations
+            data: { stats }
         });
 
     } catch (error) {
@@ -155,637 +138,167 @@ router.get('/dashboard', async (req, res) => {
     }
 });
 
-// FIXED: Estimations list without orderBy to avoid Firestore index issues
+// Get all estimations
 router.get('/estimations', async (req, res) => {
     try {
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 20;
-        const status = req.query.status;
-        const contractorId = req.query.contractorId;
-
-        let query = adminDb.collection('estimations');
-        
-        if (status) {
-            query = query.where('status', '==', status);
-        }
-        if (contractorId) {
-            query = query.where('contractorId', '==', contractorId);
-        }
-
-        // FIXED: Remove orderBy to avoid index requirements
-        const snapshot = await query.limit(limit * page).get();
-
-        const allEstimations = [];
-        const contractorIds = new Set();
-
+        const snapshot = await adminDb.collection('estimations').orderBy('createdAt', 'desc').get();
+        const estimations = [];
         snapshot.forEach(doc => {
-            const data = doc.data();
-            allEstimations.push({
-                id: doc.id,
-                ...data,
-                totalFiles: (data.uploadedFiles ? data.uploadedFiles.length : 0) + (data.resultFile ? 1 : 0),
-                statusInfo: getStatusInfo(data.status)
-            });
-            if (data.contractorId) {
-                contractorIds.add(data.contractorId);
-            }
+            estimations.push({ id: doc.id, ...doc.data() });
         });
-
-        // Sort in memory by createdAt
-        allEstimations.sort((a, b) => {
-            const dateA = new Date(a.createdAt || 0);
-            const dateB = new Date(b.createdAt || 0);
-            return dateB - dateA; // Newest first
-        });
-
-        // Paginate in memory
-        const startIndex = (page - 1) * limit;
-        const endIndex = startIndex + limit;
-        const paginatedEstimations = allEstimations.slice(startIndex, endIndex);
-
-        // Get contractor data
-        const contractorData = {};
-        if (contractorIds.size > 0) {
-            const contractorPromises = Array.from(contractorIds).map(async (id) => {
-                try {
-                    const contractorDoc = await adminDb.collection('users').doc(id).get();
-                    if (contractorDoc.exists) {
-                        const data = contractorDoc.data();
-                        contractorData[id] = {
-                            name: data.name || 'Unknown',
-                            email: data.email || 'No email',
-                            type: data.type || 'contractor'
-                        };
-                    }
-                } catch (error) {
-                    console.error('Error fetching contractor:', error);
-                    contractorData[id] = {
-                        name: 'Error Loading',
-                        email: 'Error',
-                        type: 'contractor'
-                    };
-                }
-            });
-            await Promise.allSettled(contractorPromises);
-        }
-
-        const formattedEstimations = paginatedEstimations.map(est => ({
-            ...est,
-            contractor: contractorData[est.contractorId] || {
-                name: 'Unknown User',
-                email: 'No email',
-                type: 'contractor'
-            }
-        }));
-
-        const total = allEstimations.length;
-
-        res.json({
-            success: true,
-            estimations: formattedEstimations,
-            pagination: {
-                current: page,
-                pages: Math.ceil(total / limit),
-                total,
-                limit
-            }
-        });
-
+        res.json({ success: true, estimations });
     } catch (error) {
-        console.error('Get estimations error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch estimations',
-            error: error.message
-        });
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
+// Get details for a single estimation
 router.get('/estimations/:id', async (req, res) => {
     try {
         const estimationDoc = await adminDb.collection('estimations').doc(req.params.id).get();
-
         if (!estimationDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'Estimation not found'
-            });
+            return res.status(404).json({ success: false, message: 'Estimation not found' });
         }
+        res.json({ success: true, estimation: { id: estimationDoc.id, ...estimationDoc.data() } });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
 
+// FIX: Added this new route to get the list of files for an estimation
+router.get('/estimations/:id/files', async (req, res) => {
+    try {
+        const estimationDoc = await adminDb.collection('estimations').doc(req.params.id).get();
+        if (!estimationDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Estimation not found' });
+        }
         const estimationData = estimationDoc.data();
-
-        let contractor = null;
-        if (estimationData.contractorId) {
-            try {
-                const contractorDoc = await adminDb.collection('users').doc(estimationData.contractorId).get();
-                if (contractorDoc.exists) {
-                    const contractorData = contractorDoc.data();
-                    contractor = {
-                        name: contractorData.name || 'Unknown',
-                        email: contractorData.email || 'No email',
-                        type: contractorData.type || 'contractor',
-                        phone: contractorData.phone || 'No phone',
-                        company: contractorData.company || 'No company'
-                    };
-                }
-            } catch (error) {
-                console.error('Error fetching contractor:', error);
-            }
-        }
-
-        let estimatedBy = null;
-        if (estimationData.estimatedBy) {
-            try {
-                const adminDoc = await adminDb.collection('users').doc(estimationData.estimatedBy).get();
-                if (adminDoc.exists) {
-                    const adminData = adminDoc.data();
-                    estimatedBy = {
-                        name: adminData.name || 'Unknown Admin',
-                        email: adminData.email || 'No email'
-                    };
-                }
-            } catch (error) {
-                console.error('Error fetching admin:', error);
-            }
-        }
-
-        res.json({
-            success: true,
-            estimation: {
-                id: estimationDoc.id,
-                ...estimationData,
-                contractor,
-                estimatedBy,
-                statusInfo: getStatusInfo(estimationData.status)
-            }
-        });
-
+        const files = (estimationData.uploadedFiles || []).map(file => ({
+            name: file.originalName,
+            url: `/api/admin/estimations/${req.params.id}/files/${file.fileId || file.fileName}/download`,
+        }));
+        res.json({ success: true, files });
     } catch (error) {
-        console.error('Get estimation error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch estimation',
-            error: error.message
-        });
+        res.status(500).json({ success: false, message: 'Failed to fetch files', error: error.message });
     }
 });
 
-router.put('/estimations/:id/status', async (req, res) => {
-    try {
-        const { status } = req.body;
-        const validStatuses = ['pending', 'in-progress', 'completed', 'rejected', 'cancelled'];
-        
-        if (!validStatuses.includes(status)) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid status value'
-            });
-        }
-
-        const estimationRef = adminDb.collection('estimations').doc(req.params.id);
-        const estimationDoc = await estimationRef.get();
-
-        if (!estimationDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'Estimation not found'
-            });
-        }
-
-        const updateData = {
-            status,
-            updatedAt: new Date().toISOString()
-        };
-
-        if (status === 'in-progress') {
-            const currentData = estimationDoc.data();
-            if (!currentData.estimationStartDate) {
-                updateData.estimationStartDate = new Date().toISOString();
-                updateData.estimatedBy = req.user.userId || req.user.id;
-            }
-        }
-
-        if (status === 'completed') {
-            const currentData = estimationDoc.data();
-            if (!currentData.estimationCompletedDate) {
-                updateData.estimationCompletedDate = new Date().toISOString();
-            }
-        }
-
-        await estimationRef.update(updateData);
-
-        const updatedDoc = await estimationRef.get();
-        const updatedData = updatedDoc.data();
-
-        res.json({
-            success: true,
-            message: 'Estimation status updated successfully',
-            estimation: {
-                id: updatedDoc.id,
-                ...updatedData,
-                statusInfo: getStatusInfo(updatedData.status)
-            }
-        });
-
-    } catch (error) {
-        console.error('Update status error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to update estimation status',
-            error: error.message
-        });
-    }
-});
-
-router.put('/estimations/:id/amount', async (req, res) => {
-    try {
-        const { amount } = req.body;
-
-        if (!amount || isNaN(amount) || amount < 0) {
-            return res.status(400).json({
-                success: false,
-                message: 'Valid amount is required'
-            });
-        }
-
-        const estimationRef = adminDb.collection('estimations').doc(req.params.id);
-        const estimationDoc = await estimationRef.get();
-
-        if (!estimationDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'Estimation not found'
-            });
-        }
-
-        await estimationRef.update({
-            estimatedAmount: parseFloat(amount),
-            updatedAt: new Date().toISOString()
-        });
-
-        const updatedDoc = await estimationRef.get();
-
-        res.json({
-            success: true,
-            message: 'Estimation amount updated successfully',
-            estimation: {
-                id: updatedDoc.id,
-                ...updatedDoc.data()
-            }
-        });
-
-    } catch (error) {
-        console.error('Update amount error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to update estimation amount',
-            error: error.message
-        });
-    }
-});
-
-// FIXED: Result upload with proper file handling
-router.post('/estimations/:id/upload-result', upload.single('resultFile'), async (req, res) => {
-    try {
-        if (!req.file) {
-            return res.status(400).json({
-                success: false,
-                message: 'No result file provided'
-            });
-        }
-
-        const estimationRef = adminDb.collection('estimations').doc(req.params.id);
-        const estimationDoc = await estimationRef.get();
-
-        if (!estimationDoc.exists) {
-            await deleteFile(req.file.path);
-            return res.status(404).json({
-                success: false,
-                message: 'Estimation not found'
-            });
-        }
-
-        const currentData = estimationDoc.data();
-
-        // Delete old result file if exists
-        if (currentData.resultFile && currentData.resultFile.filePath) {
-            await deleteFile(currentData.resultFile.filePath);
-        }
-
-        const updateData = {
-            resultFile: {
-                ...getFileInfo(req.file),
-                uploadDate: new Date().toISOString()
-            },
-            updatedAt: new Date().toISOString()
-        };
-
-        // Automatically mark as completed when result is uploaded
-        if (currentData.status !== 'completed') {
-            updateData.status = 'completed';
-            updateData.estimationCompletedDate = new Date().toISOString();
-            updateData.estimatedBy = req.user.userId || req.user.id;
-        }
-
-        await estimationRef.update(updateData);
-
-        const updatedDoc = await estimationRef.get();
-
-        res.json({
-            success: true,
-            message: 'Result PDF uploaded successfully',
-            estimation: {
-                id: updatedDoc.id,
-                ...updatedDoc.data()
-            }
-        });
-
-    } catch (error) {
-        console.error('Upload result error:', error);
-        
-        if (req.file) {
-            await deleteFile(req.file.path);
-        }
-
-        res.status(500).json({
-            success: false,
-            message: 'Failed to upload result PDF',
-            error: error.message
-        });
-    }
-});
-
-// FIXED: File download with better error handling
+// Download a specific file from an estimation
 router.get('/estimations/:id/files/:fileId/download', async (req, res) => {
     try {
         const { id, fileId } = req.params;
-        const { type } = req.query;
-
         const estimationDoc = await adminDb.collection('estimations').doc(id).get();
-
-        if (!estimationDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'Estimation not found'
-            });
-        }
-
+        if (!estimationDoc.exists) return res.status(404).send('Estimation not found');
+        
         const estimationData = estimationDoc.data();
-        let file;
-
-        if (type === 'result' && estimationData.resultFile) {
-            file = estimationData.resultFile;
-        } else if (estimationData.uploadedFiles) {
-            file = estimationData.uploadedFiles.find(f => 
-                f.fileId === fileId || 
-                f.fileName === fileId ||
-                f.originalName === fileId
-            );
-        }
-
-        if (!file) {
-            return res.status(404).json({
-                success: false,
-                message: 'File not found'
-            });
-        }
+        const file = estimationData.uploadedFiles?.find(f => (f.fileId === fileId || f.fileName === fileId));
+        if (!file) return res.status(404).send('File not found');
 
         const filePath = path.resolve(file.filePath);
-        
-        if (!fs.existsSync(filePath)) {
-            return res.status(404).json({
-                success: false,
-                message: 'File not found on server'
-            });
-        }
+        if (!fs.existsSync(filePath)) return res.status(404).send('File not found on server');
 
-        res.setHeader('Content-Disposition', `attachment; filename="${file.originalName}"`);
-        res.setHeader('Content-Type', file.mimeType || 'application/octet-stream');
-        
-        const fileStream = fs.createReadStream(filePath);
-        fileStream.pipe(res);
-
+        res.download(filePath, file.originalName);
     } catch (error) {
-        console.error('Download file error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to download file',
-            error: error.message
-        });
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
-router.put('/estimations/:id/notes', async (req, res) => {
+// Upload an estimation result PDF
+router.post('/estimations/:id/upload-result', upload.single('resultFile'), async (req, res) => {
     try {
-        const { notes } = req.body;
+        if (!req.file) return res.status(400).json({ success: false, message: 'No file provided' });
 
         const estimationRef = adminDb.collection('estimations').doc(req.params.id);
         const estimationDoc = await estimationRef.get();
-
         if (!estimationDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'Estimation not found'
-            });
+            await deleteFile(req.file.path);
+            return res.status(404).json({ success: false, message: 'Estimation not found' });
         }
+        
+        const currentData = estimationDoc.data();
+        if (currentData.resultFile?.filePath) await deleteFile(currentData.resultFile.filePath);
 
-        await estimationRef.update({
-            adminNotes: notes || '',
+        const updateData = {
+            resultFile: getFileInfo(req.file),
+            status: 'completed',
             updatedAt: new Date().toISOString()
-        });
+        };
+        if(req.body.amount) updateData.estimatedAmount = parseFloat(req.body.amount);
 
+        await estimationRef.update(updateData);
         const updatedDoc = await estimationRef.get();
-
-        res.json({
-            success: true,
-            message: 'Notes updated successfully',
-            estimation: {
-                id: updatedDoc.id,
-                ...updatedDoc.data()
-            }
-        });
-
+        res.json({ success: true, message: 'Result uploaded', estimation: updatedDoc.data() });
     } catch (error) {
-        console.error('Update notes error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to update notes',
-            error: error.message
-        });
+        if (req.file) await deleteFile(req.file.path);
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
-// FIXED: Users endpoint with proper data structure
+
+// Update estimation status
+router.patch('/estimations/:id/status', async (req, res) => {
+    try {
+        const { status } = req.body;
+        await adminDb.collection('estimations').doc(req.params.id).update({ status });
+        res.json({ success: true, message: 'Status updated' });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Get all users
 router.get('/users', async (req, res) => {
     try {
         const usersSnapshot = await adminDb.collection('users').get();
         const users = [];
-        
         usersSnapshot.forEach(doc => {
-            const userData = doc.data();
-            if (userData.type !== 'admin') {
-                const { password, ...userWithoutPassword } = userData;
-                users.push({ 
-                    id: doc.id, 
-                    ...userWithoutPassword,
-                    name: userData.name || 'Unknown User',
-                    email: userData.email || 'No email',
-                    type: userData.type || 'contractor',
-                    status: userData.status || 'active'
-                });
-            }
+            const { password, ...userWithoutPassword } = doc.data();
+            users.push({ id: doc.id, ...userWithoutPassword });
         });
-
-        res.json({ 
-            success: true, 
-            users,
-            data: users // Add for frontend compatibility
-        });
-
+        res.json({ success: true, data: users });
     } catch (error) {
-        console.error('Get users error:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Failed to fetch users.',
-            error: error.message 
-        });
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
-router.put('/users/:id/status', async (req, res) => {
-    try {
-        const { status } = req.body;
-        
-        await adminDb.collection('users').doc(req.params.id).update({ 
-            status,
-            updatedAt: new Date().toISOString()
-        });
-
-        res.json({ success: true, message: 'User status updated successfully.' });
-
-    } catch (error) {
-        console.error('Update user status error:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Failed to update user status.',
-            error: error.message 
-        });
-    }
-});
-
-router.delete('/users/:id', async (req, res) => {
-    try {
-        await adminDb.collection('users').doc(req.params.id).delete();
-        res.json({ success: true, message: 'User deleted successfully.' });
-
-    } catch (error) {
-        console.error('Delete user error:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Failed to delete user.',
-            error: error.message 
-        });
-    }
-});
-
-// ADD: Missing endpoints that frontend expects
-router.get('/quotes', async (req, res) => {
-    try {
-        const quotesSnapshot = await adminDb.collection('quotes').get();
-        const quotes = [];
-        
-        quotesSnapshot.forEach(doc => {
-            quotes.push({ id: doc.id, ...doc.data() });
-        });
-
-        res.json({ success: true, quotes });
-
-    } catch (error) {
-        console.error('Get quotes error:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Failed to fetch quotes.',
-            error: error.message 
-        });
-    }
-});
-
-router.get('/messages', async (req, res) => {
-    try {
-        const messagesSnapshot = await adminDb.collection('messages').get();
-        const messages = [];
-        
-        messagesSnapshot.forEach(doc => {
-            messages.push({ id: doc.id, ...doc.data() });
-        });
-
-        res.json({ success: true, messages });
-
-    } catch (error) {
-        console.error('Get messages error:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Failed to fetch messages.',
-            error: error.message 
-        });
-    }
-});
-
+// Get all jobs
 router.get('/jobs', async (req, res) => {
     try {
         const jobsSnapshot = await adminDb.collection('jobs').get();
         const jobs = [];
-        
-        jobsSnapshot.forEach(doc => {
-            jobs.push({ id: doc.id, ...doc.data() });
-        });
-
-        res.json({ success: true, jobs });
-
+        jobsSnapshot.forEach(doc => jobs.push({ id: doc.id, ...doc.data() }));
+        // FIX: Added 'data' property for frontend compatibility
+        res.json({ success: true, data: jobs });
     } catch (error) {
-        console.error('Get jobs error:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Failed to fetch jobs.',
-            error: error.message 
-        });
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
-function getStatusInfo(status) {
-    const statusMap = {
-        'pending': { text: 'Pending Review', color: 'orange' },
-        'in-progress': { text: 'In Progress', color: 'blue' },
-        'completed': { text: 'Completed', color: 'green' },
-        'rejected': { text: 'Rejected', color: 'red' },
-        'cancelled': { text: 'Cancelled', color: 'gray' }
-    };
-    return statusMap[status] || { text: status, color: 'gray' };
-}
-
-router.get('/test', (req, res) => {
-    res.json({
-        success: true,
-        message: 'Admin routes are working!',
-        user: req.user,
-        timestamp: new Date().toISOString(),
-        availableRoutes: [
-            'GET /dashboard - Admin dashboard stats',
-            'GET /estimations - List all estimations',
-            'GET /estimations/:id - Get single estimation',
-            'PUT /estimations/:id/status - Update estimation status',
-            'PUT /estimations/:id/amount - Update estimation amount',
-            'POST /estimations/:id/upload-result - Upload result PDF',
-            'GET /estimations/:id/files/:fileId/download?type=uploaded|result - Download files',
-            'PUT /estimations/:id/notes - Add admin notes',
-            'GET /users - List all users',
-            'PUT /users/:id/status - Update user status',
-            'DELETE /users/:id - Delete user',
-            'GET /quotes - List all quotes',
-            'GET /messages - List all messages',
-            'GET /jobs - List all jobs'
-        ]
-    });
+// Get all quotes
+router.get('/quotes', async (req, res) => {
+    try {
+        const quotesSnapshot = await adminDb.collection('quotes').get();
+        const quotes = [];
+        quotesSnapshot.forEach(doc => quotes.push({ id: doc.id, ...doc.data() }));
+        // FIX: Added 'data' property for frontend compatibility
+        res.json({ success: true, data: quotes });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
+
+// Get all messages
+router.get('/messages', async (req, res) => {
+    try {
+        const messagesSnapshot = await adminDb.collection('messages').get();
+        const messages = [];
+        messagesSnapshot.forEach(doc => messages.push({ id: doc.id, ...doc.data() }));
+        // FIX: Added 'data' property for frontend compatibility
+        res.json({ success: true, data: messages });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 
 export default router;

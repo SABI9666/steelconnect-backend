@@ -1,98 +1,56 @@
+// src/routes/admin.js - FIXED VERSION with proper estimation integration
 import express from 'express';
-import { adminDb } from '../config/firebase.js';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
 import jwt from 'jsonwebtoken';
+import { adminDb } from '../config/firebase.js';
+
+// Import MongoDB models (assuming you have these)
+// You'll need to create these models if they don't exist
+let User, Quote, Message, Job, Estimation;
+try {
+    const models = await import('../models/index.js'); // Assuming you have a models index
+    User = models.User;
+    Quote = models.Quote;
+    Message = models.Message;
+    Job = models.Job;
+    Estimation = models.Estimation;
+} catch (error) {
+    console.warn('⚠️ Some MongoDB models not available:', error.message);
+}
 
 const router = express.Router();
 
-// Enhanced admin middleware with detailed logging
+// --- ADMIN AUTHENTICATION MIDDLEWARE ---
 const isAdmin = async (req, res, next) => {
     try {
-        const token = req.header('Authorization')?.replace('Bearer ', '');
-        
-        console.log(`🔍 Admin check for ${req.method} ${req.originalUrl}`);
-        
-        if (!token) {
-            console.log('❌ Admin access: No token provided');
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
             return res.status(401).json({ 
                 success: false, 
-                error: 'Access denied. No token provided.',
-                code: 'NO_TOKEN'
+                message: 'Authorization token required.' 
             });
         }
 
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret');
+        const token = authHeader.substring(7);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_default_secret_key_change_in_production');
         
-        console.log('🔍 Admin token decoded:', {
-            userId: decoded.userId,
-            email: decoded.email,
-            type: decoded.type,
-            role: decoded.role
-        });
-        
-        // Check if it's an environment admin
-        if (decoded.userId === 'env_admin' && decoded.type === 'admin') {
-            console.log('✅ Environment admin access granted:', decoded.email);
-            req.user = decoded;
-            return next();
-        }
-        
-        // Check if it's a database admin
-        if (decoded.type === 'admin' && decoded.role === 'admin') {
-            console.log('🔍 Checking database admin...');
-            try {
-                const userDoc = await adminDb.collection('users').doc(decoded.userId).get();
-                if (userDoc.exists && userDoc.data().type === 'admin') {
-                    console.log('✅ Database admin access granted:', decoded.email);
-                    req.user = decoded;
-                    return next();
-                } else {
-                    console.log('❌ Database admin check failed - user not found or not admin');
-                }
-            } catch (dbError) {
-                console.error('❌ Database verification failed:', dbError);
-                return res.status(500).json({ 
-                    success: false, 
-                    error: 'Database verification failed.',
-                    code: 'DB_ERROR'
-                });
-            }
-        }
-        
-        console.log('❌ Admin access denied:', {
-            email: decoded.email,
-            type: decoded.type,
-            role: decoded.role,
-            userId: decoded.userId
-        });
-        
-        return res.status(403).json({ 
-            success: false, 
-            error: 'Access denied. Admin privileges required.',
-            code: 'NOT_ADMIN',
-            debug: {
-                userType: decoded.type,
-                userRole: decoded.role,
-                isEnvAdmin: decoded.userId === 'env_admin',
-                hasAdminType: decoded.type === 'admin',
-                hasAdminRole: decoded.role === 'admin'
-            }
-        });
-        
-    } catch (error) {
-        console.error('❌ Admin verification failed:', error);
-        
-        if (error.name === 'TokenExpiredError') {
-            return res.status(401).json({ 
+        // Check if user is admin
+        if (decoded.type !== 'admin' && decoded.role !== 'admin') {
+            return res.status(403).json({ 
                 success: false, 
-                error: 'Admin token has expired.',
-                code: 'TOKEN_EXPIRED'
+                message: 'Admin access required.' 
             });
         }
-        
+
+        req.user = decoded;
+        next();
+    } catch (error) {
+        console.error('Admin auth error:', error);
         res.status(401).json({ 
             success: false, 
-            error: 'Invalid admin token.',
-            code: 'INVALID_ADMIN_TOKEN'
+            message: 'Invalid or expired token.' 
         });
     }
 };
@@ -100,447 +58,595 @@ const isAdmin = async (req, res, next) => {
 // Apply admin middleware to all routes
 router.use(isAdmin);
 
-// Dashboard endpoint
+// --- FILE UPLOAD CONFIGURATION ---
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        const uploadDir = 'uploads/results';
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        cb(null, uploadDir);
+    },
+    filename: function (req, file, cb) {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, 'result-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+
+const upload = multer({
+    storage: storage,
+    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype === 'application/pdf') {
+            cb(null, true);
+        } else {
+            cb(new Error('Only PDF files are allowed for result uploads'), false);
+        }
+    }
+});
+
+// --- UTILITY FUNCTIONS ---
+const getFileInfo = (file) => ({
+    originalName: file.originalname,
+    fileName: file.filename,
+    filePath: file.path,
+    fileSize: file.size,
+    mimeType: file.mimetype
+});
+
+const deleteFile = async (filePath) => {
+    try {
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
+    } catch (error) {
+        console.error('Error deleting file:', error);
+    }
+};
+
+// --- ADMIN DASHBOARD ROUTES ---
+
+// Get admin dashboard statistics
 router.get('/dashboard', async (req, res) => {
     try {
-        console.log('✅ Admin dashboard accessed by:', req.user.email);
-        
-        // Get basic stats
-        const [usersSnapshot, jobsSnapshot, quotesSnapshot] = await Promise.all([
-            adminDb.collection('users').get(),
-            adminDb.collection('jobs').get(),
-            adminDb.collection('quotes').get()
-        ]);
-
-        const stats = {
-            totalUsers: usersSnapshot.size,
-            totalJobs: jobsSnapshot.size,
-            totalQuotes: quotesSnapshot.size,
-            activeJobs: jobsSnapshot.docs.filter(doc => doc.data().status === 'open').length,
-            completedJobs: jobsSnapshot.docs.filter(doc => doc.data().status === 'completed').length,
-            contractors: usersSnapshot.docs.filter(doc => doc.data().type === 'contractor').length,
-            designers: usersSnapshot.docs.filter(doc => doc.data().type === 'designer').length
+        let stats = {
+            totalUsers: 0,
+            totalQuotes: 0,
+            totalMessages: 0,
+            totalJobs: 0,
+            totalEstimations: 0,
+            pendingEstimations: 0,
+            completedEstimations: 0,
+            recentActivity: []
         };
 
-        console.log('✅ Dashboard data retrieved successfully');
-        
+        // If MongoDB models are available, use them
+        if (User && Quote && Message && Job && Estimation) {
+            const [users, quotes, messages, jobs, estimations, pending, completed] = await Promise.all([
+                User.countDocuments(),
+                Quote.countDocuments(),
+                Message.countDocuments(),
+                Job.countDocuments(),
+                Estimation.countDocuments(),
+                Estimation.countDocuments({ status: 'pending' }),
+                Estimation.countDocuments({ status: 'completed' })
+            ]);
+
+            stats = {
+                totalUsers: users,
+                totalQuotes: quotes,
+                totalMessages: messages,
+                totalJobs: jobs,
+                totalEstimations: estimations,
+                pendingEstimations: pending,
+                completedEstimations: completed
+            };
+
+            // Get recent estimations
+            const recentEstimations = await Estimation.find()
+                .populate('contractorId', 'name email')
+                .sort('-createdAt')
+                .limit(5)
+                .lean();
+
+            stats.recentActivity = recentEstimations;
+        }
+
         res.json({
             success: true,
-            data: {
-                stats,
-                timestamp: new Date().toISOString(),
-                adminUser: req.user.email
-            }
+            stats
         });
+
     } catch (error) {
-        console.error('❌ Dashboard error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to load dashboard data'
+        console.error('Dashboard stats error:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Failed to fetch dashboard statistics.',
+            error: error.message 
         });
     }
 });
 
-// Users endpoint
-router.get('/users', async (req, res) => {
+// --- ESTIMATION MANAGEMENT ROUTES ---
+
+// Get all estimations
+router.get('/estimations', async (req, res) => {
     try {
-        console.log('✅ Admin users list accessed by:', req.user.email);
-        
-        const usersSnapshot = await adminDb.collection('users').orderBy('createdAt', 'desc').get();
-        
-        const users = usersSnapshot.docs.map(doc => {
-            const userData = doc.data();
-            // Remove password from response
-            const { password, ...userWithoutPassword } = userData;
+        if (!Estimation) {
+            return res.status(503).json({
+                success: false,
+                message: 'Estimation service not available'
+            });
+        }
+
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
+        const status = req.query.status;
+        const contractorId = req.query.contractorId;
+        const sort = req.query.sort || '-createdAt';
+
+        // Build query
+        const query = {};
+        if (status) query.status = status;
+        if (contractorId) query.contractorId = contractorId;
+
+        const estimations = await Estimation.find(query)
+            .populate('contractorId', 'name email type')
+            .populate('estimatedBy', 'name email')
+            .sort(sort)
+            .limit(limit)
+            .skip((page - 1) * limit)
+            .lean();
+
+        const total = await Estimation.countDocuments(query);
+
+        // Format estimations with additional info
+        const formattedEstimations = estimations.map(est => {
+            const estimation = new Estimation(est);
             return {
-                id: doc.id,
-                ...userWithoutPassword
+                ...est,
+                statusInfo: estimation.getStatusInfo ? estimation.getStatusInfo() : { text: est.status, color: 'gray' },
+                totalFiles: (est.uploadedFiles ? est.uploadedFiles.length : 0) + (est.resultFile ? 1 : 0)
             };
         });
 
-        console.log(`✅ Retrieved ${users.length} users`);
-        
         res.json({
             success: true,
-            data: users,
-            meta: {
-                total: users.length,
-                timestamp: new Date().toISOString()
+            estimations: formattedEstimations,
+            pagination: {
+                current: page,
+                pages: Math.ceil(total / limit),
+                total,
+                limit
             }
         });
+
     } catch (error) {
-        console.error('❌ Users fetch error:', error);
+        console.error('Get estimations error:', error);
         res.status(500).json({
             success: false,
-            error: 'Failed to load users'
+            message: 'Failed to fetch estimations',
+            error: error.message
         });
     }
 });
 
-// Jobs endpoint
-router.get('/jobs', async (req, res) => {
+// Get single estimation
+router.get('/estimations/:id', async (req, res) => {
     try {
-        console.log('✅ Admin jobs list accessed by:', req.user.email);
-        
-        const jobsSnapshot = await adminDb.collection('jobs').orderBy('createdAt', 'desc').get();
-        
-        const jobs = jobsSnapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-        }));
-
-        console.log(`✅ Retrieved ${jobs.length} jobs`);
-        
-        res.json({
-            success: true,
-            data: jobs,
-            meta: {
-                total: jobs.length,
-                timestamp: new Date().toISOString()
-            }
-        });
-    } catch (error) {
-        console.error('❌ Jobs fetch error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to load jobs'
-        });
-    }
-});
-
-// Quotes endpoint
-router.get('/quotes', async (req, res) => {
-    try {
-        console.log('✅ Admin quotes list accessed by:', req.user.email);
-        
-        const quotesSnapshot = await adminDb.collection('quotes').orderBy('createdAt', 'desc').get();
-        
-        const quotes = quotesSnapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-        }));
-
-        console.log(`✅ Retrieved ${quotes.length} quotes`);
-        
-        res.json({
-            success: true,
-            data: quotes,
-            meta: {
-                total: quotes.length,
-                timestamp: new Date().toISOString()
-            }
-        });
-    } catch (error) {
-        console.error('❌ Quotes fetch error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to load quotes'
-        });
-    }
-});
-
-// Messages endpoint
-router.get('/messages', async (req, res) => {
-    try {
-        console.log('✅ Admin messages list accessed by:', req.user.email);
-        
-        const conversationsSnapshot = await adminDb.collection('conversations').orderBy('updatedAt', 'desc').get();
-        
-        const conversations = conversationsSnapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-        }));
-
-        console.log(`✅ Retrieved ${conversations.length} conversations`);
-        
-        res.json({
-            success: true,
-            data: conversations,
-            meta: {
-                total: conversations.length,
-                timestamp: new Date().toISOString()
-            }
-        });
-    } catch (error) {
-        console.error('❌ Messages fetch error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to load messages'
-        });
-    }
-});
-
-// Subscriptions endpoint
-router.get('/subscriptions', async (req, res) => {
-    try {
-        console.log('✅ Admin subscriptions list accessed by:', req.user.email);
-        
-        // Get users with subscription data
-        const usersSnapshot = await adminDb.collection('users').get();
-        
-        const subscriptions = usersSnapshot.docs
-            .filter(doc => doc.data().subscription)
-            .map(doc => ({
-                id: doc.id,
-                userName: doc.data().name,
-                userEmail: doc.data().email,
-                userType: doc.data().type,
-                subscription: doc.data().subscription,
-                createdAt: doc.data().createdAt
-            }));
-
-        console.log(`✅ Retrieved ${subscriptions.length} subscriptions`);
-        
-        res.json({
-            success: true,
-            data: subscriptions,
-            meta: {
-                total: subscriptions.length,
-                timestamp: new Date().toISOString()
-            }
-        });
-    } catch (error) {
-        console.error('❌ Subscriptions fetch error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to load subscriptions'
-        });
-    }
-});
-
-// Subscription plans endpoint
-router.get('/subscription-plans', async (req, res) => {
-    try {
-        console.log('✅ Admin subscription plans accessed by:', req.user.email);
-        
-        // Mock subscription plans data (you can move this to Firestore later)
-        const plans = [
-            {
-                id: 'basic',
-                name: 'Basic Plan',
-                price: 29.99,
-                duration: 'monthly',
-                features: ['Basic job posting', 'Email support', '5 quotes per month'],
-                active: true,
-                createdAt: new Date().toISOString()
-            },
-            {
-                id: 'premium',
-                name: 'Premium Plan',
-                price: 59.99,
-                duration: 'monthly',
-                features: ['Unlimited job posting', 'Priority support', 'Unlimited quotes', 'Advanced analytics'],
-                active: true,
-                createdAt: new Date().toISOString()
-            },
-            {
-                id: 'enterprise',
-                name: 'Enterprise Plan',
-                price: 199.99,
-                duration: 'monthly',
-                features: ['Custom integrations', 'Dedicated support', 'White-label solution', 'API access'],
-                active: false,
-                createdAt: new Date().toISOString()
-            }
-        ];
-
-        console.log(`✅ Retrieved ${plans.length} subscription plans`);
-        
-        res.json({
-            success: true,
-            data: plans,
-            meta: {
-                total: plans.length,
-                timestamp: new Date().toISOString()
-            }
-        });
-    } catch (error) {
-        console.error('❌ Subscription plans fetch error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to load subscription plans'
-        });
-    }
-});
-
-// Analytics endpoint
-router.get('/analytics', async (req, res) => {
-    try {
-        console.log('✅ Admin analytics accessed by:', req.user.email);
-        
-        const [usersSnapshot, jobsSnapshot, quotesSnapshot] = await Promise.all([
-            adminDb.collection('users').get(),
-            adminDb.collection('jobs').get(),
-            adminDb.collection('quotes').get()
-        ]);
-
-        // Basic analytics
-        const analytics = {
-            userGrowth: {
-                total: usersSnapshot.size,
-                contractors: usersSnapshot.docs.filter(doc => doc.data().type === 'contractor').length,
-                designers: usersSnapshot.docs.filter(doc => doc.data().type === 'designer').length,
-                admins: usersSnapshot.docs.filter(doc => doc.data().type === 'admin').length
-            },
-            jobMetrics: {
-                total: jobsSnapshot.size,
-                open: jobsSnapshot.docs.filter(doc => doc.data().status === 'open').length,
-                assigned: jobsSnapshot.docs.filter(doc => doc.data().status === 'assigned').length,
-                completed: jobsSnapshot.docs.filter(doc => doc.data().status === 'completed').length
-            },
-            quoteMetrics: {
-                total: quotesSnapshot.size,
-                submitted: quotesSnapshot.docs.filter(doc => doc.data().status === 'submitted').length,
-                approved: quotesSnapshot.docs.filter(doc => doc.data().status === 'approved').length,
-                rejected: quotesSnapshot.docs.filter(doc => doc.data().status === 'rejected').length
-            },
-            recentActivity: {
-                newUsersLastWeek: usersSnapshot.docs.filter(doc => {
-                    const createdAt = doc.data().createdAt;
-                    if (!createdAt) return false;
-                    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-                    return new Date(createdAt) > oneWeekAgo;
-                }).length,
-                newJobsLastWeek: jobsSnapshot.docs.filter(doc => {
-                    const createdAt = doc.data().createdAt;
-                    if (!createdAt) return false;
-                    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-                    return new Date(createdAt) > oneWeekAgo;
-                }).length
-            }
-        };
-
-        console.log('✅ Analytics data generated');
-        
-        res.json({
-            success: true,
-            data: analytics,
-            meta: {
-                generatedAt: new Date().toISOString(),
-                adminUser: req.user.email
-            }
-        });
-    } catch (error) {
-        console.error('❌ Analytics fetch error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to load analytics'
-        });
-    }
-});
-
-// System stats endpoint
-router.get('/system-stats', async (req, res) => {
-    try {
-        console.log('✅ Admin system stats accessed by:', req.user.email);
-        
-        const systemStats = {
-            server: {
-                uptime: Math.floor(process.uptime()),
-                uptimeFormatted: formatUptime(process.uptime()),
-                memory: {
-                    used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
-                    total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
-                    rss: Math.round(process.memoryUsage().rss / 1024 / 1024)
-                },
-                nodeVersion: process.version,
-                platform: process.platform
-            },
-            database: {
-                status: 'connected',
-                timestamp: new Date().toISOString(),
-                provider: 'Firebase Firestore'
-            },
-            environment: process.env.NODE_ENV || 'development',
-            version: '2.0.0'
-        };
-
-        console.log('✅ System stats generated');
-        
-        res.json({
-            success: true,
-            data: systemStats,
-            meta: {
-                timestamp: new Date().toISOString(),
-                adminUser: req.user.email
-            }
-        });
-    } catch (error) {
-        console.error('❌ System stats error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to load system stats'
-        });
-    }
-});
-
-// Estimations endpoint
-router.get('/estimations', async (req, res) => {
-    try {
-        console.log('✅ Admin estimations accessed by:', req.user.email);
-        
-        // Try to get estimations from Firestore (if collection exists)
-        let estimations = [];
-        try {
-            const estimationsSnapshot = await adminDb.collection('estimations').orderBy('createdAt', 'desc').get();
-            estimations = estimationsSnapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
-        } catch (collectionError) {
-            console.log('📝 No estimations collection found, using mock data');
-            // Mock data for estimations
-            estimations = [
-                {
-                    id: 'est1',
-                    projectName: 'Office Building Foundation',
-                    clientEmail: 'client1@example.com',
-                    estimatedCost: 150000,
-                    actualCost: 148000,
-                    status: 'completed',
-                    createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-                    completedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString()
-                },
-                {
-                    id: 'est2',
-                    projectName: 'Residential Steel Frame',
-                    clientEmail: 'client2@example.com',
-                    estimatedCost: 75000,
-                    actualCost: null,
-                    status: 'in_progress',
-                    createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-                    completedAt: null
-                }
-            ];
+        if (!Estimation) {
+            return res.status(503).json({
+                success: false,
+                message: 'Estimation service not available'
+            });
         }
 
-        console.log(`✅ Retrieved ${estimations.length} estimations`);
-        
+        const estimation = await Estimation.findById(req.params.id)
+            .populate('contractorId', 'name email type phone company')
+            .populate('estimatedBy', 'name email');
+
+        if (!estimation) {
+            return res.status(404).json({
+                success: false,
+                message: 'Estimation not found'
+            });
+        }
+
         res.json({
             success: true,
-            data: estimations,
-            meta: {
-                total: estimations.length,
-                timestamp: new Date().toISOString()
+            estimation: {
+                ...estimation.toObject(),
+                statusInfo: estimation.getStatusInfo ? estimation.getStatusInfo() : { text: estimation.status, color: 'gray' }
             }
         });
+
     } catch (error) {
-        console.error('❌ Estimations fetch error:', error);
+        console.error('Get estimation error:', error);
         res.status(500).json({
             success: false,
-            error: 'Failed to load estimations'
+            message: 'Failed to fetch estimation',
+            error: error.message
         });
     }
 });
 
-// Helper function to format uptime
-function formatUptime(uptimeSeconds) {
-    const days = Math.floor(uptimeSeconds / (24 * 60 * 60));
-    const hours = Math.floor((uptimeSeconds % (24 * 60 * 60)) / (60 * 60));
-    const minutes = Math.floor((uptimeSeconds % (60 * 60)) / 60);
-    const seconds = Math.floor(uptimeSeconds % 60);
-    
-    return `${days}d ${hours}h ${minutes}m ${seconds}s`;
-}
+// Update estimation status
+router.put('/estimations/:id/status', async (req, res) => {
+    try {
+        if (!Estimation) {
+            return res.status(503).json({
+                success: false,
+                message: 'Estimation service not available'
+            });
+        }
+
+        const { status } = req.body;
+        const validStatuses = ['pending', 'in-progress', 'completed', 'rejected', 'cancelled'];
+        
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid status value'
+            });
+        }
+
+        const estimation = await Estimation.findById(req.params.id);
+        if (!estimation) {
+            return res.status(404).json({
+                success: false,
+                message: 'Estimation not found'
+            });
+        }
+
+        estimation.status = status;
+        
+        if (status === 'in-progress' && !estimation.estimationStartDate) {
+            estimation.estimationStartDate = new Date();
+            estimation.estimatedBy = req.user.userId;
+        }
+        
+        if (status === 'completed' && !estimation.estimationCompletedDate) {
+            estimation.estimationCompletedDate = new Date();
+        }
+
+        await estimation.save();
+
+        res.json({
+            success: true,
+            message: 'Estimation status updated successfully',
+            estimation: {
+                ...estimation.toObject(),
+                statusInfo: estimation.getStatusInfo ? estimation.getStatusInfo() : { text: estimation.status, color: 'gray' }
+            }
+        });
+
+    } catch (error) {
+        console.error('Update status error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to update estimation status',
+            error: error.message
+        });
+    }
+});
+
+// Update estimation amount
+router.put('/estimations/:id/amount', async (req, res) => {
+    try {
+        if (!Estimation) {
+            return res.status(503).json({
+                success: false,
+                message: 'Estimation service not available'
+            });
+        }
+
+        const { amount } = req.body;
+
+        if (!amount || isNaN(amount) || amount < 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Valid amount is required'
+            });
+        }
+
+        const estimation = await Estimation.findById(req.params.id);
+        if (!estimation) {
+            return res.status(404).json({
+                success: false,
+                message: 'Estimation not found'
+            });
+        }
+
+        estimation.estimatedAmount = parseFloat(amount);
+        await estimation.save();
+
+        res.json({
+            success: true,
+            message: 'Estimation amount updated successfully',
+            estimation: estimation.toObject()
+        });
+
+    } catch (error) {
+        console.error('Update amount error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to update estimation amount',
+            error: error.message
+        });
+    }
+});
+
+// Upload result PDF
+router.post('/estimations/:id/upload-result', upload.single('resultFile'), async (req, res) => {
+    try {
+        if (!Estimation) {
+            if (req.file) await deleteFile(req.file.path);
+            return res.status(503).json({
+                success: false,
+                message: 'Estimation service not available'
+            });
+        }
+
+        if (!req.file) {
+            return res.status(400).json({
+                success: false,
+                message: 'No result file provided'
+            });
+        }
+
+        const estimation = await Estimation.findById(req.params.id);
+        if (!estimation) {
+            await deleteFile(req.file.path);
+            return res.status(404).json({
+                success: false,
+                message: 'Estimation not found'
+            });
+        }
+
+        // Delete old result file if exists
+        if (estimation.resultFile && estimation.resultFile.filePath) {
+            await deleteFile(estimation.resultFile.filePath);
+        }
+
+        // Save new result file info
+        estimation.resultFile = {
+            ...getFileInfo(req.file),
+            uploadDate: new Date()
+        };
+
+        // Update status and completion info
+        if (estimation.status !== 'completed') {
+            estimation.status = 'completed';
+            estimation.estimationCompletedDate = new Date();
+            estimation.estimatedBy = req.user.userId;
+        }
+
+        await estimation.save();
+
+        res.json({
+            success: true,
+            message: 'Result PDF uploaded successfully',
+            estimation: estimation.toObject()
+        });
+
+    } catch (error) {
+        console.error('Upload result error:', error);
+        
+        if (req.file) {
+            await deleteFile(req.file.path);
+        }
+
+        res.status(500).json({
+            success: false,
+            message: 'Failed to upload result PDF',
+            error: error.message
+        });
+    }
+});
+
+// Download contractor's uploaded files
+router.get('/estimations/:id/files/:fileId/download', async (req, res) => {
+    try {
+        if (!Estimation) {
+            return res.status(503).json({
+                success: false,
+                message: 'Estimation service not available'
+            });
+        }
+
+        const { id, fileId } = req.params;
+        const { type } = req.query; // 'uploaded' or 'result'
+
+        const estimation = await Estimation.findById(id);
+        if (!estimation) {
+            return res.status(404).json({
+                success: false,
+                message: 'Estimation not found'
+            });
+        }
+
+        let file;
+        if (type === 'result' && estimation.resultFile) {
+            file = estimation.resultFile;
+        } else {
+            file = estimation.uploadedFiles?.find(f => f._id.toString() === fileId);
+        }
+
+        if (!file) {
+            return res.status(404).json({
+                success: false,
+                message: 'File not found'
+            });
+        }
+
+        const filePath = path.resolve(file.filePath);
+        
+        if (!fs.existsSync(filePath)) {
+            return res.status(404).json({
+                success: false,
+                message: 'File not found on server'
+            });
+        }
+
+        res.setHeader('Content-Disposition', `attachment; filename="${file.originalName}"`);
+        res.setHeader('Content-Type', file.mimeType || 'application/octet-stream');
+        
+        const fileStream = fs.createReadStream(filePath);
+        fileStream.pipe(res);
+
+    } catch (error) {
+        console.error('Download file error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to download file',
+            error: error.message
+        });
+    }
+});
+
+// Add admin notes to estimation
+router.put('/estimations/:id/notes', async (req, res) => {
+    try {
+        if (!Estimation) {
+            return res.status(503).json({
+                success: false,
+                message: 'Estimation service not available'
+            });
+        }
+
+        const { notes } = req.body;
+
+        const estimation = await Estimation.findById(req.params.id);
+        if (!estimation) {
+            return res.status(404).json({
+                success: false,
+                message: 'Estimation not found'
+            });
+        }
+
+        estimation.adminNotes = notes || '';
+        await estimation.save();
+
+        res.json({
+            success: true,
+            message: 'Notes updated successfully',
+            estimation: estimation.toObject()
+        });
+
+    } catch (error) {
+        console.error('Update notes error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to update notes',
+            error: error.message
+        });
+    }
+});
+
+// --- USER MANAGEMENT ROUTES ---
+
+// Get all users (contractors and designers)
+router.get('/users', async (req, res) => {
+    try {
+        // Try MongoDB first
+        if (User) {
+            const users = await User.find({ role: { $ne: 'admin' } }, '-password').lean();
+            return res.json({ success: true, users });
+        }
+
+        // Fallback to Firebase
+        const usersSnapshot = await adminDb.collection('users').get();
+        const users = [];
+        
+        usersSnapshot.forEach(doc => {
+            const userData = doc.data();
+            if (userData.type !== 'admin') {
+                const { password, ...userWithoutPassword } = userData;
+                users.push({ id: doc.id, ...userWithoutPassword });
+            }
+        });
+
+        res.json({ success: true, users });
+
+    } catch (error) {
+        console.error('Get users error:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Failed to fetch users.',
+            error: error.message 
+        });
+    }
+});
+
+// Update user status
+router.put('/users/:id/status', async (req, res) => {
+    try {
+        const { status } = req.body;
+        
+        // Try MongoDB first
+        if (User) {
+            await User.findByIdAndUpdate(req.params.id, { status });
+            return res.json({ success: true, message: 'User status updated successfully.' });
+        }
+
+        // Fallback to Firebase
+        await adminDb.collection('users').doc(req.params.id).update({ status });
+        res.json({ success: true, message: 'User status updated successfully.' });
+
+    } catch (error) {
+        console.error('Update user status error:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Failed to update user status.',
+            error: error.message 
+        });
+    }
+});
+
+// Delete user
+router.delete('/users/:id', async (req, res) => {
+    try {
+        // Try MongoDB first
+        if (User) {
+            await User.findByIdAndDelete(req.params.id);
+            return res.json({ success: true, message: 'User deleted successfully.' });
+        }
+
+        // Fallback to Firebase
+        await adminDb.collection('users').doc(req.params.id).delete();
+        res.json({ success: true, message: 'User deleted successfully.' });
+
+    } catch (error) {
+        console.error('Delete user error:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Failed to delete user.',
+            error: error.message 
+        });
+    }
+});
+
+// --- TEST ROUTE ---
+router.get('/test', (req, res) => {
+    res.json({
+        success: true,
+        message: 'Admin routes are working!',
+        user: req.user,
+        timestamp: new Date().toISOString(),
+        availableRoutes: [
+            'GET /dashboard - Admin dashboard stats',
+            'GET /estimations - List all estimations',
+            'GET /estimations/:id - Get single estimation',
+            'PUT /estimations/:id/status - Update estimation status',
+            'PUT /estimations/:id/amount - Update estimation amount',
+            'POST /estimations/:id/upload-result - Upload result PDF',
+            'GET /estimations/:id/files/:fileId/download - Download files',
+            'PUT /estimations/:id/notes - Add admin notes',
+            'GET /users - List all users',
+            'PUT /users/:id/status - Update user status',
+            'DELETE /users/:id - Delete user'
+        ]
+    });
+});
 
 export default router;

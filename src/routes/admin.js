@@ -1,4 +1,3 @@
-/ src/routes/admin.js - FIXED for Firebase only with corrected auth
 import express from 'express';
 import multer from 'multer';
 import path from 'path';
@@ -8,7 +7,6 @@ import { adminDb } from '../config/firebase.js';
 
 const router = express.Router();
 
-// --- FIXED ADMIN AUTHENTICATION MIDDLEWARE ---
 const isAdmin = (req, res, next) => {
     const authHeader = req.headers.authorization;
 
@@ -24,7 +22,6 @@ const isAdmin = (req, res, next) => {
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret');
         
-        // FIXED: Check both 'role' and 'type' for admin access
         if (decoded.role !== 'admin' && decoded.type !== 'admin') {
             return res.status(403).json({ 
                 success: false,
@@ -42,10 +39,8 @@ const isAdmin = (req, res, next) => {
     }
 };
 
-// Apply admin middleware to all routes
 router.use(isAdmin);
 
-// --- FILE UPLOAD CONFIGURATION ---
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
         const uploadDir = 'uploads/results';
@@ -62,7 +57,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
     storage: storage,
-    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
+    limits: { fileSize: 50 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
         if (file.mimetype === 'application/pdf') {
             cb(null, true);
@@ -72,7 +67,6 @@ const upload = multer({
     }
 });
 
-// --- UTILITY FUNCTIONS ---
 const getFileInfo = (file) => ({
     originalName: file.originalname,
     fileName: file.filename,
@@ -91,12 +85,8 @@ const deleteFile = async (filePath) => {
     }
 };
 
-// --- ADMIN DASHBOARD ROUTES ---
-
-// Get admin dashboard statistics
 router.get('/dashboard', async (req, res) => {
     try {
-        // Get counts from Firebase collections
         const [usersSnapshot, quotesSnapshot, messagesSnapshot, jobsSnapshot, estimationsSnapshot] = await Promise.all([
             adminDb.collection('users').get(),
             adminDb.collection('quotes').get(),
@@ -105,7 +95,6 @@ router.get('/dashboard', async (req, res) => {
             adminDb.collection('estimations').get()
         ]);
 
-        // Count estimations by status
         let pendingEstimations = 0;
         let completedEstimations = 0;
         let inProgressEstimations = 0;
@@ -117,12 +106,11 @@ router.get('/dashboard', async (req, res) => {
             if (data.status === 'completed') completedEstimations++;
             if (data.status === 'in-progress') inProgressEstimations++;
             
-            // Add to recent if within last 5 entries
             if (recentEstimations.length < 5) {
                 recentEstimations.push({
                     id: doc.id,
                     ...data,
-                    contractorName: 'Loading...' // You can populate this separately if needed
+                    contractorName: 'Loading...'
                 });
             }
         });
@@ -154,9 +142,6 @@ router.get('/dashboard', async (req, res) => {
     }
 });
 
-// --- ESTIMATION MANAGEMENT ROUTES ---
-
-// Get all estimations
 router.get('/estimations', async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
@@ -166,7 +151,6 @@ router.get('/estimations', async (req, res) => {
 
         let query = adminDb.collection('estimations');
         
-        // Apply filters
         if (status) {
             query = query.where('status', '==', status);
         }
@@ -174,7 +158,6 @@ router.get('/estimations', async (req, res) => {
             query = query.where('contractorId', '==', contractorId);
         }
 
-        // Get estimations with pagination
         const snapshot = await query
             .orderBy('createdAt', 'desc')
             .limit(limit)
@@ -184,7 +167,6 @@ router.get('/estimations', async (req, res) => {
         const estimations = [];
         const contractorIds = new Set();
 
-        // Collect estimation data and contractor IDs
         snapshot.forEach(doc => {
             const data = doc.data();
             estimations.push({
@@ -198,7 +180,6 @@ router.get('/estimations', async (req, res) => {
             }
         });
 
-        // Get contractor details
         const contractorData = {};
         if (contractorIds.size > 0) {
             const contractorPromises = Array.from(contractorIds).map(async (id) => {
@@ -219,13 +200,11 @@ router.get('/estimations', async (req, res) => {
             await Promise.all(contractorPromises);
         }
 
-        // Add contractor info to estimations
         const formattedEstimations = estimations.map(est => ({
             ...est,
             contractor: contractorData[est.contractorId] || null
         }));
 
-        // Get total count for pagination
         const totalSnapshot = await query.get();
         const total = totalSnapshot.size;
 
@@ -250,7 +229,6 @@ router.get('/estimations', async (req, res) => {
     }
 });
 
-// Get single estimation
 router.get('/estimations/:id', async (req, res) => {
     try {
         const estimationDoc = await adminDb.collection('estimations').doc(req.params.id).get();
@@ -264,7 +242,6 @@ router.get('/estimations/:id', async (req, res) => {
 
         const estimationData = estimationDoc.data();
 
-        // Get contractor details
         let contractor = null;
         if (estimationData.contractorId) {
             try {
@@ -284,7 +261,6 @@ router.get('/estimations/:id', async (req, res) => {
             }
         }
 
-        // Get estimatedBy details
         let estimatedBy = null;
         if (estimationData.estimatedBy) {
             try {
@@ -322,7 +298,6 @@ router.get('/estimations/:id', async (req, res) => {
     }
 });
 
-// Update estimation status
 router.put('/estimations/:id/status', async (req, res) => {
     try {
         const { status } = req.body;
@@ -367,7 +342,6 @@ router.put('/estimations/:id/status', async (req, res) => {
 
         await estimationRef.update(updateData);
 
-        // Get updated estimation
         const updatedDoc = await estimationRef.get();
         const updatedData = updatedDoc.data();
 
@@ -391,7 +365,6 @@ router.put('/estimations/:id/status', async (req, res) => {
     }
 });
 
-// Update estimation amount
 router.put('/estimations/:id/amount', async (req, res) => {
     try {
         const { amount } = req.body;
@@ -439,7 +412,6 @@ router.put('/estimations/:id/amount', async (req, res) => {
     }
 });
 
-// Upload result PDF
 router.post('/estimations/:id/upload-result', upload.single('resultFile'), async (req, res) => {
     try {
         if (!req.file) {
@@ -462,12 +434,10 @@ router.post('/estimations/:id/upload-result', upload.single('resultFile'), async
 
         const currentData = estimationDoc.data();
 
-        // Delete old result file if exists
         if (currentData.resultFile && currentData.resultFile.filePath) {
             await deleteFile(currentData.resultFile.filePath);
         }
 
-        // Update estimation with result file
         const updateData = {
             resultFile: {
                 ...getFileInfo(req.file),
@@ -476,7 +446,6 @@ router.post('/estimations/:id/upload-result', upload.single('resultFile'), async
             updatedAt: new Date().toISOString()
         };
 
-        // Update status if not completed
         if (currentData.status !== 'completed') {
             updateData.status = 'completed';
             updateData.estimationCompletedDate = new Date().toISOString();
@@ -511,11 +480,10 @@ router.post('/estimations/:id/upload-result', upload.single('resultFile'), async
     }
 });
 
-// Download contractor's uploaded files
 router.get('/estimations/:id/files/:fileId/download', async (req, res) => {
     try {
         const { id, fileId } = req.params;
-        const { type } = req.query; // 'uploaded' or 'result'
+        const { type } = req.query;
 
         const estimationDoc = await adminDb.collection('estimations').doc(id).get();
 
@@ -567,7 +535,6 @@ router.get('/estimations/:id/files/:fileId/download', async (req, res) => {
     }
 });
 
-// Add admin notes to estimation
 router.put('/estimations/:id/notes', async (req, res) => {
     try {
         const { notes } = req.body;
@@ -608,9 +575,6 @@ router.put('/estimations/:id/notes', async (req, res) => {
     }
 });
 
-// --- USER MANAGEMENT ROUTES ---
-
-// Get all users (contractors and designers)
 router.get('/users', async (req, res) => {
     try {
         const usersSnapshot = await adminDb.collection('users').get();
@@ -636,7 +600,6 @@ router.get('/users', async (req, res) => {
     }
 });
 
-// Update user status
 router.put('/users/:id/status', async (req, res) => {
     try {
         const { status } = req.body;
@@ -658,7 +621,6 @@ router.put('/users/:id/status', async (req, res) => {
     }
 });
 
-// Delete user
 router.delete('/users/:id', async (req, res) => {
     try {
         await adminDb.collection('users').doc(req.params.id).delete();
@@ -674,8 +636,6 @@ router.delete('/users/:id', async (req, res) => {
     }
 });
 
-// --- UTILITY FUNCTIONS ---
-
 function getStatusInfo(status) {
     const statusMap = {
         'pending': { text: 'Pending Review', color: 'orange' },
@@ -687,7 +647,6 @@ function getStatusInfo(status) {
     return statusMap[status] || { text: status, color: 'gray' };
 }
 
-// --- TEST ROUTE ---
 router.get('/test', (req, res) => {
     res.json({
         success: true,

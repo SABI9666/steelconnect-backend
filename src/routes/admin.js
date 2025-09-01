@@ -11,7 +11,21 @@ const bucket = adminStorage.bucket();
 
 // --- (isAdmin middleware remains the same) ---
 const isAdmin = (req, res, next) => {
-    // ... your isAdmin logic
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ success: false, error: 'Authorization token is required.' });
+    }
+    const token = authHeader.split(' ')[1];
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret');
+        if (decoded.role !== 'admin' && decoded.type !== 'admin') {
+            return res.status(403).json({ success: false, error: 'Access denied. Admin privileges required.' });
+        }
+        req.user = decoded;
+        next();
+    } catch (error) {
+        return res.status(401).json({ success: false, error: 'Invalid or expired token.' });
+    }
 };
 router.use(isAdmin);
 
@@ -98,7 +112,7 @@ router.get('/estimations/:id/files/:fileId/download', async (req, res) => {
         if (!doc.exists) return res.status(404).send('Estimation not found');
         
         const data = doc.data();
-        const file = data.uploadedFiles?.find(f => f.fileId === fileId || f.fileName === fileId);
+        const file = data.uploadedFiles?.find(f => f.fileId === fileId);
         
         if (!file || !file.storagePath) {
             return res.status(404).send('File record not found in estimation.');
@@ -117,6 +131,34 @@ router.get('/estimations/:id/files/:fileId/download', async (req, res) => {
     }
 });
 
-// ... (Other routes like get estimations, update status, etc., remain the same) ...
+
+// *** NEW ROUTE ADDED HERE ***
+// --- NEW: Download route for admin-uploaded result files ---
+router.get('/estimations/:id/download-result', async (req, res) => {
+    try {
+        const estimationId = req.params.id;
+        const ref = adminDb.collection('estimations').doc(estimationId);
+        const doc = await ref.get();
+
+        if (!doc.exists || !doc.data().resultFile) {
+            return res.status(404).json({ success: false, message: 'Result file not found.' });
+        }
+
+        const resultFile = doc.data().resultFile;
+        const [url] = await bucket.file(resultFile.storagePath).getSignedUrl({
+            action: 'read',
+            expires: Date.now() + 15 * 60 * 1000, // 15 minutes
+        });
+
+        res.redirect(url);
+
+    } catch (error) {
+        console.error('Admin download result error:', error);
+        res.status(500).json({ success: false, error: 'Failed to process result download.' });
+    }
+});
+
+
+// ... (Other routes like get estimations, update status, etc., can go here) ...
 
 export default router;

@@ -1,40 +1,54 @@
-// Load contractor's estimations
-async function loadEstimations() {
-    try {
-        const response = await apiCall('/contractor/estimations');
-        const estimations = response.estimations || [];
-        
-        const container = document.getElementById('estimations-list');
-        container.innerHTML = estimations.map(est => `
-            <div class="estimation-item">
-                <h3>${est.projectTitle}</h3>
-                <p>Status: <span class="status ${est.status}">${est.status}</span></p>
-                <p>Submitted: ${new Date(est.createdAt).toLocaleDateString()}</p>
-                ${est.estimatedAmount ? `<p>Estimated Amount: $${est.estimatedAmount}</p>` : ''}
-                <div class="actions">
-                    <button onclick="viewDetails('${est._id}')">View Details</button>
-                    ${est.resultFile ? `<button onclick="downloadResult('${est._id}')">Download Result</button>` : ''}
-                </div>
-            </div>
-        `).join('');
-    } catch (error) {
-        console.error('Failed to load estimations');
-    }
-}
+import express from 'express';
+import { authenticate } from '../middleware/auth.js'; // Assuming you have auth middleware
 
-// Submit new estimation
-async function submitEstimation(formData) {
+// Mock Controller Functions - Replace with your actual controller logic
+const getEstimationsByContractorEmail = async (req, res) => {
     try {
-        const response = await fetch('/api/contractor/estimations', {
-            method: 'POST',
-            body: formData // FormData with files
-        });
+        const { email } = req.params;
+        console.log(`✅ Fetching estimations for contractor email: ${email}`);
         
-        if (response.ok) {
-            alert('Estimation request submitted successfully!');
-            window.location.href = 'estimations.html';
+        // --- TODO: Add your database logic here ---
+        // Example: const estimations = await Estimation.find({ contractorEmail: email });
+        
+        // Mock response for now
+        const mockEstimations = [
+            { id: 'est_123', projectTitle: 'Project Alpha', status: 'Completed', contractorEmail: email },
+            { id: 'est_456', projectTitle: 'Project Beta', status: 'In Progress', contractorEmail: email },
+        ];
+
+        if (mockEstimations.length > 0) {
+            res.json({ success: true, estimations: mockEstimations });
+        } else {
+            res.status(404).json({ success: false, message: `No estimations found for contractor ${email}` });
         }
     } catch (error) {
-        alert('Failed to submit estimation request');
+        console.error('❌ Error in getEstimationsByContractorEmail:', error);
+        res.status(500).json({ success: false, error: 'Server error while fetching estimations.' });
     }
-}
+};
+
+const createEstimation = async (req, res) => {
+    try {
+        console.log('✅ Creating a new estimation...');
+        // --- TODO: Add your logic to handle file uploads and save estimation data ---
+        res.status(201).json({ success: true, message: 'Estimation created successfully.' });
+    } catch (error) {
+        console.error('❌ Error in createEstimation:', error);
+        res.status(500).json({ success: false, error: 'Server error while creating estimation.' });
+    }
+};
+
+
+const router = express.Router();
+
+// --- THIS IS THE FIX ---
+// This route will now correctly handle requests like:
+// GET /api/estimation/contractor/cn.sabin623@gmail.com
+router.get('/contractor/:email', authenticate, getEstimationsByContractorEmail);
+
+// Route to handle new estimation submissions
+// POST /api/estimation/
+router.post('/', authenticate, createEstimation);
+
+
+export default router;

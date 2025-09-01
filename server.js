@@ -1,4 +1,4 @@
-// server.js - FIXED VERSION with Admin Routes
+// server.js - FIXED VERSION with Admin Routes and CORS
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -11,7 +11,7 @@ import authRoutes from './src/routes/auth.js';
 import jobsRoutes from './src/routes/jobs.js';
 import quotesRoutes from './src/routes/quotes.js';
 import messagesRoutes from './src/routes/messages.js';
-import adminRoutes from './src/routes/admin.js'; // FIXED: Added admin routes import
+import adminRoutes from './src/routes/admin.js';
 
 // Import estimation routes
 let estimationRoutes;
@@ -41,15 +41,29 @@ if (process.env.MONGODB_URI) {
     console.warn('⚠️ MONGODB_URI not found in environment variables');
 }
 
-// --- Middleware ---
-const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',').filter(origin => origin.trim());
+// --- FIXED CORS CONFIGURATION ---
+// Add your frontend domains explicitly
+const allowedOrigins = [
+    'https://www.steelconnectapp.com',
+    'https://steelconnectapp.com',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://localhost:5000',
+    'http://127.0.0.1:5000',
+    // Add any additional domains from environment variable
+    ...(process.env.CORS_ORIGIN || '').split(',').filter(origin => origin.trim())
+];
+
+console.log('🌐 Allowed CORS origins:', allowedOrigins);
 
 const corsOptions = {
     origin: (origin, callback) => {
+        // Allow requests with no origin (mobile apps, Postman, etc.)
         if (!origin) return callback(null, true);
 
         if (allowedOrigins.includes(origin) || 
             origin.endsWith('.vercel.app') || 
+            origin.endsWith('.netlify.app') ||
             origin.includes('localhost') ||
             origin.includes('127.0.0.1')) {
             callback(null, true);
@@ -63,9 +77,23 @@ const corsOptions = {
         }
     },
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: [
+        'Origin',
+        'X-Requested-With',
+        'Content-Type',
+        'Accept',
+        'Authorization',
+        'Cache-Control',
+        'X-Requested-With'
+    ]
 };
 
 app.use(cors(corsOptions));
+
+// Add preflight handling for all routes
+app.options('*', cors(corsOptions));
+
 app.use(helmet({ 
     contentSecurityPolicy: false,
     crossOriginResourcePolicy: { policy: "cross-origin" }
@@ -76,7 +104,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // --- Request logging middleware ---
 app.use((req, res, next) => {
-    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.url} - Origin: ${req.headers.origin || 'No origin'}`);
     next();
 });
 
@@ -102,7 +130,7 @@ app.get('/', (req, res) => {
         endpoints: {
             health: '/health',
             auth: '/api/auth',
-            admin: '/api/admin', // FIXED: Added admin endpoint
+            admin: '/api/admin',
             jobs: '/api/jobs',
             quotes: '/api/quotes',
             messages: '/api/messages',
@@ -122,7 +150,7 @@ if (authRoutes) {
     console.error('❌ Auth routes failed to load');
 }
 
-// FIXED: Admin routes registration
+// Admin routes
 if (adminRoutes) {
     app.use('/api/admin', adminRoutes);
     console.log('✅ Admin routes registered');
@@ -175,8 +203,8 @@ app.get('/api', (req, res) => {
             'GET /api/auth/*',
             'POST /api/auth/register',
             'POST /api/auth/login',
-            'POST /api/auth/login/admin', // FIXED: Added admin login endpoint
-            'GET /api/admin/*', // FIXED: Added admin endpoints
+            'POST /api/auth/login/admin',
+            'GET /api/admin/*',
             'GET /api/jobs/*',
             'GET /api/quotes/*', 
             'GET /api/messages/*',
@@ -220,7 +248,7 @@ app.use('*', (req, res) => {
             '/health',
             '/api',
             '/api/auth/*',
-            '/api/admin/*', // FIXED: Added admin routes
+            '/api/admin/*',
             '/api/jobs/*',
             '/api/quotes/*',
             '/api/messages/*',
@@ -257,11 +285,11 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`   MongoDB: ${process.env.MONGODB_URI ? '✅ Configured' : '❌ Missing'}`);
     console.log(`   Anthropic API: ${process.env.ANTHROPIC_API_KEY ? '✅ Configured' : '❌ Missing'}`);
     console.log(`   Firebase: ${process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 ? '✅ Configured' : '❌ Missing'}`);
-    console.log(`   CORS Origins: ${process.env.CORS_ORIGIN ? '✅ Configured' : '⚠️ Using defaults'}`);
+    console.log(`   CORS Origins: ${allowedOrigins.length > 0 ? '✅ Configured' : '⚠️ Using defaults'}`);
     
     console.log('\n🔗 Available endpoints:');
     console.log(`   Health: http://localhost:${PORT}/health`);
     console.log(`   API: http://localhost:${PORT}/api`);
-    console.log(`   Admin: http://localhost:${PORT}/api/admin`); // FIXED: Added admin endpoint info
+    console.log(`   Admin: http://localhost:${PORT}/api/admin`);
     console.log('');
 });

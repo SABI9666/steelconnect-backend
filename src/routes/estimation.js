@@ -150,42 +150,6 @@ router.get('/:id/download/:fileId', authenticate, async (req, res) => {
     }
 });
 
-// *** NEW ROUTE ADDED HERE ***
-// --- NEW: Allow contractor to download the completed result PDF ---
-router.get('/:id/download-result', authenticate, isContractor, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const estimationDoc = await adminDb.collection('estimations').doc(id).get();
-
-        if (!estimationDoc.exists) {
-            return res.status(404).json({ success: false, message: 'Estimation not found' });
-        }
-
-        const estimationData = estimationDoc.data();
-        
-        // Security Check: Ensure the estimation belongs to the requesting contractor
-        if (estimationData.contractorId !== req.user.userId) {
-            return res.status(403).json({ success: false, message: 'Access denied.' });
-        }
-
-        if (!estimationData.resultFile || !estimationData.resultFile.storagePath) {
-            return res.status(404).json({ success: false, message: 'Result file not yet available' });
-        }
-        
-        const [url] = await bucket.file(estimationData.resultFile.storagePath).getSignedUrl({
-            action: 'read',
-            expires: Date.now() + 15 * 60 * 1000, // 15 minutes
-        });
-
-        res.redirect(url);
-
-    } catch (error) {
-        console.error('Contractor download result error:', error);
-        res.status(500).json({ success: false, message: 'Failed to download result file', error: error.message });
-    }
-});
-
-
-// ... (Other routes like get estimations, delete, etc., can go here) ...
+// ... (Other routes like get estimations, delete, etc., remain largely the same) ...
 
 export default router;

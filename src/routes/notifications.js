@@ -4,46 +4,63 @@ import { adminDb } from '../config/firebase.js';
 
 const router = express.Router();
 
-// Get all notifications for the logged-in user
+// Helper function to be used by other routes (e.g., when a quote is approved)
+export async function createNotification(userId, message, type = 'info', link = '#') {
+    try {
+        const notification = {
+            userId,
+            message,
+            type,
+            link,
+            isRead: false,
+            createdAt: new Date().toISOString()
+        };
+        await adminDb.collection('notifications').add(notification);
+        console.log(`Notification created for user ${userId}: ${message}`);
+    } catch (error) {
+        console.error('Failed to create notification:', error);
+    }
+}
+
+// GET all notifications for the logged-in user
 router.get('/', authenticate, async (req, res) => {
     try {
         const userId = req.user.userId;
-        const notificationsSnapshot = await adminDb.collection('notifications')
+        const snapshot = await adminDb.collection('notifications')
             .where('userId', '==', userId)
             .orderBy('createdAt', 'desc')
+            .limit(50)
             .get();
             
-        const notifications = notificationsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const notifications = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         res.status(200).json({ success: true, data: notifications });
     } catch (error) {
-        console.error('Failed to fetch notifications:', error);
-        res.status(500).json({ success: false, error: 'Server error while fetching notifications.' });
+        res.status(500).json({ success: false, error: 'Failed to fetch notifications.' });
     }
 });
 
-// Mark all notifications as read
+// PUT mark all notifications as read
 router.put('/mark-read', authenticate, async (req, res) => {
     try {
         const userId = req.user.userId;
-        const unreadNotifsSnapshot = await adminDb.collection('notifications')
+        const snapshot = await adminDb.collection('notifications')
             .where('userId', '==', userId)
             .where('isRead', '==', false)
             .get();
 
-        if (unreadNotifsSnapshot.empty) {
-            return res.status(200).json({ success: true, message: 'No unread notifications to mark.' });
+        if (snapshot.empty) {
+            return res.status(200).json({ success: true, message: 'No unread notifications.' });
         }
 
         const batch = adminDb.batch();
-        unreadNotifsSnapshot.docs.forEach(doc => {
+        snapshot.docs.forEach(doc => {
             batch.update(doc.ref, { isRead: true });
         });
         await batch.commit();
 
         res.status(200).json({ success: true, message: 'Notifications marked as read.' });
     } catch (error) {
-        console.error('Failed to mark notifications as read:', error);
-        res.status(500).json({ success: false, error: 'Server error while updating notifications.' });
+        res.status(500).json({ success: false, error: 'Failed to update notifications.' });
     }
 });
 

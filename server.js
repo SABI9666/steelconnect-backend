@@ -241,13 +241,14 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`⏰ Started at: ${new Date().toISOString()}`);
     
     console.log('\n📋 Environment Check:');
-    console.log(`   MongoDB: ${process.env.MONGODB_URI ? '✅ Configured' : '❌ Missing'}`);
-    console.log(`   Anthropic API: ${process.env.ANTHROPIC_API_KEY ? '✅ Configured' : '❌ Missing'}`);
-    console.log(`   Firebase: ${process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 ? '✅ Configured' : '❌ Missing'}`);
-    console.log(`   CORS Origins: ${process.env.CORS_ORIGIN ? '✅ Configured' : '⚠️ Using defaults'}`);
+    console.log(`    MongoDB: ${process.env.MONGODB_URI ? '✅ Configured' : '❌ Missing'}`);
+    console.log(`    Anthropic API: ${process.env.ANTHROPIC_API_KEY ? '✅ Configured' : '❌ Missing'}`);
+    console.log(`    Firebase: ${process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 ? '✅ Configured' : '❌ Missing'}`);
+    console.log(`    CORS Origins: ${process.env.CORS_ORIGIN ? '✅ Configured' : '⚠️ Using defaults'}`);
     
     console.log('\n🔗 Available endpoints:');
-    console.log(`   Health: http://localhost:${PORT}/health`);
-    console.log(`   API: http://localhost:${PORT}/api`);
+    console.log(`    Health: http://localhost:${PORT}/health`);
+    console.log(`    API: http://localhost:${PORT}/api`);
     console.log('');
 });
+

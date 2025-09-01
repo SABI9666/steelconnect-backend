@@ -1,5 +1,3 @@
-// server.js - CORRECTED Firebase-Only Version
-
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';

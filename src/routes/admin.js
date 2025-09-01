@@ -1,8 +1,19 @@
 import express from 'express';
 import { authenticateToken } from '../middleware/auth.js';
 import { adminDb } from '../config/firebase.js';
+import multer from 'multer';
 
 const router = express.Router();
+
+// Configure multer for result file uploads
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit for result files
+  fileFilter: (req, file, cb) => {
+    // Allow any file type for result uploads
+    cb(null, true);
+  }
+});
 
 // Middleware to check admin access
 const isAdmin = (req, res, next) => {

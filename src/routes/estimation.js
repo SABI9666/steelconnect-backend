@@ -1,4 +1,3 @@
-// src/routes/estimation.js - Firebase only version for contractors
 import express from 'express';
 import multer from 'multer';
 import path from 'path';
@@ -8,7 +7,6 @@ import { adminDb } from '../config/firebase.js';
 
 const router = express.Router();
 
-// --- AUTHENTICATION MIDDLEWARE ---
 const authenticate = (req, res, next) => {
     const authHeader = req.headers.authorization;
 
@@ -43,7 +41,6 @@ const isContractor = (req, res, next) => {
     next();
 };
 
-// --- FILE UPLOAD CONFIGURATION ---
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
         const uploadDir = 'uploads/estimations';
@@ -60,7 +57,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
     storage: storage,
-    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
+    limits: { fileSize: 50 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
         const allowedTypes = [
             'application/pdf',
@@ -81,9 +78,8 @@ const upload = multer({
     }
 });
 
-// --- UTILITY FUNCTIONS ---
 const getFileInfo = (file) => ({
-    fileId: Date.now() + '-' + Math.round(Math.random() * 1E9), // Add unique file ID
+    fileId: Date.now() + '-' + Math.round(Math.random() * 1E9),
     originalName: file.originalname,
     fileName: file.filename,
     filePath: file.path,
@@ -114,14 +110,82 @@ const getStatusInfo = (status) => {
     return statusMap[status] || { text: status, color: 'gray' };
 };
 
-// --- CONTRACTOR ROUTES ---
+// Route that matches your script.js: /estimation/contractor/:email
+router.get('/contractor/:email', authenticate, isContractor, async (req, res) => {
+    try {
+        const { email } = req.params;
+        
+        // Verify the email matches the authenticated user's email
+        if (req.user.email !== email) {
+            return res.status(403).json({
+                success: false,
+                message: 'Access denied - email mismatch'
+            });
+        }
 
-// Create new estimation request (contractor only)
-router.post('/create', authenticate, isContractor, upload.array('files', 10), async (req, res) => {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const status = req.query.status;
+
+        let query = adminDb.collection('estimations').where('contractorId', '==', req.user.userId);
+        
+        if (status) {
+            query = query.where('status', '==', status);
+        }
+
+        const snapshot = await query
+            .orderBy('createdAt', 'desc')
+            .limit(limit)
+            .offset((page - 1) * limit)
+            .get();
+
+        const estimations = [];
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            estimations.push({
+                _id: doc.id,
+                id: doc.id,
+                ...data,
+                statusInfo: getStatusInfo(data.status),
+                canDownloadResult: !!(data.resultFile && data.status === 'completed')
+            });
+        });
+
+        const totalSnapshot = await adminDb.collection('estimations')
+            .where('contractorId', '==', req.user.userId)
+            .get();
+        const total = totalSnapshot.size;
+
+        res.json({
+            success: true,
+            estimations,
+            data: estimations,
+            pagination: {
+                current: page,
+                pages: Math.ceil(total / limit),
+                total,
+                limit
+            }
+        });
+
+    } catch (error) {
+        console.error('Get contractor estimations by email error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch estimations',
+            error: error.message
+        });
+    }
+});
+
+// Route for script.js estimation tool submission: /estimation/contractor/submit
+router.post('/contractor/submit', authenticate, isContractor, upload.array('files', 10), async (req, res) => {
     try {
         const {
-            projectType,
+            projectTitle,
             description,
+            contractorName,
+            contractorEmail,
             dimensions,
             materials,
             deadline,
@@ -131,15 +195,14 @@ router.post('/create', authenticate, isContractor, upload.array('files', 10), as
         } = req.body;
 
         // Validation
-        if (!projectType || !description) {
-            // Clean up uploaded files
+        if (!projectTitle || !description) {
             if (req.files && req.files.length > 0) {
                 const filePaths = req.files.map(file => file.path);
                 await deleteFiles(filePaths);
             }
             return res.status(400).json({
                 success: false,
-                message: 'Project type and description are required'
+                message: 'Project title and description are required'
             });
         }
 
@@ -152,7 +215,8 @@ router.post('/create', authenticate, isContractor, upload.array('files', 10), as
         // Create estimation document
         const estimationData = {
             contractorId: req.user.userId,
-            projectType,
+            projectTitle,
+            projectType: projectTitle, // For compatibility
             description,
             dimensions: dimensions || '',
             materials: materials || '',
@@ -174,6 +238,7 @@ router.post('/create', authenticate, isContractor, upload.array('files', 10), as
             message: 'Estimation request created successfully',
             estimation: {
                 id: docRef.id,
+                _id: docRef.id,
                 ...estimationData
             }
         });
@@ -181,7 +246,6 @@ router.post('/create', authenticate, isContractor, upload.array('files', 10), as
     } catch (error) {
         console.error('Create estimation error:', error);
         
-        // Clean up uploaded files if operation failed
         if (req.files && req.files.length > 0) {
             const filePaths = req.files.map(file => file.path);
             await deleteFiles(filePaths);
@@ -195,65 +259,8 @@ router.post('/create', authenticate, isContractor, upload.array('files', 10), as
     }
 });
 
-// Get contractor's estimations
-router.get('/my-estimations', authenticate, isContractor, async (req, res) => {
-    try {
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 10;
-        const status = req.query.status;
-
-        let query = adminDb.collection('estimations').where('contractorId', '==', req.user.userId);
-        
-        if (status) {
-            query = query.where('status', '==', status);
-        }
-
-        const snapshot = await query
-            .orderBy('createdAt', 'desc')
-            .limit(limit)
-            .offset((page - 1) * limit)
-            .get();
-
-        const estimations = [];
-        snapshot.forEach(doc => {
-            const data = doc.data();
-            estimations.push({
-                id: doc.id,
-                ...data,
-                statusInfo: getStatusInfo(data.status),
-                canDownloadResult: !!(data.resultFile && data.status === 'completed')
-            });
-        });
-
-        // Get total count for pagination
-        const totalSnapshot = await adminDb.collection('estimations')
-            .where('contractorId', '==', req.user.userId)
-            .get();
-        const total = totalSnapshot.size;
-
-        res.json({
-            success: true,
-            estimations,
-            pagination: {
-                current: page,
-                pages: Math.ceil(total / limit),
-                total,
-                limit
-            }
-        });
-
-    } catch (error) {
-        console.error('Get my estimations error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch estimations',
-            error: error.message
-        });
-    }
-});
-
-// Get single estimation (contractor can only see their own)
-router.get('/:id', authenticate, async (req, res) => {
+// Get single estimation files (for viewEstimationFiles function)
+router.get('/:id/files', authenticate, async (req, res) => {
     try {
         const estimationDoc = await adminDb.collection('estimations').doc(req.params.id).get();
 
@@ -274,67 +281,30 @@ router.get('/:id', authenticate, async (req, res) => {
             });
         }
 
-        // Get contractor details
-        let contractor = null;
-        if (estimationData.contractorId) {
-            try {
-                const contractorDoc = await adminDb.collection('users').doc(estimationData.contractorId).get();
-                if (contractorDoc.exists) {
-                    const contractorData = contractorDoc.data();
-                    contractor = {
-                        name: contractorData.name,
-                        email: contractorData.email,
-                        type: contractorData.type,
-                        phone: contractorData.phone,
-                        company: contractorData.company
-                    };
-                }
-            } catch (error) {
-                console.error('Error fetching contractor:', error);
-            }
-        }
-
-        // Get estimatedBy details
-        let estimatedBy = null;
-        if (estimationData.estimatedBy) {
-            try {
-                const adminDoc = await adminDb.collection('users').doc(estimationData.estimatedBy).get();
-                if (adminDoc.exists) {
-                    const adminData = adminDoc.data();
-                    estimatedBy = {
-                        name: adminData.name,
-                        email: adminData.email
-                    };
-                }
-            } catch (error) {
-                console.error('Error fetching admin:', error);
-            }
-        }
+        const files = (estimationData.uploadedFiles || []).map(file => ({
+            name: file.originalName,
+            uploadedAt: file.uploadDate,
+            url: `/api/estimation/${req.params.id}/download/${file.fileId}`,
+            size: file.fileSize
+        }));
 
         res.json({
             success: true,
-            estimation: {
-                id: estimationDoc.id,
-                ...estimationData,
-                contractor,
-                estimatedBy,
-                statusInfo: getStatusInfo(estimationData.status),
-                canDownloadResult: !!(estimationData.resultFile && estimationData.status === 'completed')
-            }
+            files
         });
 
     } catch (error) {
-        console.error('Get estimation error:', error);
+        console.error('Get estimation files error:', error);
         res.status(500).json({
             success: false,
-            message: 'Failed to fetch estimation',
+            message: 'Failed to fetch estimation files',
             error: error.message
         });
     }
 });
 
-// Download result file (contractor only for their own estimations)
-router.get('/:id/result/download', authenticate, isContractor, async (req, res) => {
+// Get estimation result (for downloadEstimationResult function)
+router.get('/:id/result', authenticate, isContractor, async (req, res) => {
     try {
         const estimationDoc = await adminDb.collection('estimations').doc(req.params.id).get();
 
@@ -348,6 +318,53 @@ router.get('/:id/result/download', authenticate, isContractor, async (req, res) 
         const estimationData = estimationDoc.data();
 
         // Check if contractor owns this estimation
+        if (estimationData.contractorId !== req.user.userId) {
+            return res.status(403).json({
+                success: false,
+                message: 'Access denied'
+            });
+        }
+
+        if (!estimationData.resultFile || estimationData.status !== 'completed') {
+            return res.status(404).json({
+                success: false,
+                message: 'Result file not available yet'
+            });
+        }
+
+        res.json({
+            success: true,
+            resultFile: {
+                url: `/api/estimation/${req.params.id}/result/download`,
+                name: estimationData.resultFile.originalName,
+                uploadDate: estimationData.resultFile.uploadDate
+            }
+        });
+
+    } catch (error) {
+        console.error('Get result error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to get result file',
+            error: error.message
+        });
+    }
+});
+
+// Download result file
+router.get('/:id/result/download', authenticate, isContractor, async (req, res) => {
+    try {
+        const estimationDoc = await adminDb.collection('estimations').doc(req.params.id).get();
+
+        if (!estimationDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'Estimation not found'
+            });
+        }
+
+        const estimationData = estimationDoc.data();
+
         if (estimationData.contractorId !== req.user.userId) {
             return res.status(403).json({
                 success: false,
@@ -387,18 +404,14 @@ router.get('/:id/result/download', authenticate, isContractor, async (req, res) 
     }
 });
 
-// Update estimation (contractor can only update if status is pending)
-router.put('/:id', authenticate, isContractor, upload.array('additionalFiles', 5), async (req, res) => {
+// Download uploaded file
+router.get('/:id/download/:fileId', authenticate, async (req, res) => {
     try {
-        const estimationRef = adminDb.collection('estimations').doc(req.params.id);
-        const estimationDoc = await estimationRef.get();
+        const { id, fileId } = req.params;
+
+        const estimationDoc = await adminDb.collection('estimations').doc(id).get();
 
         if (!estimationDoc.exists) {
-            // Clean up uploaded files
-            if (req.files && req.files.length > 0) {
-                const filePaths = req.files.map(file => file.path);
-                await deleteFiles(filePaths);
-            }
             return res.status(404).json({
                 success: false,
                 message: 'Estimation not found'
@@ -406,102 +419,41 @@ router.put('/:id', authenticate, isContractor, upload.array('additionalFiles', 5
         }
 
         const estimationData = estimationDoc.data();
+        const file = estimationData.uploadedFiles?.find(f => f.fileId === fileId);
 
-        // Check if contractor owns this estimation
-        if (estimationData.contractorId !== req.user.userId) {
-            // Clean up uploaded files
-            if (req.files && req.files.length > 0) {
-                const filePaths = req.files.map(file => file.path);
-                await deleteFiles(filePaths);
-            }
-            return res.status(403).json({
+        if (!file) {
+            return res.status(404).json({
                 success: false,
-                message: 'Access denied'
+                message: 'File not found'
             });
         }
 
-        // Check if estimation can be updated
-        if (estimationData.status !== 'pending') {
-            // Clean up uploaded files
-            if (req.files && req.files.length > 0) {
-                const filePaths = req.files.map(file => file.path);
-                await deleteFiles(filePaths);
-            }
-            return res.status(400).json({
+        const filePath = path.resolve(file.filePath);
+        
+        if (!fs.existsSync(filePath)) {
+            return res.status(404).json({
                 success: false,
-                message: 'Cannot update estimation that is not in pending status'
+                message: 'File not found on server'
             });
         }
 
-        const {
-            projectType,
-            description,
-            dimensions,
-            materials,
-            deadline,
-            budget,
-            location,
-            additionalNotes
-        } = req.body;
-
-        // Prepare update data
-        const updateData = {
-            updatedAt: new Date().toISOString()
-        };
-
-        // Update estimation fields if provided
-        if (projectType) updateData.projectType = projectType;
-        if (description) updateData.description = description;
-        if (dimensions !== undefined) updateData.dimensions = dimensions;
-        if (materials !== undefined) updateData.materials = materials;
-        if (deadline) updateData.deadline = new Date(deadline).toISOString();
-        if (budget !== undefined) updateData.budget = budget ? parseFloat(budget) : null;
-        if (location !== undefined) updateData.location = location;
-        if (additionalNotes !== undefined) updateData.additionalNotes = additionalNotes;
-
-        // Add new files if provided
-        if (req.files && req.files.length > 0) {
-            const newFiles = req.files.map(file => ({
-                ...getFileInfo(file),
-                uploadDate: new Date().toISOString()
-            }));
-            
-            const existingFiles = estimationData.uploadedFiles || [];
-            updateData.uploadedFiles = [...existingFiles, ...newFiles];
-        }
-
-        await estimationRef.update(updateData);
-
-        // Get updated estimation
-        const updatedDoc = await estimationRef.get();
-
-        res.json({
-            success: true,
-            message: 'Estimation updated successfully',
-            estimation: {
-                id: updatedDoc.id,
-                ...updatedDoc.data()
-            }
-        });
+        res.setHeader('Content-Disposition', `attachment; filename="${file.originalName}"`);
+        res.setHeader('Content-Type', file.mimeType || 'application/octet-stream');
+        
+        const fileStream = fs.createReadStream(filePath);
+        fileStream.pipe(res);
 
     } catch (error) {
-        console.error('Update estimation error:', error);
-        
-        // Clean up uploaded files if operation failed
-        if (req.files && req.files.length > 0) {
-            const filePaths = req.files.map(file => file.path);
-            await deleteFiles(filePaths);
-        }
-
+        console.error('Download file error:', error);
         res.status(500).json({
             success: false,
-            message: 'Failed to update estimation',
+            message: 'Failed to download file',
             error: error.message
         });
     }
 });
 
-// Delete estimation (contractor can only delete if status is pending)
+// Delete estimation
 router.delete('/:id', authenticate, isContractor, async (req, res) => {
     try {
         const estimationRef = adminDb.collection('estimations').doc(req.params.id);
@@ -516,7 +468,6 @@ router.delete('/:id', authenticate, isContractor, async (req, res) => {
 
         const estimationData = estimationDoc.data();
 
-        // Check if contractor owns this estimation
         if (estimationData.contractorId !== req.user.userId) {
             return res.status(403).json({
                 success: false,
@@ -524,7 +475,6 @@ router.delete('/:id', authenticate, isContractor, async (req, res) => {
             });
         }
 
-        // Check if estimation can be deleted
         if (estimationData.status !== 'pending') {
             return res.status(400).json({
                 success: false,
@@ -559,7 +509,50 @@ router.delete('/:id', authenticate, isContractor, async (req, res) => {
     }
 });
 
-// Get estimation statistics for contractor dashboard
+// Get single estimation
+router.get('/:id', authenticate, async (req, res) => {
+    try {
+        const estimationDoc = await adminDb.collection('estimations').doc(req.params.id).get();
+
+        if (!estimationDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'Estimation not found'
+            });
+        }
+
+        const estimationData = estimationDoc.data();
+
+        // Check if contractor can access this estimation
+        if (req.user.type === 'contractor' && estimationData.contractorId !== req.user.userId) {
+            return res.status(403).json({
+                success: false,
+                message: 'Access denied'
+            });
+        }
+
+        res.json({
+            success: true,
+            estimation: {
+                id: estimationDoc.id,
+                _id: estimationDoc.id,
+                ...estimationData,
+                statusInfo: getStatusInfo(estimationData.status),
+                canDownloadResult: !!(estimationData.resultFile && estimationData.status === 'completed')
+            }
+        });
+
+    } catch (error) {
+        console.error('Get estimation error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch estimation',
+            error: error.message
+        });
+    }
+});
+
+// Get estimation statistics
 router.get('/stats/summary', authenticate, isContractor, async (req, res) => {
     try {
         const contractorId = req.user.userId;
@@ -594,11 +587,10 @@ router.get('/stats/summary', authenticate, isContractor, async (req, res) => {
                     break;
             }
 
-            // Add to recent if within last 3 entries
             if (recent.length < 3) {
                 recent.push({
                     id: doc.id,
-                    projectType: data.projectType,
+                    projectType: data.projectType || data.projectTitle,
                     status: data.status,
                     createdAt: data.createdAt,
                     estimatedBy: data.estimatedBy
@@ -628,40 +620,6 @@ router.get('/stats/summary', authenticate, isContractor, async (req, res) => {
     }
 });
 
-// Get estimation status by ID (public, for status checking)
-router.get('/:id/status', async (req, res) => {
-    try {
-        const estimationDoc = await adminDb.collection('estimations').doc(req.params.id).get();
-
-        if (!estimationDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'Estimation not found'
-            });
-        }
-
-        const estimationData = estimationDoc.data();
-
-        res.json({
-            success: true,
-            status: {
-                current: estimationData.status,
-                submissionDate: estimationData.submissionDate,
-                completedDate: estimationData.estimationCompletedDate,
-                statusInfo: getStatusInfo(estimationData.status)
-            }
-        });
-
-    } catch (error) {
-        console.error('Get status error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to get estimation status',
-            error: error.message
-        });
-    }
-});
-
 // Test route
 router.get('/test/ping', (req, res) => {
     res.json({
@@ -669,14 +627,15 @@ router.get('/test/ping', (req, res) => {
         message: 'Estimation routes are working!',
         timestamp: new Date().toISOString(),
         availableRoutes: [
-            'POST /create - Create new estimation request (contractor)',
-            'GET /my-estimations - Get contractor\'s estimations',
+            'GET /contractor/:email - Get contractor estimations by email',
+            'POST /contractor/submit - Submit estimation request',
             'GET /:id - Get single estimation',
-            'GET /:id/result/download - Download result file (contractor)',
-            'PUT /:id - Update estimation (contractor, pending only)',
-            'DELETE /:id - Delete estimation (contractor, pending only)',
-            'GET /stats/summary - Get contractor statistics',
-            'GET /:id/status - Get estimation status'
+            'GET /:id/files - Get estimation files',
+            'GET /:id/result - Get estimation result',
+            'GET /:id/result/download - Download result file',
+            'GET /:id/download/:fileId - Download uploaded file',
+            'DELETE /:id - Delete estimation',
+            'GET /stats/summary - Get contractor statistics'
         ]
     });
 });

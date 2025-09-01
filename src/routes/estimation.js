@@ -116,6 +116,33 @@ router.post('/contractor/submit', authenticate, isContractor, upload.array('file
 });
 
 
+// --- ✅ ADDED: Route to get all estimations for the logged-in contractor ---
+router.get('/contractor', authenticate, isContractor, async (req, res) => {
+    try {
+        const contractorId = req.user.userId; // Get user ID from the JWT token
+
+        const estimationsRef = adminDb.collection('estimations');
+        // Query the collection for documents where contractorId matches
+        const snapshot = await estimationsRef.where('contractorId', '==', contractorId).orderBy('createdAt', 'desc').get();
+
+        if (snapshot.empty) {
+            return res.json({ success: true, estimations: [] });
+        }
+
+        const estimations = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+
+        res.json({ success: true, estimations });
+
+    } catch (error) {
+        console.error('Get contractor estimations error:', error);
+        res.status(500).json({ success: false, message: 'Failed to retrieve estimations', error: error.message });
+    }
+});
+
+
 // --- CORRECTED: Download route now redirects to a temporary Firebase URL ---
 router.get('/:id/download/:fileId', authenticate, async (req, res) => {
     try {

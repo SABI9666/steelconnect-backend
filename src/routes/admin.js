@@ -1,4 +1,4 @@
-// src/routes/admin.js - FIXED VERSION with proper estimation integration
+/ src/routes/admin.js - FIXED for Firebase only with corrected auth
 import express from 'express';
 import multer from 'multer';
 import path from 'path';
@@ -6,51 +6,38 @@ import fs from 'fs';
 import jwt from 'jsonwebtoken';
 import { adminDb } from '../config/firebase.js';
 
-// Import MongoDB models (assuming you have these)
-// You'll need to create these models if they don't exist
-let User, Quote, Message, Job, Estimation;
-try {
-    const models = await import('../models/index.js'); // Assuming you have a models index
-    User = models.User;
-    Quote = models.Quote;
-    Message = models.Message;
-    Job = models.Job;
-    Estimation = models.Estimation;
-} catch (error) {
-    console.warn('⚠️ Some MongoDB models not available:', error.message);
-}
-
 const router = express.Router();
 
-// --- ADMIN AUTHENTICATION MIDDLEWARE ---
-const isAdmin = async (req, res, next) => {
+// --- FIXED ADMIN AUTHENTICATION MIDDLEWARE ---
+const isAdmin = (req, res, next) => {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ 
+            success: false,
+            error: 'Authorization token is required.' 
+        });
+    }
+
+    const token = authHeader.split(' ')[1];
+
     try {
-        const authHeader = req.headers.authorization;
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
-            return res.status(401).json({ 
-                success: false, 
-                message: 'Authorization token required.' 
-            });
-        }
-
-        const token = authHeader.substring(7);
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_default_secret_key_change_in_production');
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret');
         
-        // Check if user is admin
-        if (decoded.type !== 'admin' && decoded.role !== 'admin') {
+        // FIXED: Check both 'role' and 'type' for admin access
+        if (decoded.role !== 'admin' && decoded.type !== 'admin') {
             return res.status(403).json({ 
-                success: false, 
-                message: 'Admin access required.' 
+                success: false,
+                error: 'Access denied. Admin privileges required.' 
             });
         }
-
+        
         req.user = decoded;
         next();
     } catch (error) {
-        console.error('Admin auth error:', error);
-        res.status(401).json({ 
-            success: false, 
-            message: 'Invalid or expired token.' 
+        return res.status(401).json({ 
+            success: false,
+            error: 'Invalid or expired token.' 
         });
     }
 };
@@ -109,48 +96,48 @@ const deleteFile = async (filePath) => {
 // Get admin dashboard statistics
 router.get('/dashboard', async (req, res) => {
     try {
-        let stats = {
-            totalUsers: 0,
-            totalQuotes: 0,
-            totalMessages: 0,
-            totalJobs: 0,
-            totalEstimations: 0,
-            pendingEstimations: 0,
-            completedEstimations: 0,
-            recentActivity: []
+        // Get counts from Firebase collections
+        const [usersSnapshot, quotesSnapshot, messagesSnapshot, jobsSnapshot, estimationsSnapshot] = await Promise.all([
+            adminDb.collection('users').get(),
+            adminDb.collection('quotes').get(),
+            adminDb.collection('messages').get(),
+            adminDb.collection('jobs').get(),
+            adminDb.collection('estimations').get()
+        ]);
+
+        // Count estimations by status
+        let pendingEstimations = 0;
+        let completedEstimations = 0;
+        let inProgressEstimations = 0;
+        const recentEstimations = [];
+
+        estimationsSnapshot.forEach(doc => {
+            const data = doc.data();
+            if (data.status === 'pending') pendingEstimations++;
+            if (data.status === 'completed') completedEstimations++;
+            if (data.status === 'in-progress') inProgressEstimations++;
+            
+            // Add to recent if within last 5 entries
+            if (recentEstimations.length < 5) {
+                recentEstimations.push({
+                    id: doc.id,
+                    ...data,
+                    contractorName: 'Loading...' // You can populate this separately if needed
+                });
+            }
+        });
+
+        const stats = {
+            totalUsers: usersSnapshot.size,
+            totalQuotes: quotesSnapshot.size,
+            totalMessages: messagesSnapshot.size,
+            totalJobs: jobsSnapshot.size,
+            totalEstimations: estimationsSnapshot.size,
+            pendingEstimations,
+            completedEstimations,
+            inProgressEstimations,
+            recentActivity: recentEstimations
         };
-
-        // If MongoDB models are available, use them
-        if (User && Quote && Message && Job && Estimation) {
-            const [users, quotes, messages, jobs, estimations, pending, completed] = await Promise.all([
-                User.countDocuments(),
-                Quote.countDocuments(),
-                Message.countDocuments(),
-                Job.countDocuments(),
-                Estimation.countDocuments(),
-                Estimation.countDocuments({ status: 'pending' }),
-                Estimation.countDocuments({ status: 'completed' })
-            ]);
-
-            stats = {
-                totalUsers: users,
-                totalQuotes: quotes,
-                totalMessages: messages,
-                totalJobs: jobs,
-                totalEstimations: estimations,
-                pendingEstimations: pending,
-                completedEstimations: completed
-            };
-
-            // Get recent estimations
-            const recentEstimations = await Estimation.find()
-                .populate('contractorId', 'name email')
-                .sort('-createdAt')
-                .limit(5)
-                .lean();
-
-            stats.recentActivity = recentEstimations;
-        }
 
         res.json({
             success: true,
@@ -172,43 +159,75 @@ router.get('/dashboard', async (req, res) => {
 // Get all estimations
 router.get('/estimations', async (req, res) => {
     try {
-        if (!Estimation) {
-            return res.status(503).json({
-                success: false,
-                message: 'Estimation service not available'
-            });
-        }
-
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 20;
         const status = req.query.status;
         const contractorId = req.query.contractorId;
-        const sort = req.query.sort || '-createdAt';
 
-        // Build query
-        const query = {};
-        if (status) query.status = status;
-        if (contractorId) query.contractorId = contractorId;
+        let query = adminDb.collection('estimations');
+        
+        // Apply filters
+        if (status) {
+            query = query.where('status', '==', status);
+        }
+        if (contractorId) {
+            query = query.where('contractorId', '==', contractorId);
+        }
 
-        const estimations = await Estimation.find(query)
-            .populate('contractorId', 'name email type')
-            .populate('estimatedBy', 'name email')
-            .sort(sort)
+        // Get estimations with pagination
+        const snapshot = await query
+            .orderBy('createdAt', 'desc')
             .limit(limit)
-            .skip((page - 1) * limit)
-            .lean();
+            .offset((page - 1) * limit)
+            .get();
 
-        const total = await Estimation.countDocuments(query);
+        const estimations = [];
+        const contractorIds = new Set();
 
-        // Format estimations with additional info
-        const formattedEstimations = estimations.map(est => {
-            const estimation = new Estimation(est);
-            return {
-                ...est,
-                statusInfo: estimation.getStatusInfo ? estimation.getStatusInfo() : { text: est.status, color: 'gray' },
-                totalFiles: (est.uploadedFiles ? est.uploadedFiles.length : 0) + (est.resultFile ? 1 : 0)
-            };
+        // Collect estimation data and contractor IDs
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            estimations.push({
+                id: doc.id,
+                ...data,
+                totalFiles: (data.uploadedFiles ? data.uploadedFiles.length : 0) + (data.resultFile ? 1 : 0),
+                statusInfo: getStatusInfo(data.status)
+            });
+            if (data.contractorId) {
+                contractorIds.add(data.contractorId);
+            }
         });
+
+        // Get contractor details
+        const contractorData = {};
+        if (contractorIds.size > 0) {
+            const contractorPromises = Array.from(contractorIds).map(async (id) => {
+                try {
+                    const contractorDoc = await adminDb.collection('users').doc(id).get();
+                    if (contractorDoc.exists) {
+                        const data = contractorDoc.data();
+                        contractorData[id] = {
+                            name: data.name,
+                            email: data.email,
+                            type: data.type
+                        };
+                    }
+                } catch (error) {
+                    console.error('Error fetching contractor:', error);
+                }
+            });
+            await Promise.all(contractorPromises);
+        }
+
+        // Add contractor info to estimations
+        const formattedEstimations = estimations.map(est => ({
+            ...est,
+            contractor: contractorData[est.contractorId] || null
+        }));
+
+        // Get total count for pagination
+        const totalSnapshot = await query.get();
+        const total = totalSnapshot.size;
 
         res.json({
             success: true,
@@ -234,29 +253,62 @@ router.get('/estimations', async (req, res) => {
 // Get single estimation
 router.get('/estimations/:id', async (req, res) => {
     try {
-        if (!Estimation) {
-            return res.status(503).json({
-                success: false,
-                message: 'Estimation service not available'
-            });
-        }
+        const estimationDoc = await adminDb.collection('estimations').doc(req.params.id).get();
 
-        const estimation = await Estimation.findById(req.params.id)
-            .populate('contractorId', 'name email type phone company')
-            .populate('estimatedBy', 'name email');
-
-        if (!estimation) {
+        if (!estimationDoc.exists) {
             return res.status(404).json({
                 success: false,
                 message: 'Estimation not found'
             });
         }
 
+        const estimationData = estimationDoc.data();
+
+        // Get contractor details
+        let contractor = null;
+        if (estimationData.contractorId) {
+            try {
+                const contractorDoc = await adminDb.collection('users').doc(estimationData.contractorId).get();
+                if (contractorDoc.exists) {
+                    const contractorData = contractorDoc.data();
+                    contractor = {
+                        name: contractorData.name,
+                        email: contractorData.email,
+                        type: contractorData.type,
+                        phone: contractorData.phone,
+                        company: contractorData.company
+                    };
+                }
+            } catch (error) {
+                console.error('Error fetching contractor:', error);
+            }
+        }
+
+        // Get estimatedBy details
+        let estimatedBy = null;
+        if (estimationData.estimatedBy) {
+            try {
+                const adminDoc = await adminDb.collection('users').doc(estimationData.estimatedBy).get();
+                if (adminDoc.exists) {
+                    const adminData = adminDoc.data();
+                    estimatedBy = {
+                        name: adminData.name,
+                        email: adminData.email
+                    };
+                }
+            } catch (error) {
+                console.error('Error fetching admin:', error);
+            }
+        }
+
         res.json({
             success: true,
             estimation: {
-                ...estimation.toObject(),
-                statusInfo: estimation.getStatusInfo ? estimation.getStatusInfo() : { text: estimation.status, color: 'gray' }
+                id: estimationDoc.id,
+                ...estimationData,
+                contractor,
+                estimatedBy,
+                statusInfo: getStatusInfo(estimationData.status)
             }
         });
 
@@ -273,13 +325,6 @@ router.get('/estimations/:id', async (req, res) => {
 // Update estimation status
 router.put('/estimations/:id/status', async (req, res) => {
     try {
-        if (!Estimation) {
-            return res.status(503).json({
-                success: false,
-                message: 'Estimation service not available'
-            });
-        }
-
         const { status } = req.body;
         const validStatuses = ['pending', 'in-progress', 'completed', 'rejected', 'cancelled'];
         
@@ -290,33 +335,49 @@ router.put('/estimations/:id/status', async (req, res) => {
             });
         }
 
-        const estimation = await Estimation.findById(req.params.id);
-        if (!estimation) {
+        const estimationRef = adminDb.collection('estimations').doc(req.params.id);
+        const estimationDoc = await estimationRef.get();
+
+        if (!estimationDoc.exists) {
             return res.status(404).json({
                 success: false,
                 message: 'Estimation not found'
             });
         }
 
-        estimation.status = status;
-        
-        if (status === 'in-progress' && !estimation.estimationStartDate) {
-            estimation.estimationStartDate = new Date();
-            estimation.estimatedBy = req.user.userId;
-        }
-        
-        if (status === 'completed' && !estimation.estimationCompletedDate) {
-            estimation.estimationCompletedDate = new Date();
+        const updateData = {
+            status,
+            updatedAt: new Date().toISOString()
+        };
+
+        if (status === 'in-progress') {
+            const currentData = estimationDoc.data();
+            if (!currentData.estimationStartDate) {
+                updateData.estimationStartDate = new Date().toISOString();
+                updateData.estimatedBy = req.user.userId || req.user.id;
+            }
         }
 
-        await estimation.save();
+        if (status === 'completed') {
+            const currentData = estimationDoc.data();
+            if (!currentData.estimationCompletedDate) {
+                updateData.estimationCompletedDate = new Date().toISOString();
+            }
+        }
+
+        await estimationRef.update(updateData);
+
+        // Get updated estimation
+        const updatedDoc = await estimationRef.get();
+        const updatedData = updatedDoc.data();
 
         res.json({
             success: true,
             message: 'Estimation status updated successfully',
             estimation: {
-                ...estimation.toObject(),
-                statusInfo: estimation.getStatusInfo ? estimation.getStatusInfo() : { text: estimation.status, color: 'gray' }
+                id: updatedDoc.id,
+                ...updatedData,
+                statusInfo: getStatusInfo(updatedData.status)
             }
         });
 
@@ -333,13 +394,6 @@ router.put('/estimations/:id/status', async (req, res) => {
 // Update estimation amount
 router.put('/estimations/:id/amount', async (req, res) => {
     try {
-        if (!Estimation) {
-            return res.status(503).json({
-                success: false,
-                message: 'Estimation service not available'
-            });
-        }
-
         const { amount } = req.body;
 
         if (!amount || isNaN(amount) || amount < 0) {
@@ -349,21 +403,30 @@ router.put('/estimations/:id/amount', async (req, res) => {
             });
         }
 
-        const estimation = await Estimation.findById(req.params.id);
-        if (!estimation) {
+        const estimationRef = adminDb.collection('estimations').doc(req.params.id);
+        const estimationDoc = await estimationRef.get();
+
+        if (!estimationDoc.exists) {
             return res.status(404).json({
                 success: false,
                 message: 'Estimation not found'
             });
         }
 
-        estimation.estimatedAmount = parseFloat(amount);
-        await estimation.save();
+        await estimationRef.update({
+            estimatedAmount: parseFloat(amount),
+            updatedAt: new Date().toISOString()
+        });
+
+        const updatedDoc = await estimationRef.get();
 
         res.json({
             success: true,
             message: 'Estimation amount updated successfully',
-            estimation: estimation.toObject()
+            estimation: {
+                id: updatedDoc.id,
+                ...updatedDoc.data()
+            }
         });
 
     } catch (error) {
@@ -379,14 +442,6 @@ router.put('/estimations/:id/amount', async (req, res) => {
 // Upload result PDF
 router.post('/estimations/:id/upload-result', upload.single('resultFile'), async (req, res) => {
     try {
-        if (!Estimation) {
-            if (req.file) await deleteFile(req.file.path);
-            return res.status(503).json({
-                success: false,
-                message: 'Estimation service not available'
-            });
-        }
-
         if (!req.file) {
             return res.status(400).json({
                 success: false,
@@ -394,8 +449,10 @@ router.post('/estimations/:id/upload-result', upload.single('resultFile'), async
             });
         }
 
-        const estimation = await Estimation.findById(req.params.id);
-        if (!estimation) {
+        const estimationRef = adminDb.collection('estimations').doc(req.params.id);
+        const estimationDoc = await estimationRef.get();
+
+        if (!estimationDoc.exists) {
             await deleteFile(req.file.path);
             return res.status(404).json({
                 success: false,
@@ -403,30 +460,40 @@ router.post('/estimations/:id/upload-result', upload.single('resultFile'), async
             });
         }
 
+        const currentData = estimationDoc.data();
+
         // Delete old result file if exists
-        if (estimation.resultFile && estimation.resultFile.filePath) {
-            await deleteFile(estimation.resultFile.filePath);
+        if (currentData.resultFile && currentData.resultFile.filePath) {
+            await deleteFile(currentData.resultFile.filePath);
         }
 
-        // Save new result file info
-        estimation.resultFile = {
-            ...getFileInfo(req.file),
-            uploadDate: new Date()
+        // Update estimation with result file
+        const updateData = {
+            resultFile: {
+                ...getFileInfo(req.file),
+                uploadDate: new Date().toISOString()
+            },
+            updatedAt: new Date().toISOString()
         };
 
-        // Update status and completion info
-        if (estimation.status !== 'completed') {
-            estimation.status = 'completed';
-            estimation.estimationCompletedDate = new Date();
-            estimation.estimatedBy = req.user.userId;
+        // Update status if not completed
+        if (currentData.status !== 'completed') {
+            updateData.status = 'completed';
+            updateData.estimationCompletedDate = new Date().toISOString();
+            updateData.estimatedBy = req.user.userId || req.user.id;
         }
 
-        await estimation.save();
+        await estimationRef.update(updateData);
+
+        const updatedDoc = await estimationRef.get();
 
         res.json({
             success: true,
             message: 'Result PDF uploaded successfully',
-            estimation: estimation.toObject()
+            estimation: {
+                id: updatedDoc.id,
+                ...updatedDoc.data()
+            }
         });
 
     } catch (error) {
@@ -447,29 +514,25 @@ router.post('/estimations/:id/upload-result', upload.single('resultFile'), async
 // Download contractor's uploaded files
 router.get('/estimations/:id/files/:fileId/download', async (req, res) => {
     try {
-        if (!Estimation) {
-            return res.status(503).json({
-                success: false,
-                message: 'Estimation service not available'
-            });
-        }
-
         const { id, fileId } = req.params;
         const { type } = req.query; // 'uploaded' or 'result'
 
-        const estimation = await Estimation.findById(id);
-        if (!estimation) {
+        const estimationDoc = await adminDb.collection('estimations').doc(id).get();
+
+        if (!estimationDoc.exists) {
             return res.status(404).json({
                 success: false,
                 message: 'Estimation not found'
             });
         }
 
+        const estimationData = estimationDoc.data();
         let file;
-        if (type === 'result' && estimation.resultFile) {
-            file = estimation.resultFile;
-        } else {
-            file = estimation.uploadedFiles?.find(f => f._id.toString() === fileId);
+
+        if (type === 'result' && estimationData.resultFile) {
+            file = estimationData.resultFile;
+        } else if (estimationData.uploadedFiles) {
+            file = estimationData.uploadedFiles.find(f => f.fileId === fileId || f.fileName === fileId);
         }
 
         if (!file) {
@@ -507,30 +570,32 @@ router.get('/estimations/:id/files/:fileId/download', async (req, res) => {
 // Add admin notes to estimation
 router.put('/estimations/:id/notes', async (req, res) => {
     try {
-        if (!Estimation) {
-            return res.status(503).json({
-                success: false,
-                message: 'Estimation service not available'
-            });
-        }
-
         const { notes } = req.body;
 
-        const estimation = await Estimation.findById(req.params.id);
-        if (!estimation) {
+        const estimationRef = adminDb.collection('estimations').doc(req.params.id);
+        const estimationDoc = await estimationRef.get();
+
+        if (!estimationDoc.exists) {
             return res.status(404).json({
                 success: false,
                 message: 'Estimation not found'
             });
         }
 
-        estimation.adminNotes = notes || '';
-        await estimation.save();
+        await estimationRef.update({
+            adminNotes: notes || '',
+            updatedAt: new Date().toISOString()
+        });
+
+        const updatedDoc = await estimationRef.get();
 
         res.json({
             success: true,
             message: 'Notes updated successfully',
-            estimation: estimation.toObject()
+            estimation: {
+                id: updatedDoc.id,
+                ...updatedDoc.data()
+            }
         });
 
     } catch (error) {
@@ -548,13 +613,6 @@ router.put('/estimations/:id/notes', async (req, res) => {
 // Get all users (contractors and designers)
 router.get('/users', async (req, res) => {
     try {
-        // Try MongoDB first
-        if (User) {
-            const users = await User.find({ role: { $ne: 'admin' } }, '-password').lean();
-            return res.json({ success: true, users });
-        }
-
-        // Fallback to Firebase
         const usersSnapshot = await adminDb.collection('users').get();
         const users = [];
         
@@ -583,14 +641,11 @@ router.put('/users/:id/status', async (req, res) => {
     try {
         const { status } = req.body;
         
-        // Try MongoDB first
-        if (User) {
-            await User.findByIdAndUpdate(req.params.id, { status });
-            return res.json({ success: true, message: 'User status updated successfully.' });
-        }
+        await adminDb.collection('users').doc(req.params.id).update({ 
+            status,
+            updatedAt: new Date().toISOString()
+        });
 
-        // Fallback to Firebase
-        await adminDb.collection('users').doc(req.params.id).update({ status });
         res.json({ success: true, message: 'User status updated successfully.' });
 
     } catch (error) {
@@ -606,13 +661,6 @@ router.put('/users/:id/status', async (req, res) => {
 // Delete user
 router.delete('/users/:id', async (req, res) => {
     try {
-        // Try MongoDB first
-        if (User) {
-            await User.findByIdAndDelete(req.params.id);
-            return res.json({ success: true, message: 'User deleted successfully.' });
-        }
-
-        // Fallback to Firebase
         await adminDb.collection('users').doc(req.params.id).delete();
         res.json({ success: true, message: 'User deleted successfully.' });
 
@@ -625,6 +673,19 @@ router.delete('/users/:id', async (req, res) => {
         });
     }
 });
+
+// --- UTILITY FUNCTIONS ---
+
+function getStatusInfo(status) {
+    const statusMap = {
+        'pending': { text: 'Pending Review', color: 'orange' },
+        'in-progress': { text: 'In Progress', color: 'blue' },
+        'completed': { text: 'Completed', color: 'green' },
+        'rejected': { text: 'Rejected', color: 'red' },
+        'cancelled': { text: 'Cancelled', color: 'gray' }
+    };
+    return statusMap[status] || { text: status, color: 'gray' };
+}
 
 // --- TEST ROUTE ---
 router.get('/test', (req, res) => {
@@ -640,7 +701,7 @@ router.get('/test', (req, res) => {
             'PUT /estimations/:id/status - Update estimation status',
             'PUT /estimations/:id/amount - Update estimation amount',
             'POST /estimations/:id/upload-result - Upload result PDF',
-            'GET /estimations/:id/files/:fileId/download - Download files',
+            'GET /estimations/:id/files/:fileId/download?type=uploaded|result - Download files',
             'PUT /estimations/:id/notes - Add admin notes',
             'GET /users - List all users',
             'PUT /users/:id/status - Update user status',

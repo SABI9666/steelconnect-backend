@@ -1,5 +1,5 @@
 import express from 'express';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { adminDb } from '../config/firebase.js';
 
@@ -752,5 +752,6 @@ router.get('/verify', async (req, res) => {
     });
   }
 });
+
 
 export default router;

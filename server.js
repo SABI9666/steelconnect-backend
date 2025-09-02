@@ -85,6 +85,10 @@ app.use(compression());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// --- ADD THIS LINE ---
+// Serve static files from the 'public' directory
+app.use(express.static('public'));
+
 // --- Request logging middleware ---
 app.use((req, res, next) => {
     console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
@@ -114,19 +118,12 @@ app.get('/health', (req, res) => {
 
 // --- Root route ---
 app.get('/', (req, res) => {
+    // This will now be handled by express.static if an index.html exists in 'public'
+    // This route will only be reached if there is no index.html
     res.json({ 
-        message: 'SteelConnect Backend API is running',
+        message: 'SteelConnect Backend API is running. Note: Your main page should be index.html in the public folder.',
         version: '1.0.0',
-        status: 'healthy',
-        endpoints: {
-            health: '/health',
-            auth: '/api/auth',
-            jobs: '/api/jobs',
-            quotes: '/api/quotes',
-            messages: '/api/messages',
-            admin: '/api/admin',
-            estimation: '/api/estimation'
-        }
+        status: 'healthy'
     });
 });
 
@@ -237,23 +234,18 @@ app.use((error, req, res, next) => {
 });
 
 // --- 404 handler ---
+// This should come after all other routes
 app.use('*', (req, res) => {
-    console.log(`❌ 404 - Route not found: ${req.originalUrl}`);
-    res.status(404).json({
-        success: false,
-        error: `Route ${req.originalUrl} not found`,
-        available_routes: [
-            '/',
-            '/health',
-            '/api',
-            '/api/auth/*',
-            '/api/jobs/*',
-            '/api/quotes/*',
-            '/api/messages/*',
-            '/api/admin/*',
-            '/api/estimation/*'
-        ]
-    });
+    // If the request is for an API route, send a JSON 404
+    if (req.originalUrl.startsWith('/api/')) {
+        console.log(`❌ 404 - API route not found: ${req.originalUrl}`);
+        return res.status(404).json({
+            success: false,
+            error: `API Route ${req.originalUrl} not found`
+        });
+    }
+    // For any other route, send the main index.html file (for Single Page Application routing)
+    res.sendFile(path.resolve(__dirname, 'public', 'index.html'));
 });
 
 // --- Graceful shutdown ---

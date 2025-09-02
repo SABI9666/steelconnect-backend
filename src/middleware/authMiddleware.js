@@ -1,7 +1,9 @@
 import jwt from 'jsonwebtoken';
 
-// This function decodes the token and attaches the user payload to the request.
-// UPDATED: Now accepts token from 'Authorization' header OR a URL query parameter.
+/**
+ * Verifies the JWT from the request header or a query parameter.
+ * Attaches the decoded user payload to `req.user`.
+ */
 export const authenticateToken = (req, res, next) => {
     let token;
     const authHeader = req.headers.authorization;
@@ -27,9 +29,11 @@ export const authenticateToken = (req, res, next) => {
     }
 };
 
-// This function checks if the authenticated user has admin privileges.
+/**
+ * Checks if the authenticated user has admin privileges.
+ * This MUST run after authenticateToken.
+ */
 export const isAdmin = (req, res, next) => {
-    // It checks the req.user object that was set by authenticateToken
     if (req.user && (req.user.role === 'admin' || req.user.type === 'admin')) {
         next(); // User is an admin, proceed
     } else {
@@ -37,11 +41,26 @@ export const isAdmin = (req, res, next) => {
     }
 };
 
-// Middleware to check if the user is a contractor
+/**
+ * Checks if the authenticated user is a contractor.
+ * This MUST run after authenticateToken.
+ */
 export const isContractor = (req, res, next) => {
     if (req.user && req.user.type === 'contractor') {
         next();
     } else {
         return res.status(403).json({ success: false, error: 'Access denied. Contractor privileges required.' });
+    }
+};
+
+/**
+ * Checks if the authenticated user is a designer.
+ * This MUST run after authenticateToken.
+ */
+export const isDesigner = (req, res, next) => {
+    if (req.user && req.user.type === 'designer') {
+        next();
+    } else {
+        return res.status(403).json({ success: false, error: 'Access denied. Designer privileges required.' });
     }
 };

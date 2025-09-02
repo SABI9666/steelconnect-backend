@@ -2,18 +2,28 @@ import express from 'express';
 import { authenticateToken, isContractor, isAdmin } from '../middleware/auth.js';
 import { adminDb } from '../config/firebase.js';
 import multer from 'multer';
+import path from 'path';
 
 const router = express.Router();
 
 // Configure multer to handle file uploads in memory
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 15 * 1024 * 1024 }, // 15MB total request size limit
+  limits: { fileSize: 15 * 1024 * 1024 }, // 15MB request size limit
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ['.pdf', '.dwg', '.doc', '.docx', '.jpg', '.jpeg', '.png'];
+    const fileExt = path.extname(file.originalname).toLowerCase();
+    if (allowedTypes.includes(fileExt)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Only PDF, DWG, DOC, DOCX, and images are allowed.'));
+    }
+  }
 });
 
-// --- CONTRACTOR ROUTES ---
+// --- CONTRACTOR ROUTE ---
 
-// Submit a new estimation request
+// Submit a new estimation request with files
 router.post('/contractor/submit', authenticateToken, isContractor, upload.array('files', 10), async (req, res) => {
   try {
     const { projectTitle, description } = req.body;
@@ -23,7 +33,7 @@ router.post('/contractor/submit', authenticateToken, isContractor, upload.array(
       return res.status(400).json({ success: false, error: 'Project title, description, and at least one file are required.' });
     }
 
-    // IMPORTANT: Storing files directly in Firestore is subject to a 1MB document size limit.
+    // IMPORTANT: Storing files in Firestore is subject to a 1MB document size limit.
     // This solution will fail for files larger than ~700KB after base64 encoding.
     // For a 15MB limit, you MUST use a dedicated service like Firebase Cloud Storage.
     const uploadedFiles = files.map(file => ({
@@ -51,7 +61,6 @@ router.post('/contractor/submit', authenticateToken, isContractor, upload.array(
 
   } catch (error) {
     console.error('Error submitting estimation:', error);
-    // Check for a specific error related to file size being too large for Firestore
     if (error.message.includes('bytes is larger than the maximum size of 1048576 bytes')) {
         return res.status(413).json({ success: false, error: 'File(s) too large. Total size must be under 1MB for database storage.' });
     }
@@ -59,39 +68,96 @@ router.post('/contractor/submit', authenticateToken, isContractor, upload.array(
   }
 });
 
-// --- ADMIN & GENERAL ROUTES ---
 
-// Get all estimations (for admin) or only the user's estimations (for contractor)
+// --- GENERAL (ADMIN & CONTRACTOR) ROUTES ---
+
+// GET Estimations (Smart Route: gets all for admin, or just contractor's own)
 router.get('/', authenticateToken, async (req, res) => {
-    try {
-        let query = adminDb.collection('estimations').orderBy('createdAt', 'desc');
+  try {
+    let query = adminDb.collection('estimations').orderBy('createdAt', 'desc');
 
-        // If the user is not an admin, filter to show only their own estimations
-        if (req.user.type !== 'admin' && req.user.role !== 'admin') {
-            query = query.where('contractorId', '==', req.user.id);
-        }
-
-        const snapshot = await query.get();
-        const estimations = snapshot.docs.map(doc => {
-            const data = doc.data();
-            // Remove the large base64 data strings from the list view to keep the response fast and small
-            if (data.uploadedFiles) {
-                data.uploadedFiles.forEach(file => delete file.data);
-            }
-            if (data.resultFile) {
-                delete data.resultFile.data;
-            }
-            return { _id: doc.id, id: doc.id, ...data };
-        });
-
-        res.json({ success: true, estimations });
-    } catch (error) {
-        console.error('Error fetching estimations:', error);
-        res.status(500).json({ success: false, error: 'Failed to fetch estimations.' });
+    if (req.user.type !== 'admin') {
+      query = query.where('contractorId', '==', req.user.id);
     }
+
+    const snapshot = await query.get();
+    const estimations = snapshot.docs.map(doc => {
+        const data = doc.data();
+        // Remove large base64 data strings from the list view to keep the response fast and small
+        if (data.uploadedFiles) {
+            data.uploadedFiles.forEach(file => delete file.data);
+        }
+        if (data.resultFile) {
+            delete data.resultFile.data;
+        }
+        return { id: doc.id, ...data };
+    });
+
+    res.json({ success: true, estimations });
+  } catch (error) {
+    console.error('Error fetching estimations:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch estimations.' });
+  }
 });
 
-// Upload an estimation result (Admin only)
+// GET Single Estimation Details
+router.get('/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const doc = await adminDb.collection('estimations').doc(id).get();
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, error: 'Estimation not found.' });
+    }
+
+    const estimation = doc.data();
+    if (req.user.type !== 'admin' && estimation.contractorId !== req.user.id) {
+      return res.status(403).json({ success: false, error: 'Access denied.' });
+    }
+    
+    // Remove large file data from the main details response
+    if (estimation.uploadedFiles) {
+        estimation.uploadedFiles.forEach(file => delete file.data);
+    }
+    if (estimation.resultFile) {
+        delete estimation.resultFile.data;
+    }
+
+    res.json({ success: true, estimation: { id: doc.id, ...estimation }});
+  } catch (error)
+    { console.error('Error fetching estimation:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch estimation.' });
+  }
+});
+
+// DELETE a pending estimation
+router.delete('/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const doc = await adminDb.collection('estimations').doc(id).get();
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, error: 'Estimation not found.' });
+    }
+
+    const estimation = doc.data();
+    if (req.user.type !== 'admin' && estimation.contractorId !== req.user.id) {
+      return res.status(403).json({ success: false, error: 'Access denied.' });
+    }
+    if (estimation.status !== 'pending') {
+      return res.status(400).json({ success: false, error: 'Only pending estimations can be deleted.' });
+    }
+
+    await adminDb.collection('estimations').doc(id).delete();
+    res.json({ success: true, message: 'Estimation deleted successfully.' });
+  } catch (error) {
+    console.error('Error deleting estimation:', error);
+    res.status(500).json({ success: false, error: 'Failed to delete estimation.' });
+  }
+});
+
+
+// --- ADMIN-ONLY ROUTES ---
+
+// POST Upload Estimation Result
 router.post('/:id/result', authenticateToken, isAdmin, upload.single('resultFile'), async (req, res) => {
   try {
     const { id } = req.params;
@@ -100,12 +166,6 @@ router.post('/:id/result', authenticateToken, isAdmin, upload.single('resultFile
 
     if (!resultFile) {
       return res.status(400).json({ success: false, error: 'Result file is required.' });
-    }
-
-    const docRef = adminDb.collection('estimations').doc(id);
-    const doc = await docRef.get();
-    if (!doc.exists) {
-      return res.status(404).json({ success: false, error: 'Estimation not found.' });
     }
 
     const resultFileData = {
@@ -120,38 +180,55 @@ router.post('/:id/result', authenticateToken, isAdmin, upload.single('resultFile
       status: 'completed',
       resultFile: resultFileData,
       updatedAt: new Date().toISOString(),
-      completedAt: new Date().toISOString()
+      completedAt: new Date().toISOString(),
+      estimatedAmount: parseFloat(amount) || 0,
+      adminNotes: notes || ''
     };
-    if (amount) updateData.estimatedAmount = parseFloat(amount);
-    if (notes) updateData.adminNotes = notes;
 
-    await docRef.update(updateData);
+    await adminDb.collection('estimations').doc(id).update(updateData);
     res.json({ success: true, message: 'Estimation result uploaded successfully.' });
   } catch (error) {
     console.error('Error uploading result:', error);
-     if (error.message.includes('bytes is larger than the maximum size of 1048576 bytes')) {
-        return res.status(413).json({ success: false, error: 'Result file is too large. Must be under 1MB.' });
-    }
     res.status(500).json({ success: false, error: 'Failed to upload result.' });
   }
 });
 
-// Update an estimation's status (Admin only)
+// PATCH Update Estimation Status
 router.patch('/:id/status', authenticateToken, isAdmin, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { status } = req.body;
-        const validStatuses = ['pending', 'in-progress', 'completed', 'rejected', 'cancelled'];
-        if (!validStatuses.includes(status)) {
-            return res.status(400).json({ success: false, error: 'Invalid status value.' });
-        }
-        await adminDb.collection('estimations').doc(id).update({ status, updatedAt: new Date().toISOString() });
-        res.json({ success: true, message: 'Estimation status updated successfully.' });
-    } catch (error) {
-        console.error('Error updating status:', error);
-        res.status(500).json({ success: false, error: 'Failed to update status.' });
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const validStatuses = ['pending', 'in-progress', 'completed', 'rejected', 'cancelled'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ success: false, error: 'Invalid status value.' });
     }
+
+    await adminDb.collection('estimations').doc(id).update({ status, updatedAt: new Date().toISOString() });
+    res.json({ success: true, message: 'Estimation status updated successfully.' });
+  } catch (error) {
+    console.error('Error updating status:', error);
+    res.status(500).json({ success: false, error: 'Failed to update status.' });
+  }
 });
+
+// GET Estimation Statistics
+router.get('/stats/summary', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const snapshot = await adminDb.collection('estimations').get();
+    const estimations = snapshot.docs.map(doc => doc.data());
+    const stats = {
+      total: estimations.length,
+      pending: estimations.filter(e => e.status === 'pending').length,
+      completed: estimations.filter(e => e.status === 'completed').length,
+      totalValue: estimations.filter(e => e.estimatedAmount).reduce((sum, e) => sum + e.estimatedAmount, 0)
+    };
+    res.json({ success: true, stats });
+  } catch (error) {
+    console.error('Error fetching stats:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch statistics.' });
+  }
+});
+
 
 // --- FILE DOWNLOAD ROUTES ---
 
@@ -163,7 +240,6 @@ router.get('/:id/files/:fileName/download', authenticateToken, async (req, res) 
         if (!doc.exists) return res.status(404).send('Estimation not found.');
 
         const estimation = doc.data();
-        // Security check: Only admin or the owner can download
         if (req.user.type !== 'admin' && estimation.contractorId !== req.user.id) {
             return res.status(403).send('Access denied.');
         }
@@ -189,7 +265,6 @@ router.get('/:id/result/download', authenticateToken, async (req, res) => {
         if (!doc.exists) return res.status(404).send('Estimation not found.');
 
         const estimation = doc.data();
-        // Security check: Only admin or the owner can download
         if (req.user.type !== 'admin' && estimation.contractorId !== req.user.id) {
             return res.status(403).send('Access denied.');
         }

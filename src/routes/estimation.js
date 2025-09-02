@@ -33,8 +33,9 @@ router.get('/test', (req, res) => {
       'GET /:id',
       'GET /:id/files',
       'GET /:id/result',
+      'POST /:id/result',
       'DELETE /:id',
-      'GET /admin/all'
+      'PATCH /:id/status'
     ]
   });
 });
@@ -67,8 +68,8 @@ router.post('/contractor/submit', authenticateToken, isContractor, upload.array(
         size: file.size,
         type: file.mimetype,
         uploadedAt: new Date().toISOString(),
-        // In a real implementation, you'd upload to cloud storage
-        url: `placeholder-url-${file.originalname}`
+        // In a real implementation, you'd upload to cloud storage and get URL
+        url: `${process.env.STORAGE_BASE_URL || 'https://storage.example.com'}/estimations/files/${file.originalname}`
       }))
     };
 
@@ -113,6 +114,7 @@ router.get('/contractor/:email', authenticateToken, async (req, res) => {
 
     const estimations = snapshot.docs.map(doc => ({
       _id: doc.id,
+      id: doc.id,
       ...doc.data()
     }));
 
@@ -156,8 +158,9 @@ router.get('/:id', authenticateToken, async (req, res) => {
 
     res.json({
       success: true,
-      data: {
+      estimation: {
         id: doc.id,
+        _id: doc.id,
         ...estimation
       }
     });
@@ -187,8 +190,8 @@ router.get('/:id/files', authenticateToken, async (req, res) => {
 
     const estimation = doc.data();
     
-    // Check access permissions
-    if (estimation.contractorId !== req.user.id && req.user.type !== 'admin') {
+    // Check access permissions - admin can access all, contractors only their own
+    if (req.user.type !== 'admin' && estimation.contractorId !== req.user.id) {
       return res.status(403).json({ 
         success: false, 
         error: 'Access denied.' 
@@ -225,8 +228,8 @@ router.get('/:id/result', authenticateToken, async (req, res) => {
 
     const estimation = doc.data();
     
-    // Check access permissions
-    if (estimation.contractorId !== req.user.id && req.user.type !== 'admin') {
+    // Check access permissions - admin can access all, contractors only their own
+    if (req.user.type !== 'admin' && estimation.contractorId !== req.user.id) {
       return res.status(403).json({ 
         success: false, 
         error: 'Access denied.' 
@@ -250,6 +253,138 @@ router.get('/:id/result', authenticateToken, async (req, res) => {
     res.status(500).json({ 
       success: false, 
       error: 'Failed to fetch result.' 
+    });
+  }
+});
+
+// Admin route to upload estimation result
+router.post('/:id/result', authenticateToken, upload.single('resultFile'), async (req, res) => {
+  try {
+    // Check if user is admin
+    if (req.user.type !== 'admin' && req.user.role !== 'admin') {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Admin access required.' 
+      });
+    }
+
+    const { id } = req.params;
+    const { estimatedAmount, notes, amount } = req.body;
+    const resultFile = req.file;
+
+    if (!resultFile) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Result file is required.' 
+      });
+    }
+
+    const doc = await adminDb.collection('estimations').doc(id).get();
+    
+    if (!doc.exists) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Estimation not found.' 
+      });
+    }
+
+    // In production, upload file to cloud storage and get URL
+    const resultFileData = {
+      name: resultFile.originalname,
+      size: resultFile.size,
+      type: resultFile.mimetype,
+      uploadedAt: new Date().toISOString(),
+      url: `${process.env.STORAGE_BASE_URL || 'https://storage.example.com'}/results/${id}/${resultFile.originalname}`
+    };
+
+    const updateData = {
+      status: 'completed',
+      resultFile: resultFileData,
+      updatedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString()
+    };
+
+    if (estimatedAmount || amount) {
+      updateData.estimatedAmount = parseFloat(estimatedAmount || amount);
+    }
+
+    if (notes) {
+      updateData.adminNotes = notes;
+    }
+
+    await adminDb.collection('estimations').doc(id).update(updateData);
+
+    res.json({
+      success: true,
+      message: 'Estimation result uploaded successfully.',
+      resultFile: resultFileData
+    });
+
+  } catch (error) {
+    console.error('Error uploading result:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to upload result.' 
+    });
+  }
+});
+
+// Update estimation status (Admin only)
+router.patch('/:id/status', authenticateToken, async (req, res) => {
+  try {
+    // Check if user is admin
+    if (req.user.type !== 'admin' && req.user.role !== 'admin') {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Admin access required.' 
+      });
+    }
+
+    const { id } = req.params;
+    const { status, notes } = req.body;
+
+    const validStatuses = ['pending', 'in-progress', 'completed', 'rejected', 'cancelled'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Invalid status value.' 
+      });
+    }
+
+    const doc = await adminDb.collection('estimations').doc(id).get();
+    
+    if (!doc.exists) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Estimation not found.' 
+      });
+    }
+
+    const updateData = {
+      status: status,
+      updatedAt: new Date().toISOString()
+    };
+
+    if (notes) {
+      updateData.adminNotes = notes;
+    }
+
+    if (status === 'completed') {
+      updateData.completedAt = new Date().toISOString();
+    }
+
+    await adminDb.collection('estimations').doc(id).update(updateData);
+
+    res.json({
+      success: true,
+      message: 'Estimation status updated successfully.'
+    });
+
+  } catch (error) {
+    console.error('Error updating status:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to update status.' 
     });
   }
 });
@@ -302,23 +437,22 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// Admin route to get all estimations
-router.get('/admin/all', authenticateToken, async (req, res) => {
+// Get all estimations (for main route without admin prefix)
+router.get('/', authenticateToken, async (req, res) => {
   try {
-    // Check if user is admin
-    if (req.user.type !== 'admin') {
-      return res.status(403).json({ 
-        success: false, 
-        error: 'Admin access required.' 
-      });
+    // Check if user is admin or contractor accessing their own
+    let query = adminDb.collection('estimations').orderBy('createdAt', 'desc');
+
+    // If not admin, filter by contractor
+    if (req.user.type !== 'admin' && req.user.role !== 'admin') {
+      query = query.where('contractorId', '==', req.user.id);
     }
 
-    const snapshot = await adminDb.collection('estimations')
-      .orderBy('createdAt', 'desc')
-      .get();
+    const snapshot = await query.get();
 
     const estimations = snapshot.docs.map(doc => ({
       _id: doc.id,
+      id: doc.id,
       ...doc.data()
     }));
 
@@ -328,7 +462,7 @@ router.get('/admin/all', authenticateToken, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error fetching all estimations:', error);
+    console.error('Error fetching estimations:', error);
     res.status(500).json({ 
       success: false, 
       error: 'Failed to fetch estimations.' 
@@ -336,11 +470,11 @@ router.get('/admin/all', authenticateToken, async (req, res) => {
   }
 });
 
-// Admin route to download contractor's uploaded files
+// Admin routes for file downloads
 router.get('/admin/:id/files/download', authenticateToken, async (req, res) => {
   try {
     // Check if user is admin
-    if (req.user.type !== 'admin') {
+    if (req.user.type !== 'admin' && req.user.role !== 'admin') {
       return res.status(403).json({ 
         success: false, 
         error: 'Admin access required.' 
@@ -365,17 +499,12 @@ router.get('/admin/:id/files/download', authenticateToken, async (req, res) => {
         error: 'No files found for this estimation.' 
       });
     }
-
-    // In a real implementation, you would:
-    // 1. Get actual file URLs from cloud storage (Firebase Storage, AWS S3, etc.)
-    // 2. Generate temporary download links
-    // 3. Return downloadable URLs
     
     res.json({
       success: true,
       files: estimation.uploadedFiles.map(file => ({
         ...file,
-        downloadUrl: `${process.env.STORAGE_BASE_URL || 'https://storage.example.com'}/estimations/${id}/${file.name}`
+        downloadUrl: file.url
       }))
     });
 
@@ -388,11 +517,11 @@ router.get('/admin/:id/files/download', authenticateToken, async (req, res) => {
   }
 });
 
-// Admin route to upload estimation result
-router.post('/admin/:id/result', authenticateToken, upload.single('resultFile'), async (req, res) => {
+// Update estimation amount (Admin only)
+router.patch('/:id/amount', authenticateToken, async (req, res) => {
   try {
     // Check if user is admin
-    if (req.user.type !== 'admin') {
+    if (req.user.type !== 'admin' && req.user.role !== 'admin') {
       return res.status(403).json({ 
         success: false, 
         error: 'Admin access required.' 
@@ -400,13 +529,12 @@ router.post('/admin/:id/result', authenticateToken, upload.single('resultFile'),
     }
 
     const { id } = req.params;
-    const { estimatedAmount, notes } = req.body;
-    const resultFile = req.file;
+    const { amount } = req.body;
 
-    if (!resultFile) {
+    if (!amount || isNaN(amount) || amount < 0) {
       return res.status(400).json({ 
         success: false, 
-        error: 'Result file is required.' 
+        error: 'Valid amount is required.' 
       });
     }
 
@@ -419,43 +547,103 @@ router.post('/admin/:id/result', authenticateToken, upload.single('resultFile'),
       });
     }
 
-    // In a real implementation, upload file to cloud storage
-    const resultFileData = {
-      name: resultFile.originalname,
-      size: resultFile.size,
-      type: resultFile.mimetype,
-      uploadedAt: new Date().toISOString(),
-      url: `${process.env.STORAGE_BASE_URL || 'https://storage.example.com'}/results/${id}/${resultFile.originalname}`
-    };
-
-    const updateData = {
-      status: 'completed',
-      resultFile: resultFileData,
-      updatedAt: new Date().toISOString(),
-      completedAt: new Date().toISOString()
-    };
-
-    if (estimatedAmount) {
-      updateData.estimatedAmount = parseFloat(estimatedAmount);
-    }
-
-    if (notes) {
-      updateData.adminNotes = notes;
-    }
-
-    await adminDb.collection('estimations').doc(id).update(updateData);
+    await adminDb.collection('estimations').doc(id).update({
+      estimatedAmount: parseFloat(amount),
+      updatedAt: new Date().toISOString()
+    });
 
     res.json({
       success: true,
-      message: 'Estimation result uploaded successfully.',
-      data: updateData
+      message: 'Estimation amount updated successfully.'
     });
 
   } catch (error) {
-    console.error('Error uploading result:', error);
+    console.error('Error updating amount:', error);
     res.status(500).json({ 
       success: false, 
-      error: 'Failed to upload result.' 
+      error: 'Failed to update amount.' 
+    });
+  }
+});
+
+// Add admin notes
+router.patch('/:id/notes', authenticateToken, async (req, res) => {
+  try {
+    // Check if user is admin
+    if (req.user.type !== 'admin' && req.user.role !== 'admin') {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Admin access required.' 
+      });
+    }
+
+    const { id } = req.params;
+    const { notes } = req.body;
+
+    const doc = await adminDb.collection('estimations').doc(id).get();
+    
+    if (!doc.exists) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Estimation not found.' 
+      });
+    }
+
+    await adminDb.collection('estimations').doc(id).update({
+      adminNotes: notes || '',
+      updatedAt: new Date().toISOString()
+    });
+
+    res.json({
+      success: true,
+      message: 'Notes updated successfully.'
+    });
+
+  } catch (error) {
+    console.error('Error updating notes:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to update notes.' 
+    });
+  }
+});
+
+// Get estimation statistics
+router.get('/stats/summary', authenticateToken, async (req, res) => {
+  try {
+    // Check if user is admin
+    if (req.user.type !== 'admin' && req.user.role !== 'admin') {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Admin access required.' 
+      });
+    }
+
+    const snapshot = await adminDb.collection('estimations').get();
+    const estimations = snapshot.docs.map(doc => doc.data());
+
+    const stats = {
+      total: estimations.length,
+      pending: estimations.filter(e => e.status === 'pending').length,
+      inProgress: estimations.filter(e => e.status === 'in-progress').length,
+      completed: estimations.filter(e => e.status === 'completed').length,
+      rejected: estimations.filter(e => e.status === 'rejected').length,
+      cancelled: estimations.filter(e => e.status === 'cancelled').length,
+      totalValue: estimations
+        .filter(e => e.estimatedAmount)
+        .reduce((sum, e) => sum + e.estimatedAmount, 0)
+    };
+
+    res.json({
+      success: true,
+      stats
+    });
+
+  } catch (error) {
+    console.error('Error fetching estimation stats:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to fetch statistics.' 
     });
   }
 });

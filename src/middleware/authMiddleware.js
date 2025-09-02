@@ -1,16 +1,21 @@
 import jwt from 'jsonwebtoken';
 
 // This function decodes the token and attaches the user payload to the request.
+// UPDATED: Now accepts token from 'Authorization' header OR a URL query parameter.
 export const authenticateToken = (req, res, next) => {
+    let token;
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        // This is a more appropriate error for a missing token
-        return res.status(401).json({ success: false, error: 'Authorization token is required.' });
+
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        // Standard token from header
+        token = authHeader.split(' ')[1];
+    } else if (req.query.token) {
+        // Token from URL query parameter (for file downloads)
+        token = req.query.token;
     }
 
-    const token = authHeader.split(' ')[1];
     if (!token) {
-        return res.status(401).json({ success: false, error: 'Token not found.' });
+        return res.status(401).json({ success: false, error: 'Authorization token is required.' });
     }
 
     try {

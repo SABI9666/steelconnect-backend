@@ -21,7 +21,7 @@ const upload = multer({
   }
 });
 
-// --- CONTRACTOR ROUTE ---
+// --- CONTRACTOR ROUTES ---
 
 // Submit a new estimation request with files
 router.post('/contractor/submit', authenticateToken, isContractor, upload.array('files', 10), async (req, res) => {
@@ -68,10 +68,38 @@ router.post('/contractor/submit', authenticateToken, isContractor, upload.array(
   }
 });
 
+// GET contractor's estimations by email (This fixes the 404 error from your script.js)
+router.get('/contractor/:email', authenticateToken, async (req, res) => {
+    try {
+        const { email } = req.params;
+        if (req.user.email !== email && req.user.type !== 'admin') {
+            return res.status(403).json({ success: false, error: 'Access denied.' });
+        }
 
-// --- GENERAL (ADMIN & CONTRACTOR) ROUTES ---
+        const snapshot = await adminDb.collection('estimations')
+            .where('contractorEmail', '==', email)
+            .orderBy('createdAt', 'desc')
+            .get();
 
-// GET Estimations (Smart Route: gets all for admin, or just contractor's own)
+        const estimations = snapshot.docs.map(doc => {
+            const data = doc.data();
+            // Remove file data from list view to keep payload small
+            if (data.uploadedFiles) data.uploadedFiles.forEach(f => delete f.data);
+            if (data.resultFile) delete data.resultFile.data;
+            return { id: doc.id, ...data };
+        });
+
+        res.json({ success: true, estimations });
+    } catch (error) {
+        console.error('Error fetching contractor estimations:', error);
+        res.status(500).json({ success: false, error: 'Failed to fetch estimations.' });
+    }
+});
+
+
+// --- GENERAL ROUTES ---
+
+// GET Estimations (Preferred Route: gets all for admin, or just contractor's own based on token)
 router.get('/', authenticateToken, async (req, res) => {
   try {
     let query = adminDb.collection('estimations').orderBy('createdAt', 'desc');
@@ -83,13 +111,8 @@ router.get('/', authenticateToken, async (req, res) => {
     const snapshot = await query.get();
     const estimations = snapshot.docs.map(doc => {
         const data = doc.data();
-        // Remove large base64 data strings from the list view to keep the response fast and small
-        if (data.uploadedFiles) {
-            data.uploadedFiles.forEach(file => delete file.data);
-        }
-        if (data.resultFile) {
-            delete data.resultFile.data;
-        }
+        if (data.uploadedFiles) data.uploadedFiles.forEach(f => delete f.data);
+        if (data.resultFile) delete data.resultFile.data;
         return { id: doc.id, ...data };
     });
 
@@ -105,9 +128,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const doc = await adminDb.collection('estimations').doc(id).get();
-    if (!doc.exists) {
-      return res.status(404).json({ success: false, error: 'Estimation not found.' });
-    }
+    if (!doc.exists) return res.status(404).json({ success: false, error: 'Estimation not found.' });
 
     const estimation = doc.data();
     if (req.user.type !== 'admin' && estimation.contractorId !== req.user.id) {
@@ -115,16 +136,12 @@ router.get('/:id', authenticateToken, async (req, res) => {
     }
     
     // Remove large file data from the main details response
-    if (estimation.uploadedFiles) {
-        estimation.uploadedFiles.forEach(file => delete file.data);
-    }
-    if (estimation.resultFile) {
-        delete estimation.resultFile.data;
-    }
+    if (estimation.uploadedFiles) estimation.uploadedFiles.forEach(f => delete f.data);
+    if (estimation.resultFile) delete estimation.resultFile.data;
 
     res.json({ success: true, estimation: { id: doc.id, ...estimation }});
-  } catch (error)
-    { console.error('Error fetching estimation:', error);
+  } catch (error) {
+    console.error('Error fetching estimation:', error);
     res.status(500).json({ success: false, error: 'Failed to fetch estimation.' });
   }
 });
@@ -134,9 +151,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const doc = await adminDb.collection('estimations').doc(id).get();
-    if (!doc.exists) {
-      return res.status(404).json({ success: false, error: 'Estimation not found.' });
-    }
+    if (!doc.exists) return res.status(404).json({ success: false, error: 'Estimation not found.' });
 
     const estimation = doc.data();
     if (req.user.type !== 'admin' && estimation.contractorId !== req.user.id) {
@@ -163,10 +178,7 @@ router.post('/:id/result', authenticateToken, isAdmin, upload.single('resultFile
     const { id } = req.params;
     const { amount, notes } = req.body;
     const resultFile = req.file;
-
-    if (!resultFile) {
-      return res.status(400).json({ success: false, error: 'Result file is required.' });
-    }
+    if (!resultFile) return res.status(400).json({ success: false, error: 'Result file is required.' });
 
     const resultFileData = {
       name: resultFile.originalname,
@@ -199,33 +211,13 @@ router.patch('/:id/status', authenticateToken, isAdmin, async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
     const validStatuses = ['pending', 'in-progress', 'completed', 'rejected', 'cancelled'];
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({ success: false, error: 'Invalid status value.' });
-    }
+    if (!validStatuses.includes(status)) return res.status(400).json({ success: false, error: 'Invalid status.' });
 
     await adminDb.collection('estimations').doc(id).update({ status, updatedAt: new Date().toISOString() });
-    res.json({ success: true, message: 'Estimation status updated successfully.' });
+    res.json({ success: true, message: 'Status updated.' });
   } catch (error) {
     console.error('Error updating status:', error);
     res.status(500).json({ success: false, error: 'Failed to update status.' });
-  }
-});
-
-// GET Estimation Statistics
-router.get('/stats/summary', authenticateToken, isAdmin, async (req, res) => {
-  try {
-    const snapshot = await adminDb.collection('estimations').get();
-    const estimations = snapshot.docs.map(doc => doc.data());
-    const stats = {
-      total: estimations.length,
-      pending: estimations.filter(e => e.status === 'pending').length,
-      completed: estimations.filter(e => e.status === 'completed').length,
-      totalValue: estimations.filter(e => e.estimatedAmount).reduce((sum, e) => sum + e.estimatedAmount, 0)
-    };
-    res.json({ success: true, stats });
-  } catch (error) {
-    console.error('Error fetching stats:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch statistics.' });
   }
 });
 

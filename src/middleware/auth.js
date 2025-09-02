@@ -52,3 +52,15 @@ export const isContractor = (req, res, next) => {
         return res.status(403).json({ success: false, error: 'Access denied. Contractor privileges required.' });
     }
 };
+
+/**
+ * NEW: Checks if the authenticated user is a designer.
+ * This MUST run after authenticateToken.
+ */
+export const isDesigner = (req, res, next) => {
+    if (req.user && req.user.type === 'designer') {
+        next();
+    } else {
+        return res.status(403).json({ success: false, error: 'Access denied. Designer privileges required.' });
+    }
+};

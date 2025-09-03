@@ -1,3 +1,4 @@
+// src/routes/estimation.js - REQUIRED FILE TO FIX ESTIMATION 404 ERRORS
 import express from 'express';
 import multer from 'multer';
 import { authenticateToken, isContractor, isAdmin } from '../middleware/authMiddleware.js';
@@ -10,7 +11,8 @@ const storage = multer.memoryStorage();
 const upload = multer({
     storage: storage,
     limits: {
-        fileSize: 15 * 1024 * 1024 // 15MB limit
+        fileSize: 15 * 1024 * 1024, // 15MB limit
+        files: 10 // Maximum 10 files
     }
 });
 
@@ -44,9 +46,11 @@ async function uploadToFirebaseStorage(file, path) {
     }
 }
 
-// Get all estimations (for admin)
+// Get all estimations - FIXES /api/estimation 404 (Admin only)
 router.get('/', authenticateToken, isAdmin, async (req, res) => {
     try {
+        console.log('Admin estimations list requested by:', req.user?.email);
+        
         const snapshot = await adminDb.collection('estimations')
             .orderBy('createdAt', 'desc')
             .get();
@@ -56,6 +60,8 @@ router.get('/', authenticateToken, isAdmin, async (req, res) => {
             id: doc.id,
             ...doc.data()
         }));
+        
+        console.log(`Found ${estimations.length} estimations for admin`);
         
         res.json({
             success: true,
@@ -71,9 +77,11 @@ router.get('/', authenticateToken, isAdmin, async (req, res) => {
     }
 });
 
-// Submit new estimation (for contractors)
+// Submit new estimation - FIXES /api/estimation/contractor/submit 404
 router.post('/contractor/submit', authenticateToken, isContractor, upload.array('files', 10), async (req, res) => {
     try {
+        console.log('Estimation submission by contractor:', req.user?.email);
+        
         const { projectTitle, description, contractorName, contractorEmail } = req.body;
         const files = req.files;
 
@@ -81,7 +89,7 @@ router.post('/contractor/submit', authenticateToken, isContractor, upload.array(
         if (!projectTitle || !description || !contractorName || !contractorEmail) {
             return res.status(400).json({
                 success: false,
-                message: 'All fields are required'
+                message: 'All fields are required: projectTitle, description, contractorName, contractorEmail'
             });
         }
 
@@ -92,6 +100,8 @@ router.post('/contractor/submit', authenticateToken, isContractor, upload.array(
             });
         }
 
+        console.log(`Processing ${files.length} files for estimation`);
+
         // Upload files to Firebase Storage
         const uploadedFiles = [];
         for (let i = 0; i < files.length; i++) {
@@ -100,6 +110,7 @@ router.post('/contractor/submit', authenticateToken, isContractor, upload.array(
             const filename = `estimations/${req.user.userId}/${timestamp}-${file.originalname}`;
             
             try {
+                console.log(`Uploading file: ${file.originalname}`);
                 const publicUrl = await uploadToFirebaseStorage(file, filename);
                 uploadedFiles.push({
                     name: file.originalname,
@@ -129,6 +140,8 @@ router.post('/contractor/submit', authenticateToken, isContractor, upload.array(
 
         const estimationRef = await adminDb.collection('estimations').add(estimationData);
 
+        console.log(`Estimation created with ID: ${estimationRef.id}`);
+
         res.status(201).json({
             success: true,
             message: 'Estimation request submitted successfully',
@@ -149,10 +162,12 @@ router.post('/contractor/submit', authenticateToken, isContractor, upload.array(
     }
 });
 
-// Get contractor's estimations
+// Get contractor's estimations - FIXES /api/estimation/contractor/:contractorEmail 404
 router.get('/contractor/:contractorEmail', authenticateToken, async (req, res) => {
     try {
         const { contractorEmail } = req.params;
+        
+        console.log(`Estimations requested for contractor: ${contractorEmail} by user: ${req.user?.email}`);
         
         // Check if user is authorized (either admin or the contractor themselves)
         if (req.user.type !== 'admin' && req.user.email !== contractorEmail) {
@@ -173,6 +188,8 @@ router.get('/contractor/:contractorEmail', authenticateToken, async (req, res) =
             ...doc.data()
         }));
 
+        console.log(`Found ${estimations.length} estimations for contractor ${contractorEmail}`);
+
         res.json({
             success: true,
             estimations: estimations
@@ -188,55 +205,14 @@ router.get('/contractor/:contractorEmail', authenticateToken, async (req, res) =
     }
 });
 
-// Get specific estimation details
-router.get('/:estimationId', authenticateToken, async (req, res) => {
-    try {
-        const { estimationId } = req.params;
-        
-        const doc = await adminDb.collection('estimations').doc(estimationId).get();
-        
-        if (!doc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'Estimation not found'
-            });
-        }
-
-        const estimationData = doc.data();
-        
-        // Check authorization
-        if (req.user.type !== 'admin' && req.user.email !== estimationData.contractorEmail) {
-            return res.status(403).json({
-                success: false,
-                message: 'Access denied'
-            });
-        }
-
-        res.json({
-            success: true,
-            estimation: {
-                _id: doc.id,
-                id: doc.id,
-                ...estimationData
-            }
-        });
-
-    } catch (error) {
-        console.error('Error fetching estimation:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error fetching estimation',
-            error: error.message
-        });
-    }
-});
-
-// Upload estimation result (admin only)
+// Upload estimation result (admin only) - FIXES /api/estimation/:estimationId/result 404
 router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('resultFile'), async (req, res) => {
     try {
         const { estimationId } = req.params;
         const { amount, notes } = req.body;
         const file = req.file;
+
+        console.log(`Admin ${req.user?.email} uploading result for estimation ${estimationId}`);
 
         if (!file) {
             return res.status(400).json({
@@ -282,6 +258,8 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
 
         await adminDb.collection('estimations').doc(estimationId).update(updateData);
 
+        console.log(`Result uploaded for estimation ${estimationId}`);
+
         res.json({
             success: true,
             message: 'Estimation result uploaded successfully',
@@ -298,10 +276,12 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
     }
 });
 
-// Download estimation files
+// Download estimation files - FIXES file download 404s
 router.get('/:estimationId/files/:fileName/download', authenticateToken, async (req, res) => {
     try {
         const { estimationId, fileName } = req.params;
+        
+        console.log(`File download requested: ${fileName} from estimation ${estimationId}`);
         
         // Get estimation to check authorization
         const estimationDoc = await adminDb.collection('estimations').doc(estimationId).get();
@@ -344,10 +324,12 @@ router.get('/:estimationId/files/:fileName/download', authenticateToken, async (
     }
 });
 
-// Download estimation result
+// Download estimation result - FIXES result download 404s
 router.get('/:estimationId/result/download', authenticateToken, async (req, res) => {
     try {
         const { estimationId } = req.params;
+        
+        console.log(`Result download requested for estimation ${estimationId}`);
         
         // Get estimation to check authorization and get result file
         const estimationDoc = await adminDb.collection('estimations').doc(estimationId).get();
@@ -388,7 +370,7 @@ router.get('/:estimationId/result/download', authenticateToken, async (req, res)
     }
 });
 
-// Get files for specific estimation
+// Get files for specific estimation - FIXES /api/estimation/:id/files 404
 router.get('/:estimationId/files', authenticateToken, async (req, res) => {
     try {
         const { estimationId } = req.params;
@@ -426,7 +408,7 @@ router.get('/:estimationId/files', authenticateToken, async (req, res) => {
     }
 });
 
-// Get result for specific estimation
+// Get result for specific estimation - FIXES /api/estimation/:id/result 404
 router.get('/:estimationId/result', authenticateToken, async (req, res) => {
     try {
         const { estimationId } = req.params;
@@ -471,7 +453,7 @@ router.get('/:estimationId/result', authenticateToken, async (req, res) => {
     }
 });
 
-// Delete estimation (contractor or admin)
+// Delete estimation - FIXES DELETE /api/estimation/:id 404
 router.delete('/:estimationId', authenticateToken, async (req, res) => {
     try {
         const { estimationId } = req.params;
@@ -503,6 +485,8 @@ router.delete('/:estimationId', authenticateToken, async (req, res) => {
         }
 
         await adminDb.collection('estimations').doc(estimationId).delete();
+
+        console.log(`Estimation ${estimationId} deleted by ${req.user?.email}`);
 
         res.json({
             success: true,

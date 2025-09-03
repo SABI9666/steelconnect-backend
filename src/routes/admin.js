@@ -1,3 +1,4 @@
+// src/routes/admin.js - REQUIRED FILE TO FIX 404 ERRORS
 import express from 'express';
 import { authenticateToken, isAdmin } from '../middleware/authMiddleware.js';
 import { adminDb } from '../config/firebase.js';
@@ -8,9 +9,12 @@ const router = express.Router();
 router.use(authenticateToken);
 router.use(isAdmin);
 
-// Dashboard stats
+// Dashboard stats - FIXES /api/admin/dashboard 404
 router.get('/dashboard', async (req, res) => {
     try {
+        console.log('Admin dashboard requested by:', req.user?.email);
+        
+        // Get collection counts safely
         const getCollectionCount = async (collectionName) => {
             try {
                 const snapshot = await adminDb.collection(collectionName).get();
@@ -77,9 +81,11 @@ router.get('/dashboard', async (req, res) => {
     }
 });
 
-// Get all users
+// Get all users - FIXES /api/admin/users 404
 router.get('/users', async (req, res) => {
     try {
+        console.log('Admin users list requested by:', req.user?.email);
+        
         const snapshot = await adminDb.collection('users')
             .where('type', '!=', 'admin')
             .get();
@@ -102,6 +108,8 @@ router.get('/users', async (req, res) => {
             };
         });
         
+        console.log(`Found ${users.length} users for admin`);
+        
         res.json({ 
             success: true, 
             data: users
@@ -116,11 +124,13 @@ router.get('/users', async (req, res) => {
     }
 });
 
-// Update user status
+// Update user status - FIXES /api/admin/users/:userId/status 404
 router.patch('/users/:userId/status', async (req, res) => {
     try {
         const { userId } = req.params;
         const { isActive, status } = req.body;
+
+        console.log(`Admin ${req.user?.email} updating user ${userId} status to ${isActive}`);
 
         await adminDb.collection('users').doc(userId).update({
             isActive: isActive,
@@ -142,10 +152,13 @@ router.patch('/users/:userId/status', async (req, res) => {
     }
 });
 
-// Delete user
+// Delete user - FIXES /api/admin/users/:userId DELETE 404
 router.delete('/users/:userId', async (req, res) => {
     try {
         const { userId } = req.params;
+        
+        console.log(`Admin ${req.user?.email} deleting user ${userId}`);
+        
         await adminDb.collection('users').doc(userId).delete();
         res.json({ 
             success: true, 
@@ -161,9 +174,11 @@ router.delete('/users/:userId', async (req, res) => {
     }
 });
 
-// Get all quotes
+// Get all quotes - FIXES /api/admin/quotes 404  
 router.get('/quotes', async (req, res) => {
     try {
+        console.log('Admin quotes list requested by:', req.user?.email);
+        
         const snapshot = await adminDb.collection('quotes')
             .orderBy('createdAt', 'desc')
             .get();
@@ -200,6 +215,8 @@ router.get('/quotes', async (req, res) => {
             });
         }
         
+        console.log(`Found ${quotes.length} quotes for admin`);
+        
         res.json({ 
             success: true, 
             data: quotes
@@ -214,9 +231,11 @@ router.get('/quotes', async (req, res) => {
     }
 });
 
-// Get all jobs
+// Get all jobs - FIXES /api/admin/jobs 404
 router.get('/jobs', async (req, res) => {
     try {
+        console.log('Admin jobs list requested by:', req.user?.email);
+        
         const snapshot = await adminDb.collection('jobs')
             .orderBy('createdAt', 'desc')
             .get();
@@ -241,6 +260,8 @@ router.get('/jobs', async (req, res) => {
             };
         });
         
+        console.log(`Found ${jobs.length} jobs for admin`);
+        
         res.json({ 
             success: true, 
             data: jobs
@@ -255,9 +276,11 @@ router.get('/jobs', async (req, res) => {
     }
 });
 
-// Get all messages
+// Get all messages - FIXES /api/admin/messages 404
 router.get('/messages', async (req, res) => {
     try {
+        console.log('Admin messages list requested by:', req.user?.email);
+        
         const snapshot = await adminDb.collection('messages')
             .orderBy('createdAt', 'desc')
             .get();
@@ -295,6 +318,8 @@ router.get('/messages', async (req, res) => {
             });
         }
         
+        console.log(`Found ${messages.length} messages for admin`);
+        
         res.json({ 
             success: true, 
             data: messages
@@ -309,9 +334,11 @@ router.get('/messages', async (req, res) => {
     }
 });
 
-// Get all subscriptions
+// Get all subscriptions - FIXES /api/admin/subscriptions 404
 router.get('/subscriptions', async (req, res) => {
     try {
+        console.log('Admin subscriptions list requested by:', req.user?.email);
+        
         const snapshot = await adminDb.collection('subscriptions')
             .orderBy('startDate', 'desc')
             .get();
@@ -349,6 +376,8 @@ router.get('/subscriptions', async (req, res) => {
                 user: userData
             });
         }
+        
+        console.log(`Found ${subscriptions.length} subscriptions for admin`);
         
         res.json({ 
             success: true, 

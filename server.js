@@ -1,4 +1,4 @@
-// server.js - SIMPLIFIED VERSION with Direct Imports
+// server.js - Updated with Admin Routes
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -6,13 +6,24 @@ import compression from 'compression';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 
-// Import routes directly
+// Import existing routes
 import authRoutes from './src/routes/auth.js';
 import jobsRoutes from './src/routes/jobs.js';
 import quotesRoutes from './src/routes/quotes.js';
 import messagesRoutes from './src/routes/messages.js';
 
-// Import estimation routes (now fixed)
+// Import admin routes (NEW - REQUIRED FOR ADMIN PANEL)
+let adminRoutes;
+try {
+    const adminModule = await import('./src/routes/admin.js');
+    adminRoutes = adminModule.default;
+    console.log('✅ Admin routes imported successfully');
+} catch (error) {
+    console.warn('⚠️ Admin routes not available:', error.message);
+    console.warn('📝 You need to create ./src/routes/admin.js for admin panel to work');
+}
+
+// Import estimation routes
 let estimationRoutes;
 try {
     const estimationModule = await import('./src/routes/estimation.js');
@@ -20,6 +31,7 @@ try {
     console.log('✅ Estimation routes imported successfully');
 } catch (error) {
     console.warn('⚠️ Estimation routes not available:', error.message);
+    console.warn('📝 You need to create ./src/routes/estimation.js for estimations to work');
 }
 
 dotenv.config();
@@ -28,7 +40,7 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 
 console.log('🚀 SteelConnect Backend Starting...');
-console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
+console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
 console.log(`⏰ Started at: ${new Date().toISOString()}`);
 
 // --- Database Connection ---
@@ -101,6 +113,7 @@ app.get('/', (req, res) => {
         endpoints: {
             health: '/health',
             auth: '/api/auth',
+            admin: '/api/admin',  // NEW - Admin endpoints
             jobs: '/api/jobs',
             quotes: '/api/quotes',
             messages: '/api/messages',
@@ -110,20 +123,29 @@ app.get('/', (req, res) => {
 });
 
 // --- Register Routes ---
-console.log('🔄 Registering routes...');
+console.log('📁 Registering routes...');
 
 // Auth routes
 if (authRoutes) {
     app.use('/api/auth', authRoutes);
-    console.log('✅ Auth routes registered');
+    console.log('✅ Auth routes registered at /api/auth');
 } else {
     console.error('❌ Auth routes failed to load');
+}
+
+// ADMIN ROUTES (NEW - CRITICAL FOR FIXING 404s)
+if (adminRoutes) {
+    app.use('/api/admin', adminRoutes);
+    console.log('✅ Admin routes registered at /api/admin');
+} else {
+    console.error('❌ Admin routes failed to load - Admin panel will not work');
+    console.error('📝 Create ./src/routes/admin.js to fix admin panel 404 errors');
 }
 
 // Jobs routes  
 if (jobsRoutes) {
     app.use('/api/jobs', jobsRoutes);
-    console.log('✅ Jobs routes registered');
+    console.log('✅ Jobs routes registered at /api/jobs');
 } else {
     console.error('❌ Jobs routes failed to load');
 }
@@ -131,7 +153,7 @@ if (jobsRoutes) {
 // Quotes routes
 if (quotesRoutes) {
     app.use('/api/quotes', quotesRoutes);
-    console.log('✅ Quotes routes registered');
+    console.log('✅ Quotes routes registered at /api/quotes');
 } else {
     console.error('❌ Quotes routes failed to load');
 }
@@ -139,7 +161,7 @@ if (quotesRoutes) {
 // Messages routes
 if (messagesRoutes) {
     app.use('/api/messages', messagesRoutes);
-    console.log('✅ Messages routes registered');
+    console.log('✅ Messages routes registered at /api/messages');
 } else {
     console.error('❌ Messages routes failed to load');
 }
@@ -147,9 +169,10 @@ if (messagesRoutes) {
 // Estimation routes
 if (estimationRoutes) {
     app.use('/api/estimation', estimationRoutes);
-    console.log('✅ Estimation routes registered');
+    console.log('✅ Estimation routes registered at /api/estimation');
 } else {
     console.warn('⚠️ Estimation routes unavailable - some services may be missing');
+    console.error('📝 Create ./src/routes/estimation.js to fix estimation 404 errors');
 }
 
 console.log('📦 Route registration completed');
@@ -165,6 +188,8 @@ app.get('/api', (req, res) => {
             'GET /api/auth/*',
             'POST /api/auth/register',
             'POST /api/auth/login',
+            'POST /api/auth/login/admin',  // NEW
+            'GET /api/admin/*',            // NEW
             'GET /api/jobs/*',
             'GET /api/quotes/*', 
             'GET /api/messages/*',
@@ -208,6 +233,7 @@ app.use('*', (req, res) => {
             '/health',
             '/api',
             '/api/auth/*',
+            '/api/admin/*',        // NEW
             '/api/jobs/*',
             '/api/quotes/*',
             '/api/messages/*',
@@ -236,18 +262,19 @@ process.on('SIGINT', () => {
 // --- Start Server ---
 app.listen(PORT, '0.0.0.0', () => {
     console.log('🎉 SteelConnect Backend Server Started');
-    console.log(`📍 Server running on port ${PORT}`);
-    console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`🔗 Server running on port ${PORT}`);
+    console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`⏰ Started at: ${new Date().toISOString()}`);
     
     console.log('\n📋 Environment Check:');
     console.log(`   MongoDB: ${process.env.MONGODB_URI ? '✅ Configured' : '❌ Missing'}`);
-    console.log(`   Anthropic API: ${process.env.ANTHROPIC_API_KEY ? '✅ Configured' : '❌ Missing'}`);
     console.log(`   Firebase: ${process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 ? '✅ Configured' : '❌ Missing'}`);
+    console.log(`   JWT Secret: ${process.env.JWT_SECRET ? '✅ Configured' : '❌ Missing'}`);
     console.log(`   CORS Origins: ${process.env.CORS_ORIGIN ? '✅ Configured' : '⚠️ Using defaults'}`);
     
     console.log('\n🔗 Available endpoints:');
     console.log(`   Health: http://localhost:${PORT}/health`);
     console.log(`   API: http://localhost:${PORT}/api`);
+    console.log(`   Admin: http://localhost:${PORT}/api/admin/*`);
     console.log('');
 });

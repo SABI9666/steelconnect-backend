@@ -1,4 +1,4 @@
-// server.js - Updated with Admin Routes
+// server.js - Updated with Notifications Routes
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -12,7 +12,7 @@ import jobsRoutes from './src/routes/jobs.js';
 import quotesRoutes from './src/routes/quotes.js';
 import messagesRoutes from './src/routes/messages.js';
 
-// Import admin routes (NEW - REQUIRED FOR ADMIN PANEL)
+// Import admin routes
 let adminRoutes;
 try {
     const adminModule = await import('./src/routes/admin.js');
@@ -20,7 +20,6 @@ try {
     console.log('✅ Admin routes imported successfully');
 } catch (error) {
     console.warn('⚠️ Admin routes not available:', error.message);
-    console.warn('📝 You need to create ./src/routes/admin.js for admin panel to work');
 }
 
 // Import estimation routes
@@ -31,7 +30,17 @@ try {
     console.log('✅ Estimation routes imported successfully');
 } catch (error) {
     console.warn('⚠️ Estimation routes not available:', error.message);
-    console.warn('📝 You need to create ./src/routes/estimation.js for estimations to work');
+}
+
+// Import notification routes (NEW)
+let notificationRoutes;
+try {
+    const notificationModule = await import('./src/routes/notifications.js');
+    notificationRoutes = notificationModule.default;
+    console.log('✅ Notification routes imported successfully');
+} catch (error) {
+    console.warn('⚠️ Notification routes not available:', error.message);
+    console.warn('📝 You need to create ./src/routes/notifications.js for notifications to work');
 }
 
 dotenv.config();
@@ -113,17 +122,18 @@ app.get('/', (req, res) => {
         endpoints: {
             health: '/health',
             auth: '/api/auth',
-            admin: '/api/admin',  // NEW - Admin endpoints
+            admin: '/api/admin',
             jobs: '/api/jobs',
             quotes: '/api/quotes',
             messages: '/api/messages',
-            estimation: '/api/estimation'
+            estimation: '/api/estimation',
+            notifications: '/api/notifications'  // NEW
         }
     });
 });
 
 // --- Register Routes ---
-console.log('📁 Registering routes...');
+console.log('📝 Registering routes...');
 
 // Auth routes
 if (authRoutes) {
@@ -133,13 +143,12 @@ if (authRoutes) {
     console.error('❌ Auth routes failed to load');
 }
 
-// ADMIN ROUTES (NEW - CRITICAL FOR FIXING 404s)
+// Admin routes
 if (adminRoutes) {
     app.use('/api/admin', adminRoutes);
     console.log('✅ Admin routes registered at /api/admin');
 } else {
     console.error('❌ Admin routes failed to load - Admin panel will not work');
-    console.error('📝 Create ./src/routes/admin.js to fix admin panel 404 errors');
 }
 
 // Jobs routes  
@@ -172,7 +181,15 @@ if (estimationRoutes) {
     console.log('✅ Estimation routes registered at /api/estimation');
 } else {
     console.warn('⚠️ Estimation routes unavailable - some services may be missing');
-    console.error('📝 Create ./src/routes/estimation.js to fix estimation 404 errors');
+}
+
+// Notification routes (NEW)
+if (notificationRoutes) {
+    app.use('/api/notifications', notificationRoutes);
+    console.log('✅ Notification routes registered at /api/notifications');
+} else {
+    console.warn('⚠️ Notification routes unavailable - notifications will not work');
+    console.warn('📝 Create ./src/routes/notifications.js and ./src/services/notificationService.js');
 }
 
 console.log('📦 Route registration completed');
@@ -188,12 +205,13 @@ app.get('/api', (req, res) => {
             'GET /api/auth/*',
             'POST /api/auth/register',
             'POST /api/auth/login',
-            'POST /api/auth/login/admin',  // NEW
-            'GET /api/admin/*',            // NEW
+            'POST /api/auth/login/admin',
+            'GET /api/admin/*',
             'GET /api/jobs/*',
             'GET /api/quotes/*', 
             'GET /api/messages/*',
-            'GET /api/estimation/*'
+            'GET /api/estimation/*',
+            'GET /api/notifications/*'  // NEW
         ]
     });
 });
@@ -233,11 +251,12 @@ app.use('*', (req, res) => {
             '/health',
             '/api',
             '/api/auth/*',
-            '/api/admin/*',        // NEW
+            '/api/admin/*',
             '/api/jobs/*',
             '/api/quotes/*',
             '/api/messages/*',
-            '/api/estimation/*'
+            '/api/estimation/*',
+            '/api/notifications/*'  // NEW
         ]
     });
 });
@@ -276,5 +295,6 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`   Health: http://localhost:${PORT}/health`);
     console.log(`   API: http://localhost:${PORT}/api`);
     console.log(`   Admin: http://localhost:${PORT}/api/admin/*`);
+    console.log(`   Notifications: http://localhost:${PORT}/api/notifications/*`);
     console.log('');
 });

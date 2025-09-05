@@ -1,4 +1,4 @@
-// src/routes/notifications.js - COMPLETE FILE
+// src/routes/notifications.js - COMPLETE FILE TO CREATE
 import express from 'express';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { adminDb } from '../config/firebase.js';
@@ -11,20 +11,20 @@ class NotificationService {
         try {
             const notification = {
                 userId,
-                type, // 'job', 'quote', 'message', 'user', 'file', 'estimation'
+                type,
                 message,
-                metadata, // Additional data (jobId, quoteId, etc.)
+                metadata,
                 isRead: false,
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString()
             };
 
             const notificationRef = await adminDb.collection('notifications').add(notification);
-            console.log(`✅ Notification created: ${notificationRef.id} for user ${userId}`);
+            console.log(`Notification created: ${notificationRef.id} for user ${userId}`);
             
             return { id: notificationRef.id, ...notification };
         } catch (error) {
-            console.error('❌ Failed to create notification:', error);
+            console.error('Failed to create notification:', error);
             throw error;
         }
     }
@@ -51,10 +51,10 @@ class NotificationService {
             }
 
             await batch.commit();
-            console.log(`✅ Batch notifications created for ${userIds.length} users`);
+            console.log(`Batch notifications created for ${userIds.length} users`);
             return notifications;
         } catch (error) {
-            console.error('❌ Failed to create batch notifications:', error);
+            console.error('Failed to create batch notifications:', error);
             throw error;
         }
     }
@@ -72,7 +72,7 @@ class NotificationService {
             const snapshot = await query.limit(limit).get();
             return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         } catch (error) {
-            console.error('❌ Failed to get user notifications:', error);
+            console.error('Failed to get user notifications:', error);
             throw error;
         }
     }
@@ -95,7 +95,7 @@ class NotificationService {
             await adminDb.collection('notifications').doc(notificationId).update(updateData);
             return true;
         } catch (error) {
-            console.error('❌ Failed to mark notification as read:', error);
+            console.error('Failed to mark notification as read:', error);
             throw error;
         }
     }
@@ -119,10 +119,9 @@ class NotificationService {
             });
 
             await batch.commit();
-            console.log(`✅ Marked ${snapshot.size} notifications as read for user ${userId}`);
             return snapshot.size;
         } catch (error) {
-            console.error('❌ Failed to mark all notifications as read:', error);
+            console.error('Failed to mark all notifications as read:', error);
             throw error;
         }
     }
@@ -130,30 +129,27 @@ class NotificationService {
     // Job-related notifications
     static async notifyJobCreated(jobData) {
         try {
-            console.log('📢 Sending job creation notifications...');
             const designersSnapshot = await adminDb.collection('users')
                 .where('type', '==', 'designer')
                 .get();
 
             const designerIds = designersSnapshot.docs.map(doc => doc.id);
-            console.log(`Found ${designerIds.length} designers to notify`);
             
             if (designerIds.length > 0) {
                 await this.createNotificationForMultipleUsers(
                     designerIds,
                     'job',
                     `New project available: "${jobData.title}" - Budget: ${jobData.budget}`,
-                    { jobId: jobData.id, action: 'created', budget: jobData.budget }
+                    { jobId: jobData.id, action: 'created' }
                 );
             }
         } catch (error) {
-            console.error('❌ Failed to notify job created:', error);
+            console.error('Failed to notify job created:', error);
         }
     }
 
     static async notifyJobStatusChanged(jobData, oldStatus, newStatus) {
         try {
-            console.log('📢 Sending job status change notifications...');
             let recipients = [];
 
             if (jobData.posterId) {
@@ -165,23 +161,21 @@ class NotificationService {
             }
 
             if (recipients.length > 0) {
-                const message = `Project "${jobData.title}" status changed from ${oldStatus} to ${newStatus}`;
                 await this.createNotificationForMultipleUsers(
                     recipients,
                     'job',
-                    message,
+                    `Project "${jobData.title}" status changed from ${oldStatus} to ${newStatus}`,
                     { jobId: jobData.id, action: 'status_changed', oldStatus, newStatus }
                 );
             }
         } catch (error) {
-            console.error('❌ Failed to notify job status changed:', error);
+            console.error('Failed to notify job status changed:', error);
         }
     }
 
     // Quote-related notifications
     static async notifyQuoteSubmitted(quoteData, jobData) {
         try {
-            console.log('📢 Sending quote submission notification...');
             if (jobData.posterId) {
                 await this.createNotification(
                     jobData.posterId,
@@ -191,27 +185,25 @@ class NotificationService {
                         quoteId: quoteData.id, 
                         jobId: jobData.id, 
                         action: 'submitted',
-                        designerId: quoteData.designerId,
-                        amount: quoteData.quoteAmount
+                        designerId: quoteData.designerId 
                     }
                 );
             }
         } catch (error) {
-            console.error('❌ Failed to notify quote submitted:', error);
+            console.error('Failed to notify quote submitted:', error);
         }
     }
 
     static async notifyQuoteStatusChanged(quoteData, jobData, newStatus) {
         try {
-            console.log(`📢 Sending quote ${newStatus} notification...`);
             if (quoteData.designerId) {
                 let message = '';
                 switch (newStatus) {
                     case 'approved':
-                        message = `🎉 Your quote for "${jobData.title}" has been approved! You can now start working on the project.`;
+                        message = `Your quote for "${jobData.title}" has been approved! You can now start working on the project.`;
                         break;
                     case 'rejected':
-                        message = `Your quote for "${jobData.title}" was not selected. Keep trying - there are more opportunities!`;
+                        message = `Your quote for "${jobData.title}" was not selected.`;
                         break;
                     default:
                         message = `Your quote for "${jobData.title}" status changed to ${newStatus}`;
@@ -230,14 +222,13 @@ class NotificationService {
                 );
             }
         } catch (error) {
-            console.error('❌ Failed to notify quote status changed:', error);
+            console.error('Failed to notify quote status changed:', error);
         }
     }
 
     // Message-related notifications
     static async notifyNewMessage(messageData, conversationData) {
         try {
-            console.log('📢 Sending new message notification...');
             const recipientIds = conversationData.participants
                 .filter(p => p.id !== messageData.senderId)
                 .map(p => p.id);
@@ -260,24 +251,26 @@ class NotificationService {
                 );
             }
         } catch (error) {
-            console.error('❌ Failed to notify new message:', error);
+            console.error('Failed to notify new message:', error);
         }
     }
 
     // Estimation notifications
     static async notifyEstimationStatusChanged(estimationData, newStatus) {
         try {
-            console.log(`📢 Sending estimation ${newStatus} notification...`);
             let message = '';
             switch (newStatus) {
+                case 'submitted':
+                    message = `Your estimation request "${estimationData.projectTitle}" has been submitted and is being reviewed`;
+                    break;
                 case 'in-progress':
-                    message = `Your estimation request "${estimationData.projectTitle}" is now being processed by our AI system`;
+                    message = `Your estimation request "${estimationData.projectTitle}" is now being processed`;
                     break;
                 case 'completed':
-                    message = `🎯 Your estimation for "${estimationData.projectTitle}" is ready for download!`;
+                    message = `Your estimation for "${estimationData.projectTitle}" is ready for download!`;
                     break;
                 case 'rejected':
-                    message = `Your estimation request "${estimationData.projectTitle}" could not be processed. Please contact support.`;
+                    message = `Your estimation request "${estimationData.projectTitle}" could not be processed`;
                     break;
                 default:
                     message = `Your estimation request "${estimationData.projectTitle}" status changed to ${newStatus}`;
@@ -303,7 +296,7 @@ class NotificationService {
                 );
             }
         } catch (error) {
-            console.error('❌ Failed to notify estimation status changed:', error);
+            console.error('Failed to notify estimation status changed:', error);
         }
     }
 }
@@ -329,7 +322,7 @@ router.get('/', authenticateToken, async (req, res) => {
             unreadCount: notifications.filter(n => !n.isRead).length
         });
     } catch (error) {
-        console.error('❌ Failed to fetch notifications:', error);
+        console.error('Failed to fetch notifications:', error);
         res.status(500).json({ 
             success: false, 
             error: 'Failed to fetch notifications' 
@@ -351,7 +344,7 @@ router.get('/unread-count', authenticateToken, async (req, res) => {
             unreadCount: unreadNotifications.length 
         });
     } catch (error) {
-        console.error('❌ Failed to get unread count:', error);
+        console.error('Failed to get unread count:', error);
         res.status(500).json({ 
             success: false, 
             error: 'Failed to get unread count' 
@@ -371,7 +364,7 @@ router.put('/:notificationId/read', authenticateToken, async (req, res) => {
             message: 'Notification marked as read' 
         });
     } catch (error) {
-        console.error('❌ Failed to mark notification as read:', error);
+        console.error('Failed to mark notification as read:', error);
         res.status(500).json({ 
             success: false, 
             error: 'Failed to mark notification as read' 
@@ -390,7 +383,7 @@ router.put('/mark-all-read', authenticateToken, async (req, res) => {
             count: updatedCount
         });
     } catch (error) {
-        console.error('❌ Failed to mark all notifications as read:', error);
+        console.error('Failed to mark all notifications as read:', error);
         res.status(500).json({ 
             success: false, 
             error: 'Failed to mark all notifications as read' 

@@ -3,8 +3,7 @@ import { adminDb } from '../config/firebase.js';
 import {
   getConversations,
   findOrCreateConversation,
-  getMessages,
-  sendMessage
+  getMessages
 } from '../controllers/messageController.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { NotificationService } from './notifications.js';
@@ -18,7 +17,7 @@ router.get('/', getConversations);
 router.post('/find', findOrCreateConversation);
 router.get('/:conversationId/messages', getMessages);
 
-// Enhanced message sending with robust error handling and data validation
+// Enhanced message sending with robust error handling and notification support
 router.post('/:conversationId/messages', async (req, res, next) => {
   try {
     const { conversationId } = req.params;
@@ -73,34 +72,59 @@ router.post('/:conversationId/messages', async (req, res, next) => {
             const jobData = jobDoc.data();
             const userData = userDoc.data();
             
-            // Safely reconstruct participants array with null checks
-            const contractorId = jobData?.contractorId || jobData?.userId;
-            const contractorName = jobData?.posterName || 'Client';
+            // Try multiple ways to identify the contractor
+            let contractorId = jobData?.contractorId || jobData?.userId || jobData?.createdBy;
+            let contractorName = jobData?.posterName || jobData?.contractorName || 'Client';
+            
+            // If we still don't have contractorId, try to get it from the conversation participants
+            if (!contractorId && conversationData.participants && Array.isArray(conversationData.participants)) {
+              const existingContractor = conversationData.participants.find(p => p.type === 'contractor' || p.id !== userId);
+              if (existingContractor?.id) {
+                contractorId = existingContractor.id;
+                contractorName = existingContractor.name || contractorName;
+              }
+            }
+            
+            // If still no contractor ID found, check if this is a self-conversation scenario
+            if (!contractorId) {
+              console.warn('No contractor ID found, checking if this is a self-conversation');
+              // In some cases, the user might be both contractor and designer
+              contractorId = userId;
+              contractorName = userData?.name || 'User';
+            }
+            
             const designerId = userData?.id || userId;
             const designerName = userData?.name;
             
-            // Only proceed if we have valid data
-            if (contractorId && contractorName && designerId && designerName) {
+            // More lenient validation - we need at least valid IDs and names
+            if (contractorId && designerId && contractorName && designerName) {
               // Ensure we don't have duplicate participants
               const participantMap = new Map();
               
               participantMap.set(contractorId, {
                 id: contractorId,
                 name: contractorName,
-                type: 'contractor'
+                type: contractorId === userId ? (userData?.type || 'contractor') : 'contractor'
               });
               
-              participantMap.set(designerId, {
-                id: designerId,
-                name: designerName,
-                type: userData.type || 'designer'
-              });
+              // Only add designer as separate participant if different from contractor
+              if (designerId !== contractorId) {
+                participantMap.set(designerId, {
+                  id: designerId,
+                  name: designerName,
+                  type: userData?.type || 'designer'
+                });
+              }
               
               participants = Array.from(participantMap.values());
               wasRepaired = true;
-              console.log('Successfully repaired conversation participants');
+              console.log('Successfully repaired conversation participants:', participants);
             } else {
-              console.error('Missing required data:', { contractorId, contractorName, designerId, designerName });
+              console.error('Missing required data after all attempts:', { 
+                contractorId, contractorName, designerId, designerName,
+                jobData: Object.keys(jobData || {}),
+                userData: Object.keys(userData || {})
+              });
               throw new Error('Insufficient data to reconstruct conversation');
             }
           } else {

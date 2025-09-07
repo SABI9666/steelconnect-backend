@@ -1,4 +1,6 @@
+// messageController.js - FIXED VERSION
 import { adminDb } from '../config/firebase.js';
+import { NotificationService } from '../services/notificationService.js'; // Import directly
 
 // Helper function to get participant details
 const getParticipantDetails = async (participantIds) => {
@@ -145,12 +147,22 @@ export const getMessages = async (req, res, next) => {
   }
 };
 
-// Send a new message
+// FIXED: Send a new message with proper notification handling
 export const sendMessage = async (req, res, next) => {
   try {
     const { conversationId } = req.params;
     const { text } = req.body;
     const senderId = req.user.userId;
+
+    console.log(`📤 Sending message: User ${senderId} (${req.user.name}) in conversation ${conversationId}`);
+
+    // Validate input
+    if (!text || typeof text !== 'string' || text.trim().length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Message text is required and cannot be empty' 
+      });
+    }
 
     const convoRef = adminDb.collection('conversations').doc(conversationId);
     const convoDoc = await convoRef.get();
@@ -159,8 +171,10 @@ export const sendMessage = async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'Not authorized to send messages here.' });
     }
 
+    const conversationData = convoDoc.data();
+
     const newMessage = {
-      text,
+      text: text.trim(),
       senderId,
       senderName: req.user.name,
       createdAt: new Date()
@@ -170,13 +184,56 @@ export const sendMessage = async (req, res, next) => {
     const messagesCollectionRef = convoRef.collection('messages');
     const messageRef = await messagesCollectionRef.add(newMessage);
 
+    // Update conversation metadata
     await convoRef.update({ 
-        lastMessage: text,
+        lastMessage: text.trim().substring(0, 100),
         updatedAt: new Date(),
         lastMessageBy: req.user.name
     });
 
-    res.status(201).json({ success: true, message: 'Message sent.', data: { id: messageRef.id, ...newMessage } });
+    console.log(`✅ Message saved: ${messageRef.id}`);
+
+    const messageResponse = { id: messageRef.id, ...newMessage };
+
+    // FIXED: Create notification synchronously to ensure it happens
+    try {
+      console.log(`🔔 Creating message notifications for conversation ${conversationId}...`);
+      
+      // Get participant details for notification
+      const participants = await getParticipantDetails(conversationData.participantIds);
+      
+      // Get job title for context
+      let jobTitle = 'Unknown Project';
+      if (conversationData.jobId) {
+        const jobDoc = await adminDb.collection('jobs').doc(conversationData.jobId).get();
+        if (jobDoc.exists) {
+          jobTitle = jobDoc.data().title;
+        }
+      }
+
+      const enrichedConversationData = {
+        id: conversationId,
+        participants,
+        jobTitle,
+        ...conversationData
+      };
+
+      // Create notification for all participants except sender
+      await NotificationService.notifyNewMessage(messageResponse, enrichedConversationData);
+      
+      console.log(`✅ Message notifications created successfully`);
+      
+    } catch (notificationError) {
+      console.error(`❌ Failed to create message notifications:`, notificationError);
+      // Don't fail the message send if notification fails
+    }
+
+    res.status(201).json({ 
+      success: true, 
+      message: 'Message sent successfully', 
+      data: messageResponse 
+    });
+
   } catch (error) {
     console.error('Error in sendMessage:', error);
     next(error);

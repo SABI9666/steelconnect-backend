@@ -6,7 +6,7 @@ import {
   getMessages
 } from '../controllers/messageController.js';
 import { authenticateToken } from '../middleware/auth.js';
-import { NotificationService } from '../notificationService.js';
+import { NotificationService } from './notifications.js';
 
 const router = express.Router();
 

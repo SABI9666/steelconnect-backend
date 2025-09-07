@@ -1,209 +1,154 @@
 import express from 'express';
 import { adminDb } from '../config/firebase.js';
+import {
+  getConversations,
+  findOrCreateConversation,
+  getMessages,
+  sendMessage
+} from '../controllers/messageController.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { NotificationService } from './notifications.js';
 
 const router = express.Router();
 
-// All message routes are protected
+// All message routes are protected and require a user to be logged in
 router.use(authenticateToken);
 
-// Get all conversations for user - simplified query
-router.get('/', async (req, res) => {
-  try {
-    const userId = req.user.userId;
-    
-    // Simple query - get all conversations and filter in code
-    const conversationsSnapshot = await adminDb.collection('conversations')
-      .orderBy('updatedAt', 'desc')
-      .get();
+router.get('/', getConversations);
+router.post('/find', findOrCreateConversation);
+router.get('/:conversationId/messages', getMessages);
 
-    const conversations = [];
-    
-    conversationsSnapshot.docs.forEach(doc => {
-      const data = doc.data();
-      // Check if user is participant
-      if (data.participants && Array.isArray(data.participants)) {
-        const isParticipant = data.participants.some(p => 
-          p && p.id === userId
-        );
-        if (isParticipant) {
-          conversations.push({
-            id: doc.id,
-            ...data
-          });
-        }
-      }
-    });
-
-    res.json({ success: true, data: conversations });
-  } catch (error) {
-    console.error('Error fetching conversations:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch conversations' });
-  }
-});
-
-// Find or create conversation
-router.post('/find', async (req, res) => {
-  try {
-    const { jobId, recipientId } = req.body;
-    const userId = req.user.userId;
-
-    // First try to find existing conversation
-    const existingConversation = await adminDb.collection('conversations')
-      .where('jobId', '==', jobId)
-      .get();
-
-    if (!existingConversation.empty) {
-      const conversation = existingConversation.docs[0];
-      return res.json({ 
-        success: true, 
-        data: conversation.id
-      });
-    }
-
-    // Get job and user data
-    const [jobDoc, userDoc, recipientDoc] = await Promise.all([
-      adminDb.collection('jobs').doc(jobId).get(),
-      adminDb.collection('users').doc(userId).get(),
-      adminDb.collection('users').doc(recipientId).get()
-    ]);
-
-    if (!jobDoc.exists || !userDoc.exists || !recipientDoc.exists) {
-      return res.status(404).json({ success: false, error: 'Required data not found' });
-    }
-
-    const jobData = jobDoc.data();
-    const userData = userDoc.data();
-    const recipientData = recipientDoc.data();
-
-    // Create new conversation
-    const conversationData = {
-      jobId,
-      jobTitle: jobData.title,
-      participants: [
-        {
-          id: userId,
-          name: userData.name,
-          type: userData.type
-        },
-        {
-          id: recipientId,
-          name: recipientData.name,
-          type: recipientData.type
-        }
-      ],
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      lastMessage: '',
-      lastMessageBy: '',
-      lastMessageAt: null
-    };
-
-    const conversationRef = await adminDb.collection('conversations').add(conversationData);
-
-    res.json({ 
-      success: true, 
-      data: conversationRef.id 
-    });
-
-  } catch (error) {
-    console.error('Error creating conversation:', error);
-    res.status(500).json({ success: false, error: 'Failed to create conversation' });
-  }
-});
-
-// Get messages for a conversation
-router.get('/:conversationId/messages', async (req, res) => {
-  try {
-    const { conversationId } = req.params;
-    const userId = req.user.userId;
-
-    // Verify user is participant
-    const conversationDoc = await adminDb.collection('conversations').doc(conversationId).get();
-    if (!conversationDoc.exists) {
-      return res.status(404).json({ success: false, error: 'Conversation not found' });
-    }
-
-    const conversationData = conversationDoc.data();
-    const isParticipant = conversationData.participants?.some(p => p.id === userId);
-    
-    if (!isParticipant) {
-      return res.status(403).json({ success: false, error: 'Not authorized' });
-    }
-
-    // Get messages
-    const messagesSnapshot = await adminDb.collection('messages')
-      .where('conversationId', '==', conversationId)
-      .orderBy('createdAt', 'asc')
-      .get();
-
-    const messages = messagesSnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-      createdAt: doc.data().createdAt.toISOString ? doc.data().createdAt.toISOString() : doc.data().createdAt
-    }));
-
-    res.json({ success: true, data: messages });
-
-  } catch (error) {
-    console.error('Error fetching messages:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch messages' });
-  }
-});
-
-// Send message - simplified version
-router.post('/:conversationId/messages', async (req, res) => {
+// Enhanced message sending with robust error handling and data validation
+router.post('/:conversationId/messages', async (req, res, next) => {
   try {
     const { conversationId } = req.params;
     const { text } = req.body;
     const userId = req.user.userId;
 
-    console.log(`Attempting to send message: ${text} in conversation: ${conversationId} by user: ${userId}`);
-
     // Validate input
-    if (!text || text.trim().length === 0) {
+    if (!text || typeof text !== 'string' || text.trim().length === 0) {
       return res.status(400).json({ 
         success: false, 
-        error: 'Message text is required' 
+        error: 'Message text is required and cannot be empty' 
       });
     }
 
-    // Get conversation and verify participation
+    if (!conversationId || typeof conversationId !== 'string') {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Valid conversation ID is required' 
+      });
+    }
+
+    console.log(`Sending message in conversation ${conversationId} by user ${userId}`);
+
+    // Get conversation with enhanced error handling
     const conversationDoc = await adminDb.collection('conversations').doc(conversationId).get();
     if (!conversationDoc.exists) {
+      console.error(`Conversation ${conversationId} not found`);
       return res.status(404).json({ 
         success: false, 
-        error: 'Conversation not found' 
+        error: 'Conversation not found. Please refresh and try again.' 
+      });
+    }
+    
+    const conversationData = { id: conversationId, ...conversationDoc.data() };
+    
+    // Enhanced participants validation with automatic repair
+    let participants = conversationData.participants;
+    
+    if (!participants || !Array.isArray(participants)) {
+      console.error('Invalid participants data, attempting to reconstruct from jobId and users');
+      
+      // Try to reconstruct participants from job and user data
+      if (conversationData.jobId) {
+        try {
+          const jobDoc = await adminDb.collection('jobs').doc(conversationData.jobId).get();
+          const userDoc = await adminDb.collection('users').doc(userId).get();
+          
+          if (jobDoc.exists && userDoc.exists) {
+            const jobData = jobDoc.data();
+            const userData = userDoc.data();
+            
+            // Reconstruct basic participants array
+            participants = [
+              {
+                id: jobData.contractorId || jobData.userId,
+                name: jobData.posterName || 'Client',
+                type: 'contractor'
+              },
+              {
+                id: userData.id || userId,
+                name: userData.name,
+                type: userData.type || 'designer'
+              }
+            ];
+            
+            // Update the conversation with repaired data
+            await adminDb.collection('conversations').doc(conversationId).update({
+              participants: participants,
+              repairedAt: new Date()
+            });
+            
+            console.log('Successfully repaired conversation participants');
+          } else {
+            throw new Error('Cannot reconstruct conversation data');
+          }
+        } catch (repairError) {
+          console.error('Failed to repair conversation:', repairError);
+          return res.status(500).json({ 
+            success: false, 
+            error: 'Conversation data is corrupted and cannot be repaired. Please start a new conversation.' 
+          });
+        }
+      } else {
+        return res.status(500).json({ 
+          success: false, 
+          error: 'Conversation data is corrupted and cannot be repaired. Please start a new conversation.' 
+        });
+      }
+    }
+
+    // Validate participants array structure
+    const validParticipants = participants.filter(p => p && typeof p === 'object' && p.id);
+    if (validParticipants.length === 0) {
+      console.error('No valid participants found:', participants);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Conversation has no valid participants. Please start a new conversation.' 
       });
     }
 
-    const conversationData = conversationDoc.data();
-    
-    // Check if user is participant (simple check)
-    let isParticipant = false;
-    if (conversationData.participants && Array.isArray(conversationData.participants)) {
-      isParticipant = conversationData.participants.some(p => p && p.id === userId);
-    }
-
+    // Check if user is a participant
+    const isParticipant = validParticipants.some(p => p.id === userId);
     if (!isParticipant) {
+      console.error(`User ${userId} is not a participant in conversation ${conversationId}`);
       return res.status(403).json({ 
         success: false, 
-        error: 'Not authorized to send messages in this conversation' 
+        error: 'You are not authorized to send messages in this conversation' 
       });
     }
 
-    // Get user data
+    // Get sender info with validation
     const userDoc = await adminDb.collection('users').doc(userId).get();
     if (!userDoc.exists) {
+      console.error(`User ${userId} not found`);
       return res.status(404).json({ 
         success: false, 
-        error: 'User not found' 
+        error: 'User account not found. Please log in again.' 
       });
     }
 
     const userData = userDoc.data();
+    if (!userData.name) {
+      console.error(`User ${userId} has no name`);
+      return res.status(400).json({ 
+        success: false, 
+        error: 'User profile is incomplete. Please update your profile.' 
+      });
+    }
 
-    // Create message
+    // Create message with trimmed text
     const messageData = {
       conversationId,
       senderId: userId,
@@ -213,31 +158,38 @@ router.post('/:conversationId/messages', async (req, res) => {
       updatedAt: new Date()
     };
 
-    console.log('Saving message to database:', messageData);
-
-    // Save message
+    // Add message to database
     const messageRef = await adminDb.collection('messages').add(messageData);
-    
-    console.log('Message saved with ID:', messageRef.id);
+    const newMessage = { id: messageRef.id, ...messageData };
 
-    // Update conversation
+    // Update conversation with last message info
     await adminDb.collection('conversations').doc(conversationId).update({
-      lastMessage: text.trim().substring(0, 100),
+      lastMessage: text.trim().substring(0, 100), // Truncate for storage
       lastMessageBy: userData.name,
       lastMessageAt: new Date(),
-      updatedAt: new Date()
+      updatedAt: new Date(),
+      // Ensure participants are updated if they were repaired
+      ...(conversationData.participants !== participants && { participants })
     });
 
-    console.log('Conversation updated successfully');
+    console.log(`Message sent successfully: ${messageRef.id}`);
 
-    // Return the created message
-    const newMessage = {
-      id: messageRef.id,
-      ...messageData,
-      createdAt: messageData.createdAt.toISOString()
-    };
-
-    console.log('Returning message:', newMessage);
+    // Send notification to other participants (non-blocking)
+    setImmediate(async () => {
+      try {
+        // Update conversation data with repaired participants
+        const updatedConversationData = { 
+          ...conversationData, 
+          participants: validParticipants 
+        };
+        
+        await NotificationService.notifyNewMessage(newMessage, updatedConversationData);
+        console.log('Message notification sent successfully');
+      } catch (notificationError) {
+        console.error('Failed to send message notification:', notificationError);
+        // Log but don't fail the message sending
+      }
+    });
 
     res.status(201).json({
       success: true,
@@ -247,13 +199,26 @@ router.post('/:conversationId/messages', async (req, res) => {
 
   } catch (error) {
     console.error('Error sending message:', error);
-    console.error('Error details:', error.message);
-    console.error('Error stack:', error.stack);
     
-    res.status(500).json({ 
+    // Provide more specific error messages based on error type
+    let errorMessage = 'Failed to send message';
+    let statusCode = 500;
+    
+    if (error.code === 'permission-denied') {
+      errorMessage = 'You do not have permission to perform this action';
+      statusCode = 403;
+    } else if (error.code === 'not-found') {
+      errorMessage = 'The conversation or user was not found';
+      statusCode = 404;
+    } else if (error.code === 'invalid-argument') {
+      errorMessage = 'Invalid message data provided';
+      statusCode = 400;
+    }
+    
+    res.status(statusCode).json({ 
       success: false, 
-      error: 'Failed to send message',
-      details: error.message
+      error: errorMessage,
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });

@@ -56,6 +56,7 @@ router.post('/:conversationId/messages', async (req, res, next) => {
     
     // Enhanced participants validation with automatic repair
     let participants = conversationData.participants;
+    let wasRepaired = false;
     
     if (!participants || !Array.isArray(participants)) {
       console.error('Invalid participants data, attempting to reconstruct from jobId and users');
@@ -70,29 +71,34 @@ router.post('/:conversationId/messages', async (req, res, next) => {
             const jobData = jobDoc.data();
             const userData = userDoc.data();
             
-            // Reconstruct basic participants array
-            participants = [
-              {
-                id: jobData.contractorId || jobData.userId,
-                name: jobData.posterName || 'Client',
-                type: 'contractor'
-              },
-              {
-                id: userData.id || userId,
-                name: userData.name,
-                type: userData.type || 'designer'
-              }
-            ];
+            // Safely reconstruct participants array with null checks
+            const contractorId = jobData.contractorId || jobData.userId;
+            const contractorName = jobData.posterName || 'Client';
+            const designerId = userData.id || userId;
+            const designerName = userData.name;
             
-            // Update the conversation with repaired data
-            await adminDb.collection('conversations').doc(conversationId).update({
-              participants: participants,
-              repairedAt: new Date()
-            });
-            
-            console.log('Successfully repaired conversation participants');
+            // Only proceed if we have valid data
+            if (contractorId && contractorName && designerId && designerName) {
+              participants = [
+                {
+                  id: contractorId,
+                  name: contractorName,
+                  type: 'contractor'
+                },
+                {
+                  id: designerId,
+                  name: designerName,
+                  type: userData.type || 'designer'
+                }
+              ];
+              
+              wasRepaired = true;
+              console.log('Successfully repaired conversation participants');
+            } else {
+              throw new Error('Insufficient data to reconstruct conversation');
+            }
           } else {
-            throw new Error('Cannot reconstruct conversation data');
+            throw new Error('Cannot find job or user data for reconstruction');
           }
         } catch (repairError) {
           console.error('Failed to repair conversation:', repairError);
@@ -110,7 +116,15 @@ router.post('/:conversationId/messages', async (req, res, next) => {
     }
 
     // Validate participants array structure
-    const validParticipants = participants.filter(p => p && typeof p === 'object' && p.id);
+    const validParticipants = participants.filter(p => {
+      return p && 
+             typeof p === 'object' && 
+             p.id && 
+             typeof p.id === 'string' && 
+             p.name && 
+             typeof p.name === 'string';
+    });
+    
     if (validParticipants.length === 0) {
       console.error('No valid participants found:', participants);
       return res.status(500).json({ 
@@ -162,22 +176,36 @@ router.post('/:conversationId/messages', async (req, res, next) => {
     const messageRef = await adminDb.collection('messages').add(messageData);
     const newMessage = { id: messageRef.id, ...messageData };
 
-    // Update conversation with last message info
-    await adminDb.collection('conversations').doc(conversationId).update({
+    // Prepare conversation update data
+    const conversationUpdateData = {
       lastMessage: text.trim().substring(0, 100), // Truncate for storage
       lastMessageBy: userData.name,
       lastMessageAt: new Date(),
-      updatedAt: new Date(),
-      // Ensure participants are updated if they were repaired
-      ...(conversationData.participants !== participants && { participants })
-    });
+      updatedAt: new Date()
+    };
+
+    // Only update participants if they were repaired and are valid
+    if (wasRepaired && validParticipants.length > 0) {
+      // Double-check that all participant objects are valid before updating
+      const safeParticipants = validParticipants.map(p => ({
+        id: p.id,
+        name: p.name,
+        type: p.type || 'user'
+      }));
+      
+      conversationUpdateData.participants = safeParticipants;
+      conversationUpdateData.repairedAt = new Date();
+    }
+
+    // Update conversation with safe data
+    await adminDb.collection('conversations').doc(conversationId).update(conversationUpdateData);
 
     console.log(`Message sent successfully: ${messageRef.id}`);
 
     // Send notification to other participants (non-blocking)
     setImmediate(async () => {
       try {
-        // Update conversation data with repaired participants
+        // Use the valid participants for notifications
         const updatedConversationData = { 
           ...conversationData, 
           participants: validParticipants 
@@ -213,6 +241,9 @@ router.post('/:conversationId/messages', async (req, res, next) => {
     } else if (error.code === 'invalid-argument') {
       errorMessage = 'Invalid message data provided';
       statusCode = 400;
+    } else if (error.message && error.message.includes('ignoreUndefinedProperties')) {
+      errorMessage = 'Conversation data structure is invalid. Please start a new conversation.';
+      statusCode = 500;
     }
     
     res.status(statusCode).json({ 

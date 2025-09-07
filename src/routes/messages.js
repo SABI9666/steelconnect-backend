@@ -1,4 +1,4 @@
-// src/routes/messages.js - MINIMAL FIX (Keep your auth files unchanged)
+// src/routes/messages.js - FINAL FIXED VERSION
 import express from 'express';
 import { adminDb } from '../config/firebase.js';
 import {
@@ -6,7 +6,8 @@ import {
   findOrCreateConversation,
   getMessages,
 } from '../controllers/messageController.js';
-import { authenticateToken } from '../middleware/auth.js'; // Use YOUR existing auth.js
+import { authenticateToken } from '../middleware/auth.js'; // Use same as your other routes
+import { NotificationService } from './notifications.js'; // Import the notification service
 
 const router = express.Router();
 
@@ -17,12 +18,14 @@ router.get('/', getConversations);
 router.post('/find', findOrCreateConversation);
 router.get('/:conversationId/messages', getMessages);
 
-// FIXED message sending - consistent with messageController storage
+// FIXED message sending with proper notification creation
 router.post('/:conversationId/messages', async (req, res, next) => {
   try {
     const { conversationId } = req.params;
     const { text } = req.body;
     const userId = req.user.userId || req.user.id; // Handle both auth formats
+
+    console.log(`📤 Sending message: User ${userId} (${req.user.name}) in conversation ${conversationId}`);
 
     // Validate input
     if (!text || typeof text !== 'string' || text.trim().length === 0) {
@@ -35,16 +38,18 @@ router.post('/:conversationId/messages', async (req, res, next) => {
     // Get conversation and verify access
     const conversationDoc = await adminDb.collection('conversations').doc(conversationId).get();
     if (!conversationDoc.exists) {
+      console.error(`❌ Conversation ${conversationId} not found`);
       return res.status(404).json({ 
         success: false, 
         error: 'Conversation not found' 
       });
     }
     
-    const conversationData = conversationDoc.data();
+    const conversationData = { id: conversationId, ...conversationDoc.data() };
     
     // Check if user is authorized
     if (!conversationData.participantIds || !conversationData.participantIds.includes(userId)) {
+      console.error(`❌ User ${userId} not authorized for conversation ${conversationId}`);
       return res.status(403).json({ 
         success: false, 
         error: 'You are not authorized to send messages in this conversation' 
@@ -75,36 +80,27 @@ router.post('/:conversationId/messages', async (req, res, next) => {
       updatedAt: new Date()
     });
 
-    // Create notification (non-blocking)
+    console.log(`✅ Message saved: ${messageRef.id}`);
+
+    // Create notification using NotificationService (non-blocking)
     setImmediate(async () => {
       try {
-        const recipientIds = conversationData.participantIds.filter(id => id !== userId);
+        console.log(`📢 Creating notifications for message ${messageRef.id}...`);
         
-        if (recipientIds.length > 0) {
-          const messagePreview = text.length > 50 ? text.substring(0, 50) + '...' : text;
-          
-          // Create notifications for each recipient
-          for (const recipientId of recipientIds) {
-            const notification = {
-              userId: recipientId,
-              type: 'message',
-              message: `New message from ${req.user.name}: "${messagePreview}"`,
-              metadata: {
-                messageId: messageRef.id,
-                conversationId: conversationId,
-                senderId: userId,
-                action: 'new_message'
-              },
-              isRead: false,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
-            };
+        // Get participant details for notification service
+        const participants = await getParticipantDetails(conversationData.participantIds);
+        const enrichedConversationData = {
+          ...conversationData,
+          participants
+        };
 
-            await adminDb.collection('notifications').add(notification);
-          }
-        }
+        // Use the NotificationService to create notifications
+        await NotificationService.notifyNewMessage(newMessage, enrichedConversationData);
+        
+        console.log(`✅ Notifications created for message ${messageRef.id}`);
+        
       } catch (notificationError) {
-        console.error('Failed to send notification:', notificationError);
+        console.error(`❌ Failed to create notifications for message ${messageRef.id}:`, notificationError);
       }
     });
 
@@ -115,7 +111,7 @@ router.post('/:conversationId/messages', async (req, res, next) => {
     });
 
   } catch (error) {
-    console.error('Error sending message:', error);
+    console.error('❌ Error sending message:', error);
     res.status(500).json({ 
       success: false, 
       error: 'Failed to send message',
@@ -123,5 +119,17 @@ router.post('/:conversationId/messages', async (req, res, next) => {
     });
   }
 });
+
+// Helper function to get participant details (copy from messageController.js)
+const getParticipantDetails = async (participantIds) => {
+    const participantPromises = participantIds.map(id => adminDb.collection('users').doc(id).get());
+    const participantDocs = await Promise.all(participantPromises);
+
+    return participantDocs.map(doc => {
+        if (!doc.exists) return { id: doc.id, name: 'Unknown User' };
+        const { name, type } = doc.data();
+        return { id: doc.id, name, type };
+    });
+};
 
 export default router;

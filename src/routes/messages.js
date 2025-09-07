@@ -7,23 +7,33 @@ const router = express.Router();
 // All message routes are protected
 router.use(authenticateToken);
 
-// Get all conversations for user
+// Get all conversations for user - simplified query
 router.get('/', async (req, res) => {
   try {
     const userId = req.user.userId;
     
+    // Simple query - get all conversations and filter in code
     const conversationsSnapshot = await adminDb.collection('conversations')
-      .where('participants', 'array-contains-any', [
-        { id: userId },
-        { id: userId, name: req.user.name, type: req.user.type }
-      ])
       .orderBy('updatedAt', 'desc')
       .get();
 
-    const conversations = conversationsSnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
+    const conversations = [];
+    
+    conversationsSnapshot.docs.forEach(doc => {
+      const data = doc.data();
+      // Check if user is participant
+      if (data.participants && Array.isArray(data.participants)) {
+        const isParticipant = data.participants.some(p => 
+          p && p.id === userId
+        );
+        if (isParticipant) {
+          conversations.push({
+            id: doc.id,
+            ...data
+          });
+        }
+      }
+    });
 
     res.json({ success: true, data: conversations });
   } catch (error) {

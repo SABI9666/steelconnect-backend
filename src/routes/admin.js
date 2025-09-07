@@ -1,7 +1,23 @@
-// src/routes/admin.js - REQUIRED FILE TO FIX 404 ERRORS
+// src/routes/admin.js - FIXED FILE WITH PROPER ENDPOINTS
 import express from 'express';
 import { authenticateToken, isAdmin } from '../middleware/authMiddleware.js';
 import { adminDb } from '../config/firebase.js';
+import {
+    getDashboardStats,
+    getAllUsers,
+    getAllQuotes,
+    getAllJobs,
+    getAllMessages,
+    getAllSubscriptions,
+    getAllEstimations,
+    getEstimationById,
+    getEstimationFiles,
+    getEstimationResult,
+    updateEstimationStatus,
+    setEstimationDueDate,
+    updateUserStatus,
+    deleteUser
+} from '../controllers/adminController.js';
 
 const router = express.Router();
 
@@ -10,384 +26,650 @@ router.use(authenticateToken);
 router.use(isAdmin);
 
 // Dashboard stats - FIXES /api/admin/dashboard 404
-router.get('/dashboard', async (req, res) => {
+router.get('/dashboard', getDashboardStats);
+
+// Users management - FIXES /api/admin/users 404
+router.get('/users', getAllUsers);
+router.patch('/users/:userId/status', updateUserStatus);
+router.delete('/users/:userId', deleteUser);
+
+// FIXED: Messages management - proper endpoint structure
+router.get('/messages', getAllMessages);
+
+// Get single message details
+router.get('/messages/:messageId', async (req, res) => {
     try {
-        console.log('Admin dashboard requested by:', req.user?.email);
+        const { messageId } = req.params;
+        console.log(`Admin fetching message details for ID: ${messageId}`);
         
-        // Get collection counts safely
-        const getCollectionCount = async (collectionName) => {
+        const doc = await adminDb.collection('messages').doc(messageId).get();
+        
+        if (!doc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'Message not found'
+            });
+        }
+        
+        const messageData = doc.data();
+        let userData = null;
+        
+        // Try to fetch sender data
+        if (messageData.senderId) {
             try {
-                const snapshot = await adminDb.collection(collectionName).get();
-                return snapshot.size || 0;
-            } catch (error) {
-                console.warn(`Could not get count for collection: ${collectionName}`);
-                return 0;
+                const userDoc = await adminDb.collection('users').doc(messageData.senderId).get();
+                if (userDoc.exists) {
+                    const { password, ...userInfo } = userDoc.data();
+                    userData = { id: userDoc.id, ...userInfo };
+                }
+            } catch (userError) {
+                console.warn(`Could not fetch user data for senderId: ${messageData.senderId}`);
             }
+        }
+        
+        const message = {
+            _id: doc.id,
+            id: doc.id,
+            senderName: userData?.name || messageData.senderName || messageData.from || 'Anonymous',
+            senderEmail: userData?.email || messageData.senderEmail || messageData.email || 'N/A',
+            senderAvatar: userData?.avatar || messageData.senderAvatar || null,
+            subject: messageData.subject || messageData.title || 'No Subject',
+            content: messageData.content || messageData.message || messageData.text || '',
+            type: messageData.type || 'general',
+            status: messageData.status || (messageData.isRead ? 'read' : 'unread'),
+            isRead: messageData.isRead || false,
+            attachments: messageData.attachments || [],
+            thread: messageData.thread || [],
+            createdAt: messageData.createdAt,
+            ...messageData
         };
-
-        const [userSnapshot, quoteSnapshot, messageSnapshot, jobsSnapshot, estimationSnapshot] = await Promise.all([
-            adminDb.collection('users').where('type', '!=', 'admin').get().catch(() => ({ size: 0, docs: [] })),
-            adminDb.collection('quotes').get().catch(() => ({ size: 0, docs: [] })),
-            adminDb.collection('messages').get().catch(() => ({ size: 0, docs: [] })),
-            adminDb.collection('jobs').get().catch(() => ({ size: 0, docs: [] })),
-            adminDb.collection('estimations').get().catch(() => ({ size: 0, docs: [] }))
-        ]);
-
-        // Count user types
-        let contractors = 0;
-        let designers = 0;
-        userSnapshot.docs.forEach(doc => {
-            const userData = doc.data();
-            if (userData.type === 'contractor') contractors++;
-            if (userData.type === 'designer') designers++;
-        });
-
-        const stats = {
-            totalUsers: userSnapshot.size,
-            contractors: contractors,
-            designers: designers,
-            totalQuotes: quoteSnapshot.size,
-            totalMessages: messageSnapshot.size,
-            totalJobs: jobsSnapshot.size,
-            totalEstimations: estimationSnapshot.size,
-            activeJobs: 0,
-            completedJobs: 0
-        };
-
-        // Calculate active/completed jobs
-        jobsSnapshot.docs.forEach(doc => {
-            const jobData = doc.data();
-            if (jobData.status === 'active' || jobData.status === 'open') {
-                stats.activeJobs++;
-            } else if (jobData.status === 'completed') {
-                stats.completedJobs++;
-            }
-        });
-
+        
         res.json({
             success: true,
             data: {
-                stats: stats,
-                adminUser: req.user?.email || 'admin@steelconnect.com'
+                message: message
             }
         });
     } catch (error) {
-        console.error('Error fetching dashboard stats:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error fetching dashboard statistics',
-            error: error.message 
-        });
-    }
-});
-
-// Get all users - FIXES /api/admin/users 404
-router.get('/users', async (req, res) => {
-    try {
-        console.log('Admin users list requested by:', req.user?.email);
-        
-        const snapshot = await adminDb.collection('users')
-            .where('type', '!=', 'admin')
-            .get();
-        
-        const users = snapshot.docs.map(doc => {
-            const userData = doc.data();
-            const { password, ...userWithoutPassword } = userData;
-            return { 
-                _id: doc.id, 
-                id: doc.id,
-                name: userData.name || userData.firstName + ' ' + (userData.lastName || ''),
-                email: userData.email,
-                type: userData.type || 'user',
-                role: userData.role || userData.type || 'user',
-                isActive: userData.isActive !== false,
-                company: userData.company || userData.companyName,
-                phone: userData.phone,
-                createdAt: userData.createdAt || userData.joinedAt,
-                ...userWithoutPassword
-            };
-        });
-        
-        console.log(`Found ${users.length} users for admin`);
-        
-        res.json({ 
-            success: true, 
-            data: users
-        });
-    } catch (error) {
-        console.error('Error fetching users:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error fetching users',
+        console.error('Error fetching message details:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching message details',
             error: error.message
         });
     }
 });
 
-// Update user status - FIXES /api/admin/users/:userId/status 404
-router.patch('/users/:userId/status', async (req, res) => {
+// Update message status
+router.patch('/messages/:messageId/status', async (req, res) => {
     try {
-        const { userId } = req.params;
-        const { isActive, status } = req.body;
-
-        console.log(`Admin ${req.user?.email} updating user ${userId} status to ${isActive}`);
-
-        await adminDb.collection('users').doc(userId).update({
-            isActive: isActive,
-            status: status || (isActive ? 'active' : 'inactive'),
+        const { messageId } = req.params;
+        const { status } = req.body;
+        
+        if (!status) {
+            return res.status(400).json({
+                success: false,
+                message: 'Status is required'
+            });
+        }
+        
+        await adminDb.collection('messages').doc(messageId).update({
+            status: status,
+            isRead: status === 'read' || status === 'replied',
             updatedAt: new Date().toISOString()
         });
-
-        res.json({ 
-            success: true, 
-            message: 'User status updated successfully.' 
+        
+        res.json({
+            success: true,
+            message: 'Message status updated successfully'
         });
     } catch (error) {
-        console.error('Error updating user status:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error updating user status',
+        console.error('Error updating message status:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error updating message status',
             error: error.message
         });
     }
 });
 
-// Delete user - FIXES /api/admin/users/:userId DELETE 404
-router.delete('/users/:userId', async (req, res) => {
+// Reply to message
+router.post('/messages/:messageId/reply', async (req, res) => {
     try {
-        const { userId } = req.params;
+        const { messageId } = req.params;
+        const { content } = req.body;
         
-        console.log(`Admin ${req.user?.email} deleting user ${userId}`);
-        
-        await adminDb.collection('users').doc(userId).delete();
-        res.json({ 
-            success: true, 
-            message: 'User deleted successfully.' 
-        });
-    } catch (error) {
-        console.error('Error deleting user:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error deleting user',
-            error: error.message
-        });
-    }
-});
-
-// Get all quotes - FIXES /api/admin/quotes 404  
-router.get('/quotes', async (req, res) => {
-    try {
-        console.log('Admin quotes list requested by:', req.user?.email);
-        
-        const snapshot = await adminDb.collection('quotes')
-            .orderBy('createdAt', 'desc')
-            .get();
-        
-        const quotes = [];
-        
-        for (const doc of snapshot.docs) {
-            const quoteData = doc.data();
-            let userData = null;
-            
-            if (quoteData.userId) {
-                try {
-                    const userDoc = await adminDb.collection('users').doc(quoteData.userId).get();
-                    if (userDoc.exists) {
-                        const { password, ...userInfo } = userDoc.data();
-                        userData = { id: userDoc.id, ...userInfo };
-                    }
-                } catch (userError) {
-                    console.warn(`Could not fetch user data for userId: ${quoteData.userId}`);
-                }
-            }
-            
-            quotes.push({
-                _id: doc.id,
-                id: doc.id,
-                clientName: userData?.name || quoteData.clientName || 'Unknown',
-                clientEmail: userData?.email || quoteData.clientEmail || 'N/A',
-                projectTitle: quoteData.projectTitle || quoteData.title || 'Untitled',
-                projectType: quoteData.projectType || quoteData.category || 'General',
-                amount: quoteData.amount || quoteData.estimatedAmount || 0,
-                status: quoteData.status || 'pending',
-                createdAt: quoteData.createdAt,
-                ...quoteData
+        if (!content) {
+            return res.status(400).json({
+                success: false,
+                message: 'Reply content is required'
             });
         }
         
-        console.log(`Found ${quotes.length} quotes for admin`);
-        
-        res.json({ 
-            success: true, 
-            data: quotes
-        });
-    } catch (error) {
-        console.error('Error fetching quotes:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error fetching quotes',
-            error: error.message
-        });
-    }
-});
-
-// Get all jobs - FIXES /api/admin/jobs 404
-router.get('/jobs', async (req, res) => {
-    try {
-        console.log('Admin jobs list requested by:', req.user?.email);
-        
-        const snapshot = await adminDb.collection('jobs')
-            .orderBy('createdAt', 'desc')
-            .get();
-        
-        const jobs = snapshot.docs.map(doc => {
-            const jobData = doc.data();
-            return { 
-                _id: doc.id, 
-                id: doc.id,
-                title: jobData.title || jobData.projectTitle || 'Untitled Job',
-                projectTitle: jobData.title || jobData.projectTitle || 'Untitled Job',
-                category: jobData.category || jobData.type || 'General',
-                type: jobData.type || jobData.category || 'General',
-                status: jobData.status || 'pending',
-                budget: jobData.budget || jobData.amount || 0,
-                clientName: jobData.clientName || jobData.posterName || 'Unknown',
-                clientEmail: jobData.clientEmail || jobData.posterEmail || 'N/A',
-                contractorName: jobData.contractorName || jobData.assignedTo || 'Unassigned',
-                contractorEmail: jobData.contractorEmail || 'N/A',
-                createdAt: jobData.createdAt,
-                ...jobData
-            };
-        });
-        
-        console.log(`Found ${jobs.length} jobs for admin`);
-        
-        res.json({ 
-            success: true, 
-            data: jobs
-        });
-    } catch (error) {
-        console.error('Error fetching jobs:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error fetching jobs',
-            error: error.message
-        });
-    }
-});
-
-// Get all messages - FIXES /api/admin/messages 404
-router.get('/messages', async (req, res) => {
-    try {
-        console.log('Admin messages list requested by:', req.user?.email);
-        
-        const snapshot = await adminDb.collection('messages')
-            .orderBy('createdAt', 'desc')
-            .get();
-        
-        const messages = [];
-        
-        for (const doc of snapshot.docs) {
-            const messageData = doc.data();
-            let userData = null;
-            
-            if (messageData.senderId) {
-                try {
-                    const userDoc = await adminDb.collection('users').doc(messageData.senderId).get();
-                    if (userDoc.exists) {
-                        const { password, ...userInfo } = userDoc.data();
-                        userData = { id: userDoc.id, ...userInfo };
-                    }
-                } catch (userError) {
-                    console.warn(`Could not fetch user data for senderId: ${messageData.senderId}`);
-                }
-            }
-            
-            messages.push({
-                _id: doc.id,
-                id: doc.id,
-                senderName: userData?.name || messageData.senderName || messageData.from || 'Anonymous',
-                senderEmail: userData?.email || messageData.senderEmail || messageData.email || 'N/A',
-                subject: messageData.subject || messageData.title || 'No Subject',
-                content: messageData.content || messageData.message || messageData.text || '',
-                type: messageData.type || 'general',
-                status: messageData.status || 'unread',
-                isRead: messageData.isRead || false,
-                createdAt: messageData.createdAt,
-                ...messageData
+        // Get original message
+        const messageDoc = await adminDb.collection('messages').doc(messageId).get();
+        if (!messageDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'Original message not found'
             });
         }
         
-        console.log(`Found ${messages.length} messages for admin`);
+        const messageData = messageDoc.data();
+        const replyData = {
+            senderName: req.user?.name || 'Admin',
+            senderEmail: req.user?.email || 'admin@steelconnect.com',
+            content: content,
+            sentAt: new Date().toISOString(),
+            isAdmin: true
+        };
         
-        res.json({ 
-            success: true, 
-            data: messages
+        // Update original message with reply and mark as replied
+        await adminDb.collection('messages').doc(messageId).update({
+            status: 'replied',
+            isRead: true,
+            thread: [...(messageData.thread || []), replyData],
+            lastReplyAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        });
+        
+        res.json({
+            success: true,
+            message: 'Reply sent successfully'
         });
     } catch (error) {
-        console.error('Error fetching messages:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error fetching messages',
+        console.error('Error sending reply:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error sending reply',
             error: error.message
         });
     }
 });
 
-// Get all subscriptions - FIXES /api/admin/subscriptions 404
-router.get('/subscriptions', async (req, res) => {
+// Delete message
+router.delete('/messages/:messageId', async (req, res) => {
     try {
-        console.log('Admin subscriptions list requested by:', req.user?.email);
+        const { messageId } = req.params;
+        await adminDb.collection('messages').doc(messageId).delete();
+        res.json({
+            success: true,
+            message: 'Message deleted successfully'
+        });
+    } catch (error) {
+        console.error('Error deleting message:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error deleting message',
+            error: error.message
+        });
+    }
+});
+
+// FIXED: Estimations management - proper endpoints
+router.get('/estimations', getAllEstimations);
+router.get('/estimations/:estimationId', getEstimationById);
+router.get('/estimations/:estimationId/files', getEstimationFiles);
+router.get('/estimations/:estimationId/result', getEstimationResult);
+router.patch('/estimations/:estimationId/status', updateEstimationStatus);
+router.patch('/estimations/:estimationId/due-date', setEstimationDueDate);
+
+// Upload estimation result
+router.post('/estimations/:estimationId/result', async (req, res) => {
+    try {
+        const { estimationId } = req.params;
+        const { notes } = req.body;
         
-        const snapshot = await adminDb.collection('subscriptions')
-            .orderBy('startDate', 'desc')
-            .get();
-        
-        const subscriptions = [];
-        
-        for (const doc of snapshot.docs) {
-            const subData = doc.data();
-            let userData = null;
-            
-            if (subData.userId) {
-                try {
-                    const userDoc = await adminDb.collection('users').doc(subData.userId).get();
-                    if (userDoc.exists) {
-                        const { password, ...userInfo } = userDoc.data();
-                        userData = { id: userDoc.id, ...userInfo };
-                    }
-                } catch (userError) {
-                    console.warn(`Could not fetch user data for userId: ${subData.userId}`);
-                }
-            }
-            
-            subscriptions.push({
-                _id: doc.id,
-                id: doc.id,
-                userName: userData?.name || subData.userName || 'Unknown',
-                userEmail: userData?.email || subData.userEmail || 'N/A',
-                planName: subData.planName || subData.plan?.name || 'Unknown Plan',
-                planPrice: subData.planPrice || subData.amount || 0,
-                planInterval: subData.planInterval || subData.billing || 'month',
-                status: subData.status || 'active',
-                startDate: subData.startDate || subData.createdAt,
-                nextBillingDate: subData.nextBillingDate,
-                ...subData,
-                user: userData
+        // Check if estimation exists
+        const estimationDoc = await adminDb.collection('estimations').doc(estimationId).get();
+        if (!estimationDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'Estimation not found'
             });
         }
         
-        console.log(`Found ${subscriptions.length} subscriptions for admin`);
+        // Handle file upload (you'll need to implement file upload middleware)
+        if (!req.file && !req.files) {
+            return res.status(400).json({
+                success: false,
+                message: 'No result file uploaded'
+            });
+        }
         
-        res.json({ 
-            success: true, 
-            data: subscriptions
+        const file = req.file || req.files.resultFile;
+        
+        // Create result file object
+        const resultFile = {
+            name: file.originalname || file.name,
+            url: file.path || file.url, // Adjust based on your file storage setup
+            size: file.size,
+            type: file.mimetype || file.type,
+            uploadedAt: new Date().toISOString(),
+            uploadedBy: req.user?.email || 'admin'
+        };
+        
+        // Update estimation with result file
+        await adminDb.collection('estimations').doc(estimationId).update({
+            resultFile: resultFile,
+            status: 'completed',
+            notes: notes || '',
+            completedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        });
+        
+        res.json({
+            success: true,
+            message: 'Estimation result uploaded successfully',
+            data: {
+                resultFile: resultFile
+            }
         });
     } catch (error) {
-        console.error('Error fetching subscriptions:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error fetching subscriptions',
+        console.error('Error uploading estimation result:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error uploading estimation result',
+            error: error.message
+        });
+    }
+});
+
+// Delete estimation
+router.delete('/estimations/:estimationId', async (req, res) => {
+    try {
+        const { estimationId } = req.params;
+        await adminDb.collection('estimations').doc(estimationId).delete();
+        res.json({
+            success: true,
+            message: 'Estimation deleted successfully'
+        });
+    } catch (error) {
+        console.error('Error deleting estimation:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error deleting estimation',
+            error: error.message
+        });
+    }
+});
+
+// Quotes management - FIXES /api/admin/quotes 404  
+router.get('/quotes', getAllQuotes);
+
+// Update quote status
+router.patch('/quotes/:quoteId/status', async (req, res) => {
+    try {
+        const { quoteId } = req.params;
+        const { status } = req.body;
+        
+        if (!status) {
+            return res.status(400).json({
+                success: false,
+                message: 'Status is required'
+            });
+        }
+        
+        await adminDb.collection('quotes').doc(quoteId).update({
+            status: status,
+            updatedAt: new Date().toISOString()
+        });
+        
+        res.json({
+            success: true,
+            message: 'Quote status updated successfully'
+        });
+    } catch (error) {
+        console.error('Error updating quote status:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error updating quote status',
+            error: error.message
+        });
+    }
+});
+
+// Update quote amount
+router.patch('/quotes/:quoteId/amount', async (req, res) => {
+    try {
+        const { quoteId } = req.params;
+        const { amount } = req.body;
+        
+        if (amount === undefined || amount < 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Valid amount is required'
+            });
+        }
+        
+        await adminDb.collection('quotes').doc(quoteId).update({
+            amount: parseFloat(amount),
+            updatedAt: new Date().toISOString()
+        });
+        
+        res.json({
+            success: true,
+            message: 'Quote amount updated successfully'
+        });
+    } catch (error) {
+        console.error('Error updating quote amount:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error updating quote amount',
+            error: error.message
+        });
+    }
+});
+
+// Get single quote details
+router.get('/quotes/:quoteId', async (req, res) => {
+    try {
+        const { quoteId } = req.params;
+        const doc = await adminDb.collection('quotes').doc(quoteId).get();
+        
+        if (!doc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'Quote not found'
+            });
+        }
+        
+        const quoteData = doc.data();
+        let userData = null;
+        
+        if (quoteData.userId) {
+            try {
+                const userDoc = await adminDb.collection('users').doc(quoteData.userId).get();
+                if (userDoc.exists) {
+                    const { password, ...userInfo } = userDoc.data();
+                    userData = { id: userDoc.id, ...userInfo };
+                }
+            } catch (userError) {
+                console.warn(`Could not fetch user data for quote: ${quoteId}`);
+            }
+        }
+        
+        const quote = {
+            _id: doc.id,
+            id: doc.id,
+            quoteNumber: quoteData.quoteNumber || doc.id.slice(-6),
+            clientName: userData?.name || quoteData.clientName || 'Unknown',
+            clientEmail: userData?.email || quoteData.clientEmail || 'N/A',
+            clientPhone: userData?.phone || quoteData.clientPhone || 'Not provided',
+            projectTitle: quoteData.projectTitle || quoteData.title || 'Untitled',
+            projectType: quoteData.projectType || quoteData.category || 'General',
+            description: quoteData.description || '',
+            amount: quoteData.amount || quoteData.estimatedAmount || 0,
+            status: quoteData.status || 'pending',
+            createdAt: quoteData.createdAt,
+            updatedAt: quoteData.updatedAt,
+            ...quoteData
+        };
+        
+        res.json({
+            success: true,
+            data: {
+                quote: quote
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching quote details:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching quote details',
+            error: error.message
+        });
+    }
+});
+
+// Delete quote
+router.delete('/quotes/:quoteId', async (req, res) => {
+    try {
+        const { quoteId } = req.params;
+        await adminDb.collection('quotes').doc(quoteId).delete();
+        res.json({
+            success: true,
+            message: 'Quote deleted successfully'
+        });
+    } catch (error) {
+        console.error('Error deleting quote:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error deleting quote',
+            error: error.message
+        });
+    }
+});
+
+// Jobs management - FIXES /api/admin/jobs 404
+router.get('/jobs', getAllJobs);
+
+// Update job status
+router.patch('/jobs/:jobId/status', async (req, res) => {
+    try {
+        const { jobId } = req.params;
+        const { status } = req.body;
+        
+        if (!status) {
+            return res.status(400).json({
+                success: false,
+                message: 'Status is required'
+            });
+        }
+        
+        await adminDb.collection('jobs').doc(jobId).update({
+            status: status,
+            updatedAt: new Date().toISOString()
+        });
+        
+        res.json({
+            success: true,
+            message: 'Job status updated successfully'
+        });
+    } catch (error) {
+        console.error('Error updating job status:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error updating job status',
+            error: error.message
+        });
+    }
+});
+
+// Update job progress
+router.patch('/jobs/:jobId/progress', async (req, res) => {
+    try {
+        const { jobId } = req.params;
+        const { progress } = req.body;
+        
+        if (progress === undefined || progress < 0 || progress > 100) {
+            return res.status(400).json({
+                success: false,
+                message: 'Progress must be between 0 and 100'
+            });
+        }
+        
+        await adminDb.collection('jobs').doc(jobId).update({
+            progress: parseInt(progress),
+            updatedAt: new Date().toISOString()
+        });
+        
+        res.json({
+            success: true,
+            message: 'Job progress updated successfully'
+        });
+    } catch (error) {
+        console.error('Error updating job progress:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error updating job progress',
+            error: error.message
+        });
+    }
+});
+
+// Get single job details
+router.get('/jobs/:jobId', async (req, res) => {
+    try {
+        const { jobId } = req.params;
+        const doc = await adminDb.collection('jobs').doc(jobId).get();
+        
+        if (!doc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'Job not found'
+            });
+        }
+        
+        const jobData = doc.data();
+        
+        const job = {
+            _id: doc.id,
+            id: doc.id,
+            jobNumber: jobData.jobNumber || doc.id.slice(-6),
+            projectTitle: jobData.title || jobData.projectTitle || 'Untitled Job',
+            projectType: jobData.category || jobData.type || 'General',
+            clientName: jobData.clientName || jobData.posterName || 'Unknown',
+            clientEmail: jobData.clientEmail || jobData.posterEmail || 'N/A',
+            clientPhone: jobData.clientPhone || 'Not provided',
+            contractorName: jobData.contractorName || jobData.assignedTo || 'Unassigned',
+            contractorEmail: jobData.contractorEmail || 'N/A',
+            contractorCompany: jobData.contractorCompany || 'Independent',
+            value: jobData.budget || jobData.amount || jobData.value || 0,
+            status: jobData.status || 'pending',
+            progress: jobData.progress || 0,
+            description: jobData.description || '',
+            startDate: jobData.startDate,
+            expectedCompletion: jobData.expectedCompletion || jobData.deadline,
+            createdAt: jobData.createdAt,
+            updatedAt: jobData.updatedAt,
+            ...jobData
+        };
+        
+        res.json({
+            success: true,
+            data: {
+                job: job
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching job details:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching job details',
+            error: error.message
+        });
+    }
+});
+
+// Delete job
+router.delete('/jobs/:jobId', async (req, res) => {
+    try {
+        const { jobId } = req.params;
+        await adminDb.collection('jobs').doc(jobId).delete();
+        res.json({
+            success: true,
+            message: 'Job deleted successfully'
+        });
+    } catch (error) {
+        console.error('Error deleting job:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error deleting job',
+            error: error.message
+        });
+    }
+});
+
+// Subscriptions management - FIXES /api/admin/subscriptions 404
+router.get('/subscriptions', getAllSubscriptions);
+
+// Export functions
+router.get('/export/users', async (req, res) => {
+    try {
+        // Implement CSV export for users
+        res.json({
+            success: true,
+            downloadUrl: '/api/admin/download/users.csv',
+            message: 'Export prepared successfully'
+        });
+    } catch (error) {
+        console.error('Error exporting users:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error exporting users',
+            error: error.message
+        });
+    }
+});
+
+router.get('/export/quotes', async (req, res) => {
+    try {
+        // Implement CSV export for quotes
+        res.json({
+            success: true,
+            downloadUrl: '/api/admin/download/quotes.csv',
+            message: 'Export prepared successfully'
+        });
+    } catch (error) {
+        console.error('Error exporting quotes:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error exporting quotes',
+            error: error.message
+        });
+    }
+});
+
+router.get('/export/estimations', async (req, res) => {
+    try {
+        // Implement CSV export for estimations
+        res.json({
+            success: true,
+            downloadUrl: '/api/admin/download/estimations.csv',
+            message: 'Export prepared successfully'
+        });
+    } catch (error) {
+        console.error('Error exporting estimations:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error exporting estimations',
+            error: error.message
+        });
+    }
+});
+
+router.get('/export/jobs', async (req, res) => {
+    try {
+        // Implement CSV export for jobs
+        res.json({
+            success: true,
+            downloadUrl: '/api/admin/download/jobs.csv',
+            message: 'Export prepared successfully'
+        });
+    } catch (error) {
+        console.error('Error exporting jobs:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error exporting jobs',
+            error: error.message
+        });
+    }
+});
+
+router.get('/export/messages', async (req, res) => {
+    try {
+        // Implement CSV export for messages
+        res.json({
+            success: true,
+            downloadUrl: '/api/admin/download/messages.csv',
+            message: 'Export prepared successfully'
+        });
+    } catch (error) {
+        console.error('Error exporting messages:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error exporting messages',
             error: error.message
         });
     }

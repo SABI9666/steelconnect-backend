@@ -64,37 +64,43 @@ router.post('/:conversationId/messages', async (req, res, next) => {
       // Try to reconstruct participants from job and user data
       if (conversationData.jobId) {
         try {
-          const jobDoc = await adminDb.collection('jobs').doc(conversationData.jobId).get();
-          const userDoc = await adminDb.collection('users').doc(userId).get();
+          const [jobDoc, userDoc] = await Promise.all([
+            adminDb.collection('jobs').doc(conversationData.jobId).get(),
+            adminDb.collection('users').doc(userId).get()
+          ]);
           
           if (jobDoc.exists && userDoc.exists) {
             const jobData = jobDoc.data();
             const userData = userDoc.data();
             
             // Safely reconstruct participants array with null checks
-            const contractorId = jobData.contractorId || jobData.userId;
-            const contractorName = jobData.posterName || 'Client';
-            const designerId = userData.id || userId;
-            const designerName = userData.name;
+            const contractorId = jobData?.contractorId || jobData?.userId;
+            const contractorName = jobData?.posterName || 'Client';
+            const designerId = userData?.id || userId;
+            const designerName = userData?.name;
             
             // Only proceed if we have valid data
             if (contractorId && contractorName && designerId && designerName) {
-              participants = [
-                {
-                  id: contractorId,
-                  name: contractorName,
-                  type: 'contractor'
-                },
-                {
-                  id: designerId,
-                  name: designerName,
-                  type: userData.type || 'designer'
-                }
-              ];
+              // Ensure we don't have duplicate participants
+              const participantMap = new Map();
               
+              participantMap.set(contractorId, {
+                id: contractorId,
+                name: contractorName,
+                type: 'contractor'
+              });
+              
+              participantMap.set(designerId, {
+                id: designerId,
+                name: designerName,
+                type: userData.type || 'designer'
+              });
+              
+              participants = Array.from(participantMap.values());
               wasRepaired = true;
               console.log('Successfully repaired conversation participants');
             } else {
+              console.error('Missing required data:', { contractorId, contractorName, designerId, designerName });
               throw new Error('Insufficient data to reconstruct conversation');
             }
           } else {

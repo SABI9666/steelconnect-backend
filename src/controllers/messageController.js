@@ -1,6 +1,7 @@
-// messageController.js - FIXED VERSION
+// src/controllers/messageController.js - UPDATED VERSION
 import { adminDb } from '../config/firebase.js';
-import { NotificationService } from '../services/notificationService.js'; // Import directly
+// Import from your existing notification service file
+import { NotificationService } from '../services/notificationService.js';
 
 // Helper function to get participant details
 const getParticipantDetails = async (participantIds) => {
@@ -32,9 +33,11 @@ export const getConversations = async (req, res, next) => {
         
         // Fetch job title
         let jobTitle = 'Job no longer available';
-        const jobDoc = await adminDb.collection('jobs').doc(conversationData.jobId).get();
-        if (jobDoc.exists) {
-            jobTitle = jobDoc.data().title;
+        if (conversationData.jobId) {
+            const jobDoc = await adminDb.collection('jobs').doc(conversationData.jobId).get();
+            if (jobDoc.exists) {
+                jobTitle = jobDoc.data().title;
+            }
         }
 
         return { 
@@ -158,6 +161,7 @@ export const sendMessage = async (req, res, next) => {
 
     // Validate input
     if (!text || typeof text !== 'string' || text.trim().length === 0) {
+      console.log('❌ Invalid message text:', text);
       return res.status(400).json({ 
         success: false, 
         message: 'Message text is required and cannot be empty' 
@@ -167,11 +171,17 @@ export const sendMessage = async (req, res, next) => {
     const convoRef = adminDb.collection('conversations').doc(conversationId);
     const convoDoc = await convoRef.get();
 
-    if (!convoDoc.exists || !convoDoc.data().participantIds.includes(senderId)) {
-      return res.status(403).json({ success: false, message: 'Not authorized to send messages here.' });
+    if (!convoDoc.exists) {
+      console.log(`❌ Conversation ${conversationId} not found`);
+      return res.status(404).json({ success: false, message: 'Conversation not found.' });
     }
 
     const conversationData = convoDoc.data();
+    
+    if (!conversationData.participantIds.includes(senderId)) {
+      console.log(`❌ User ${senderId} not authorized for conversation ${conversationId}`);
+      return res.status(403).json({ success: false, message: 'Not authorized to send messages here.' });
+    }
 
     const newMessage = {
       text: text.trim(),
@@ -180,7 +190,9 @@ export const sendMessage = async (req, res, next) => {
       createdAt: new Date()
     };
     
-    // Add the message as a sub-document and update the parent conversation
+    console.log(`💾 Saving message to subcollection...`);
+    
+    // Add the message as a sub-document (CRITICAL: must match where getMessages reads from)
     const messagesCollectionRef = convoRef.collection('messages');
     const messageRef = await messagesCollectionRef.add(newMessage);
 
@@ -191,16 +203,18 @@ export const sendMessage = async (req, res, next) => {
         lastMessageBy: req.user.name
     });
 
-    console.log(`✅ Message saved: ${messageRef.id}`);
+    console.log(`✅ Message saved with ID: ${messageRef.id}`);
 
     const messageResponse = { id: messageRef.id, ...newMessage };
 
-    // FIXED: Create notification synchronously to ensure it happens
+    // FIXED: Create notification immediately and synchronously
     try {
       console.log(`🔔 Creating message notifications for conversation ${conversationId}...`);
       
       // Get participant details for notification
+      console.log(`👥 Fetching participant details for:`, conversationData.participantIds);
       const participants = await getParticipantDetails(conversationData.participantIds);
+      console.log(`👥 Retrieved participants:`, participants.map(p => `${p.name} (${p.id})`));
       
       // Get job title for context
       let jobTitle = 'Unknown Project';
@@ -210,7 +224,9 @@ export const sendMessage = async (req, res, next) => {
           jobTitle = jobDoc.data().title;
         }
       }
+      console.log(`📋 Job title: ${jobTitle}`);
 
+      // Prepare enriched conversation data for notification service
       const enrichedConversationData = {
         id: conversationId,
         participants,
@@ -218,6 +234,8 @@ export const sendMessage = async (req, res, next) => {
         ...conversationData
       };
 
+      console.log(`🚀 Calling NotificationService.notifyNewMessage...`);
+      
       // Create notification for all participants except sender
       await NotificationService.notifyNewMessage(messageResponse, enrichedConversationData);
       
@@ -225,9 +243,11 @@ export const sendMessage = async (req, res, next) => {
       
     } catch (notificationError) {
       console.error(`❌ Failed to create message notifications:`, notificationError);
-      // Don't fail the message send if notification fails
+      console.error(`Notification error stack:`, notificationError.stack);
+      // Don't fail the message send if notification fails - just log the error
     }
 
+    // Return success response
     res.status(201).json({ 
       success: true, 
       message: 'Message sent successfully', 
@@ -235,7 +255,8 @@ export const sendMessage = async (req, res, next) => {
     });
 
   } catch (error) {
-    console.error('Error in sendMessage:', error);
+    console.error('❌ Error in sendMessage:', error);
+    console.error('Error stack:', error.stack);
     next(error);
   }
 };

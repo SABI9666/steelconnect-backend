@@ -1,4 +1,4 @@
-// Fixed adminController.js
+// Fixed adminController.js - Corrected messages fetching and file download issues
 import { adminDb } from '../config/firebase.js';
 
 // Dashboard stats - return data in expected format
@@ -41,8 +41,8 @@ export const getDashboardStats = async (req, res) => {
             totalJobs: jobsSnapshot.size,
             totalEstimations: estimationSnapshot.size,
             totalSubscriptions: subsSnapshot.size,
-            activeJobs: 0, // Calculate based on job status
-            completedJobs: 0 // Calculate based on job status
+            activeJobs: 0,
+            completedJobs: 0
         };
 
         // Calculate active/completed jobs
@@ -96,7 +96,7 @@ export const getAllUsers = async (req, res) => {
         
         res.json({ 
             success: true, 
-            data: users // Wrap in data object as expected by frontend
+            data: users
         });
     } catch (error) {
         console.error('Error fetching users:', error);
@@ -196,16 +196,20 @@ export const getAllJobs = async (req, res) => {
     }
 };
 
-// Get all messages - fix data structure
+// FIXED: Get all messages - corrected data structure and response format
 export const getAllMessages = async (req, res) => {
     try {
+        console.log('Fetching messages for admin...');
         const snapshot = await adminDb.collection('messages').orderBy('createdAt', 'desc').get();
+        console.log(`Found ${snapshot.size} messages in database`);
+        
         const messages = [];
         
         for (const doc of snapshot.docs) {
             const messageData = doc.data();
             let userData = null;
             
+            // Try to fetch user data if senderId exists
             if (messageData.senderId) {
                 try {
                     const userDoc = await adminDb.collection('users').doc(messageData.senderId).get();
@@ -218,23 +222,33 @@ export const getAllMessages = async (req, res) => {
                 }
             }
             
-            messages.push({
+            // Create standardized message object
+            const message = {
                 _id: doc.id,
                 id: doc.id,
-                senderName: userData?.name || messageData.senderName || messageData.from || 'Anonymous',
-                senderEmail: userData?.email || messageData.senderEmail || messageData.email || 'N/A',
-                subject: messageData.subject || messageData.title || 'No Subject',
-                content: messageData.content || messageData.message || messageData.text || '',
-                type: messageData.type || 'general',
+                senderName: userData?.name || messageData.senderName || messageData.from || messageData.name || 'Anonymous',
+                senderEmail: userData?.email || messageData.senderEmail || messageData.email || messageData.fromEmail || 'N/A',
+                subject: messageData.subject || messageData.title || messageData.topic || 'No Subject',
+                content: messageData.content || messageData.message || messageData.text || messageData.body || '',
+                type: messageData.type || messageData.category || 'general',
+                status: messageData.status || (messageData.isRead ? 'read' : 'unread'),
                 isRead: messageData.isRead || false,
-                createdAt: messageData.createdAt,
-                ...messageData
-            });
+                createdAt: messageData.createdAt || messageData.sentAt || messageData.timestamp,
+                senderId: messageData.senderId,
+                ...messageData // Include all original data
+            };
+            
+            messages.push(message);
         }
         
+        console.log(`Processed ${messages.length} messages for admin response`);
+        
+        // FIXED: Return messages array wrapped in data object
         res.json({ 
             success: true, 
-            data: messages
+            data: {
+                messages: messages // Correct structure expected by frontend
+            }
         });
     } catch (error) {
         console.error('Error fetching messages:', error);
@@ -293,6 +307,293 @@ export const getAllSubscriptions = async (req, res) => {
         res.status(500).json({ 
             success: false, 
             message: 'Error fetching subscriptions',
+            error: error.message
+        });
+    }
+};
+
+// FIXED: Get all estimations with proper file handling
+export const getAllEstimations = async (req, res) => {
+    try {
+        console.log('Fetching estimations for admin...');
+        const snapshot = await adminDb.collection('estimations').orderBy('createdAt', 'desc').get();
+        console.log(`Found ${snapshot.size} estimations in database`);
+        
+        const estimations = [];
+        
+        for (const doc of snapshot.docs) {
+            const estimationData = doc.data();
+            let userData = null;
+            
+            // Try to fetch contractor data
+            if (estimationData.contractorId || estimationData.userId) {
+                try {
+                    const userId = estimationData.contractorId || estimationData.userId;
+                    const userDoc = await adminDb.collection('users').doc(userId).get();
+                    if (userDoc.exists) {
+                        const { password, ...userInfo } = userDoc.data();
+                        userData = { id: userDoc.id, ...userInfo };
+                    }
+                } catch (userError) {
+                    console.warn(`Could not fetch user data for contractor: ${estimationData.contractorId || estimationData.userId}`);
+                }
+            }
+            
+            // Create standardized estimation object
+            const estimation = {
+                _id: doc.id,
+                id: doc.id,
+                projectTitle: estimationData.projectTitle || estimationData.title || 'Untitled Project',
+                projectType: estimationData.projectType || estimationData.category || 'General',
+                contractorName: userData?.name || estimationData.contractorName || 'Unknown',
+                contractorEmail: userData?.email || estimationData.contractorEmail || 'N/A',
+                contractorCompany: userData?.company || estimationData.contractorCompany || '',
+                status: estimationData.status || 'pending',
+                description: estimationData.description || '',
+                uploadedFiles: estimationData.uploadedFiles || estimationData.files || [],
+                resultFile: estimationData.resultFile || null,
+                dueDate: estimationData.dueDate,
+                createdAt: estimationData.createdAt,
+                updatedAt: estimationData.updatedAt,
+                ...estimationData
+            };
+            
+            estimations.push(estimation);
+        }
+        
+        console.log(`Processed ${estimations.length} estimations for admin response`);
+        
+        res.json({ 
+            success: true, 
+            data: {
+                estimations: estimations
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching estimations:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Error fetching estimations',
+            error: error.message
+        });
+    }
+};
+
+// FIXED: Get single estimation with files
+export const getEstimationById = async (req, res) => {
+    try {
+        const { estimationId } = req.params;
+        console.log(`Fetching estimation details for ID: ${estimationId}`);
+        
+        const doc = await adminDb.collection('estimations').doc(estimationId).get();
+        
+        if (!doc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'Estimation not found'
+            });
+        }
+        
+        const estimationData = doc.data();
+        let userData = null;
+        
+        // Fetch contractor data
+        if (estimationData.contractorId || estimationData.userId) {
+            try {
+                const userId = estimationData.contractorId || estimationData.userId;
+                const userDoc = await adminDb.collection('users').doc(userId).get();
+                if (userDoc.exists) {
+                    const { password, ...userInfo } = userDoc.data();
+                    userData = { id: userDoc.id, ...userInfo };
+                }
+            } catch (userError) {
+                console.warn(`Could not fetch user data for estimation: ${estimationId}`);
+            }
+        }
+        
+        const estimation = {
+            _id: doc.id,
+            id: doc.id,
+            projectTitle: estimationData.projectTitle || estimationData.title || 'Untitled Project',
+            projectType: estimationData.projectType || estimationData.category || 'General',
+            contractorName: userData?.name || estimationData.contractorName || 'Unknown',
+            contractorEmail: userData?.email || estimationData.contractorEmail || 'N/A',
+            contractorCompany: userData?.company || estimationData.contractorCompany || '',
+            status: estimationData.status || 'pending',
+            description: estimationData.description || '',
+            uploadedFiles: estimationData.uploadedFiles || estimationData.files || [],
+            resultFile: estimationData.resultFile || null,
+            dueDate: estimationData.dueDate,
+            createdAt: estimationData.createdAt,
+            updatedAt: estimationData.updatedAt,
+            ...estimationData
+        };
+        
+        res.json({
+            success: true,
+            data: {
+                estimation: estimation
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching estimation details:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching estimation details',
+            error: error.message
+        });
+    }
+};
+
+// FIXED: Get estimation files
+export const getEstimationFiles = async (req, res) => {
+    try {
+        const { estimationId } = req.params;
+        console.log(`Fetching files for estimation ID: ${estimationId}`);
+        
+        const doc = await adminDb.collection('estimations').doc(estimationId).get();
+        
+        if (!doc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'Estimation not found'
+            });
+        }
+        
+        const estimationData = doc.data();
+        const files = estimationData.uploadedFiles || estimationData.files || [];
+        
+        // Ensure files have proper structure
+        const formattedFiles = files.map(file => ({
+            name: file.name || file.filename || 'Unknown File',
+            url: file.url || file.downloadURL || '',
+            size: file.size || 0,
+            type: file.type || file.mimetype || '',
+            uploadedAt: file.uploadedAt || file.createdAt || estimationData.createdAt
+        }));
+        
+        res.json({
+            success: true,
+            data: {
+                files: formattedFiles
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching estimation files:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching estimation files',
+            error: error.message
+        });
+    }
+};
+
+// FIXED: Get estimation result file
+export const getEstimationResult = async (req, res) => {
+    try {
+        const { estimationId } = req.params;
+        console.log(`Fetching result file for estimation ID: ${estimationId}`);
+        
+        const doc = await adminDb.collection('estimations').doc(estimationId).get();
+        
+        if (!doc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'Estimation not found'
+            });
+        }
+        
+        const estimationData = doc.data();
+        const resultFile = estimationData.resultFile;
+        
+        if (!resultFile) {
+            return res.status(404).json({
+                success: false,
+                message: 'No result file found for this estimation'
+            });
+        }
+        
+        res.json({
+            success: true,
+            data: {
+                resultFile: {
+                    name: resultFile.name || resultFile.filename || 'estimation_result.pdf',
+                    url: resultFile.url || resultFile.downloadURL || '',
+                    size: resultFile.size || 0,
+                    type: resultFile.type || resultFile.mimetype || 'application/pdf',
+                    uploadedAt: resultFile.uploadedAt || estimationData.updatedAt
+                }
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching estimation result:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching estimation result',
+            error: error.message
+        });
+    }
+};
+
+// Update estimation status
+export const updateEstimationStatus = async (req, res) => {
+    try {
+        const { estimationId } = req.params;
+        const { status } = req.body;
+        
+        if (!status) {
+            return res.status(400).json({
+                success: false,
+                message: 'Status is required'
+            });
+        }
+        
+        await adminDb.collection('estimations').doc(estimationId).update({
+            status: status,
+            updatedAt: new Date().toISOString()
+        });
+        
+        res.json({
+            success: true,
+            message: 'Estimation status updated successfully'
+        });
+    } catch (error) {
+        console.error('Error updating estimation status:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error updating estimation status',
+            error: error.message
+        });
+    }
+};
+
+// Set estimation due date
+export const setEstimationDueDate = async (req, res) => {
+    try {
+        const { estimationId } = req.params;
+        const { dueDate } = req.body;
+        
+        if (!dueDate) {
+            return res.status(400).json({
+                success: false,
+                message: 'Due date is required'
+            });
+        }
+        
+        await adminDb.collection('estimations').doc(estimationId).update({
+            dueDate: dueDate,
+            updatedAt: new Date().toISOString()
+        });
+        
+        res.json({
+            success: true,
+            message: 'Due date set successfully'
+        });
+    } catch (error) {
+        console.error('Error setting due date:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error setting due date',
             error: error.message
         });
     }

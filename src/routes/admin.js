@@ -33,7 +33,7 @@ router.get('/users', getAllUsers);
 router.patch('/users/:userId/status', updateUserStatus);
 router.delete('/users/:userId', deleteUser);
 
-// FIXED: Messages management - proper endpoint structure
+// FIXED: Messages management - proper endpoint structure with full CRUD operations
 router.get('/messages', getAllMessages);
 
 // Get single message details
@@ -100,11 +100,11 @@ router.get('/messages/:messageId', async (req, res) => {
     }
 });
 
-// Update message status
+// Update message status - ENHANCED
 router.patch('/messages/:messageId/status', async (req, res) => {
     try {
         const { messageId } = req.params;
-        const { status } = req.body;
+        const { status, isRead } = req.body;
         
         if (!status) {
             return res.status(400).json({
@@ -113,11 +113,19 @@ router.patch('/messages/:messageId/status', async (req, res) => {
             });
         }
         
-        await adminDb.collection('messages').doc(messageId).update({
+        const updateData = {
             status: status,
-            isRead: status === 'read' || status === 'replied',
             updatedAt: new Date().toISOString()
-        });
+        };
+        
+        // Update isRead based on status or explicit value
+        if (isRead !== undefined) {
+            updateData.isRead = isRead;
+        } else if (status === 'read' || status === 'replied') {
+            updateData.isRead = true;
+        }
+        
+        await adminDb.collection('messages').doc(messageId).update(updateData);
         
         res.json({
             success: true,
@@ -133,13 +141,13 @@ router.patch('/messages/:messageId/status', async (req, res) => {
     }
 });
 
-// Reply to message
+// Reply to message - ENHANCED
 router.post('/messages/:messageId/reply', async (req, res) => {
     try {
         const { messageId } = req.params;
         const { content } = req.body;
         
-        if (!content) {
+        if (!content || content.trim() === '') {
             return res.status(400).json({
                 success: false,
                 message: 'Reply content is required'
@@ -159,7 +167,7 @@ router.post('/messages/:messageId/reply', async (req, res) => {
         const replyData = {
             senderName: req.user?.name || 'Admin',
             senderEmail: req.user?.email || 'admin@steelconnect.com',
-            content: content,
+            content: content.trim(),
             sentAt: new Date().toISOString(),
             isAdmin: true
         };
@@ -206,7 +214,7 @@ router.delete('/messages/:messageId', async (req, res) => {
     }
 });
 
-// FIXED: Estimations management - proper endpoints
+// FIXED: Estimations management - proper endpoints with file handling
 router.get('/estimations', getAllEstimations);
 router.get('/estimations/:estimationId', getEstimationById);
 router.get('/estimations/:estimationId/files', getEstimationFiles);

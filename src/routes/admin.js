@@ -1,4 +1,4 @@
-// src/routes/admin.js - FIXED FILE WITH PDF DOWNLOADS & MESSAGE BLOCKING
+// src/routes/admin.js - FIXED FILE WITH PROPER ENDPOINTS
 import express from 'express';
 import { authenticateToken, isAdmin } from '../middleware/authMiddleware.js';
 import { adminDb } from '../config/firebase.js';
@@ -13,12 +13,8 @@ import {
     getEstimationById,
     getEstimationFiles,
     getEstimationResult,
-    downloadEstimationFile,
-    downloadEstimationResult,
     updateEstimationStatus,
     setEstimationDueDate,
-    blockMessage,
-    blockUserMessages,
     updateUserStatus,
     deleteUser
 } from '../controllers/adminController.js';
@@ -37,7 +33,7 @@ router.get('/users', getAllUsers);
 router.patch('/users/:userId/status', updateUserStatus);
 router.delete('/users/:userId', deleteUser);
 
-// FIXED: Messages management with blocking controls
+// FIXED: Messages management - proper endpoint structure
 router.get('/messages', getAllMessages);
 
 // Get single message details
@@ -82,10 +78,6 @@ router.get('/messages/:messageId', async (req, res) => {
             type: messageData.type || 'general',
             status: messageData.status || (messageData.isRead ? 'read' : 'unread'),
             isRead: messageData.isRead || false,
-            isBlocked: messageData.isBlocked || false,
-            blockedAt: messageData.blockedAt || null,
-            blockedBy: messageData.blockedBy || null,
-            blockReason: messageData.blockReason || null,
             attachments: messageData.attachments || [],
             thread: messageData.thread || [],
             createdAt: messageData.createdAt,
@@ -108,11 +100,11 @@ router.get('/messages/:messageId', async (req, res) => {
     }
 });
 
-// Update message status - ENHANCED with blocking
+// Update message status
 router.patch('/messages/:messageId/status', async (req, res) => {
     try {
         const { messageId } = req.params;
-        const { status, isRead } = req.body;
+        const { status } = req.body;
         
         if (!status) {
             return res.status(400).json({
@@ -121,19 +113,11 @@ router.patch('/messages/:messageId/status', async (req, res) => {
             });
         }
         
-        const updateData = {
+        await adminDb.collection('messages').doc(messageId).update({
             status: status,
+            isRead: status === 'read' || status === 'replied',
             updatedAt: new Date().toISOString()
-        };
-        
-        // Update isRead based on status or explicit value
-        if (isRead !== undefined) {
-            updateData.isRead = isRead;
-        } else if (status === 'read' || status === 'replied') {
-            updateData.isRead = true;
-        }
-        
-        await adminDb.collection('messages').doc(messageId).update(updateData);
+        });
         
         res.json({
             success: true,
@@ -149,19 +133,13 @@ router.patch('/messages/:messageId/status', async (req, res) => {
     }
 });
 
-// ADDED: Block/Unblock individual message
-router.patch('/messages/:messageId/block', blockMessage);
-
-// ADDED: Block/Unblock user from sending messages
-router.patch('/messages/user/:userEmail/block', blockUserMessages);
-
-// Reply to message - ENHANCED
+// Reply to message
 router.post('/messages/:messageId/reply', async (req, res) => {
     try {
         const { messageId } = req.params;
         const { content } = req.body;
         
-        if (!content || content.trim() === '') {
+        if (!content) {
             return res.status(400).json({
                 success: false,
                 message: 'Reply content is required'
@@ -178,19 +156,10 @@ router.post('/messages/:messageId/reply', async (req, res) => {
         }
         
         const messageData = messageDoc.data();
-        
-        // Check if message is blocked
-        if (messageData.isBlocked) {
-            return res.status(400).json({
-                success: false,
-                message: 'Cannot reply to blocked message'
-            });
-        }
-        
         const replyData = {
             senderName: req.user?.name || 'Admin',
             senderEmail: req.user?.email || 'admin@steelconnect.com',
-            content: content.trim(),
+            content: content,
             sentAt: new Date().toISOString(),
             isAdmin: true
         };
@@ -237,16 +206,11 @@ router.delete('/messages/:messageId', async (req, res) => {
     }
 });
 
-// FIXED: Estimations management with proper file download endpoints
+// FIXED: Estimations management - proper endpoints
 router.get('/estimations', getAllEstimations);
 router.get('/estimations/:estimationId', getEstimationById);
 router.get('/estimations/:estimationId/files', getEstimationFiles);
 router.get('/estimations/:estimationId/result', getEstimationResult);
-
-// ADDED: File download endpoints that actually work
-router.get('/estimations/:estimationId/files/:fileName/download', downloadEstimationFile);
-router.get('/estimations/:estimationId/result/download', downloadEstimationResult);
-
 router.patch('/estimations/:estimationId/status', updateEstimationStatus);
 router.patch('/estimations/:estimationId/due-date', setEstimationDueDate);
 

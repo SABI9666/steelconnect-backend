@@ -1,4 +1,4 @@
-// server.js - Enhanced with Notification System & Better Error Handling
+// server.js - Enhanced with Profile System, Notification System & Better Error Handling
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -12,6 +12,17 @@ import jobsRoutes from './src/routes/jobs.js';
 import quotesRoutes from './src/routes/quotes.js';
 import messagesRoutes from './src/routes/messages.js';
 
+// Import profile routes with enhanced error handling
+let profileRoutes;
+try {
+    const profileModule = await import('./src/routes/profile.js');
+    profileRoutes = profileModule.default;
+    console.log('✅ Profile routes imported successfully');
+} catch (error) {
+    console.warn('⚠️ Profile routes not available:', error.message);
+    console.warn('🔍 Profile completion functionality will not work');
+}
+
 // Import admin routes with enhanced error handling
 let adminRoutes;
 try {
@@ -20,7 +31,7 @@ try {
     console.log('✅ Admin routes imported successfully');
 } catch (error) {
     console.warn('⚠️ Admin routes not available:', error.message);
-    console.warn('📝 Admin functionality will be limited');
+    console.warn('🔍 Admin functionality will be limited');
 }
 
 // Import estimation routes with enhanced error handling
@@ -31,7 +42,7 @@ try {
     console.log('✅ Estimation routes imported successfully');
 } catch (error) {
     console.warn('⚠️ Estimation routes not available:', error.message);
-    console.warn('📝 AI estimation features will not work');
+    console.warn('🔍 AI estimation features will not work');
 }
 
 // Import notification routes with enhanced error handling
@@ -43,8 +54,8 @@ try {
     console.log('🔔 Real-time notification system is active');
 } catch (error) {
     console.error('❌ Notification routes failed to load:', error.message);
-    console.warn('📝 You need to create ./src/routes/notifications.js for notifications to work');
-    console.warn('📝 Users will not receive real-time notifications');
+    console.warn('🔍 You need to create ./src/routes/notifications.js for notifications to work');
+    console.warn('🔍 Users will not receive real-time notifications');
 }
 
 dotenv.config();
@@ -76,7 +87,7 @@ if (process.env.MONGODB_URI) {
     })
     .catch(err => {
         console.error('❌ MongoDB connection error:', err.message);
-        console.error('📝 Check your MONGODB_URI environment variable');
+        console.error('🔍 Check your MONGODB_URI environment variable');
         process.exit(1);
     });
 
@@ -94,7 +105,7 @@ if (process.env.MONGODB_URI) {
     });
 } else {
     console.error('❌ MONGODB_URI not found in environment variables');
-    console.error('📝 Database connection required for the application to work');
+    console.error('🔍 Database connection required for the application to work');
     process.exit(1);
 }
 
@@ -148,7 +159,7 @@ app.use((req, res, next) => {
     console.log(`${timestamp} - ${method} ${url}`);
     
     if (process.env.NODE_ENV !== 'production' && method !== 'GET') {
-        console.log(`📝 Body:`, JSON.stringify(req.body, null, 2).substring(0, 200));
+        console.log(`🔍 Body:`, JSON.stringify(req.body, null, 2).substring(0, 200));
     }
     
     next();
@@ -171,7 +182,8 @@ app.get('/health', (req, res) => {
             database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
             notifications: notificationRoutes ? 'available' : 'unavailable',
             estimation: estimationRoutes ? 'available' : 'unavailable',
-            admin: adminRoutes ? 'available' : 'unavailable'
+            admin: adminRoutes ? 'available' : 'unavailable',
+            profile: profileRoutes ? 'available' : 'unavailable'
         }
     };
     
@@ -189,6 +201,7 @@ app.get('/', (req, res) => {
             'Real-time Notifications': notificationRoutes ? '✅ Active' : '❌ Disabled',
             'AI Cost Estimation': estimationRoutes ? '✅ Active' : '❌ Disabled',
             'Admin Panel': adminRoutes ? '✅ Active' : '❌ Disabled',
+            'Profile System': profileRoutes ? '✅ Active' : '❌ Disabled',
             'Job Management': '✅ Active',
             'Quote System': '✅ Active',
             'Messaging': '✅ Active'
@@ -201,7 +214,8 @@ app.get('/', (req, res) => {
             quotes: '/api/quotes',
             messages: '/api/messages',
             estimation: '/api/estimation',
-            notifications: '/api/notifications'
+            notifications: '/api/notifications',
+            profile: '/api/profile'
         }
     });
 });
@@ -215,7 +229,7 @@ if (authRoutes) {
     console.log('✅ Auth routes registered at /api/auth');
 } else {
     console.error('❌ CRITICAL: Auth routes failed to load');
-    console.error('📝 Authentication will not work - application cannot start');
+    console.error('🔍 Authentication will not work - application cannot start');
     process.exit(1);
 }
 
@@ -225,7 +239,7 @@ if (jobsRoutes) {
     console.log('✅ Jobs routes registered at /api/jobs');
 } else {
     console.error('❌ CRITICAL: Jobs routes failed to load');
-    console.error('📝 Job management will not work');
+    console.error('🔍 Job management will not work');
     process.exit(1);
 }
 
@@ -235,7 +249,7 @@ if (quotesRoutes) {
     console.log('✅ Quotes routes registered at /api/quotes');
 } else {
     console.error('❌ CRITICAL: Quotes routes failed to load');
-    console.error('📝 Quote system will not work');
+    console.error('🔍 Quote system will not work');
     process.exit(1);
 }
 
@@ -245,8 +259,24 @@ if (messagesRoutes) {
     console.log('✅ Messages routes registered at /api/messages');
 } else {
     console.error('❌ CRITICAL: Messages routes failed to load');
-    console.error('📝 Messaging system will not work');
+    console.error('🔍 Messaging system will not work');
     process.exit(1);
+}
+
+// Profile routes (Important - for profile management system)
+if (profileRoutes) {
+    app.use('/api/profile', profileRoutes);
+    console.log('✅ Profile routes registered at /api/profile');
+    console.log('👤 Profile management system: ENABLED');
+    console.log('📝 Profile features available:');
+    console.log('   • Profile completion & status tracking');
+    console.log('   • File uploads (resumes, certificates)');
+    console.log('   • Admin review system');
+    console.log('   • User type specific forms');
+    console.log('   • Email notifications');
+} else {
+    console.warn('⚠️ Profile routes unavailable - profile management will not work');
+    console.warn('🔍 Create ./src/routes/profile.js for profile management system');
 }
 
 // Notification routes (Important - enhances user experience)
@@ -261,7 +291,7 @@ if (notificationRoutes) {
     console.log('   • Estimation status changes');
 } else {
     console.warn('⚠️ Notification routes unavailable - notifications will not work');
-    console.warn('📝 Create ./src/routes/notifications.js for real-time notifications');
+    console.warn('🔍 Create ./src/routes/notifications.js for real-time notifications');
     console.warn('🔔 Users will not receive real-time updates');
 }
 
@@ -272,7 +302,7 @@ if (adminRoutes) {
     console.log('👨‍💼 Admin panel: ENABLED');
 } else {
     console.warn('⚠️ Admin routes unavailable - admin panel will not work');
-    console.warn('📝 Admin functionality will be limited');
+    console.warn('🔍 Admin functionality will be limited');
 }
 
 // Estimation routes (Optional - AI features)
@@ -282,7 +312,7 @@ if (estimationRoutes) {
     console.log('🤖 AI Cost Estimation: ENABLED');
 } else {
     console.warn('⚠️ Estimation routes unavailable - AI features disabled');
-    console.warn('📝 Cost estimation functionality will not work');
+    console.warn('🔍 Cost estimation functionality will not work');
 }
 
 console.log('📦 Route registration completed');
@@ -311,6 +341,12 @@ app.get('/api', (req, res) => {
                 path: 'POST /api/auth/login',
                 description: 'User login',
                 authentication: 'None'
+            },
+            {
+                path: 'GET /api/profile/*',
+                description: 'Profile management & completion system',
+                authentication: 'Required',
+                status: profileRoutes ? 'Available' : 'Disabled'
             },
             {
                 path: 'GET /api/jobs',
@@ -360,8 +396,8 @@ app.use((error, req, res, next) => {
     console.error(`❌ ${timestamp} - Global Error Handler:`, error);
     
     // Log request details for debugging
-    console.error(`📝 Request: ${req.method} ${req.url}`);
-    console.error(`📝 User-Agent: ${req.get('User-Agent')}`);
+    console.error(`🔍 Request: ${req.method} ${req.url}`);
+    console.error(`🔍 User-Agent: ${req.get('User-Agent')}`);
     
     if (error.code === 'LIMIT_FILE_SIZE') {
         return res.status(413).json({ 
@@ -426,6 +462,7 @@ app.use('*', (req, res) => {
             '/health',
             '/api',
             '/api/auth/*',
+            '/api/profile/*',
             '/api/jobs/*',
             '/api/quotes/*',
             '/api/messages/*',
@@ -481,11 +518,17 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`   Firebase: ${process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 ? '✅ Configured' : '❌ Missing'}`);
     console.log(`   JWT Secret: ${process.env.JWT_SECRET ? '✅ Configured' : '❌ Missing'}`);
     console.log(`   CORS Origins: ${process.env.CORS_ORIGIN ? '✅ Configured' : '⚠️ Using defaults'}`);
+    console.log(`   Resend API: ${process.env.RESEND_API_KEY ? '✅ Configured' : '⚠️ Missing'}`);
     
     console.log('\n🔗 Available endpoints:');
     console.log(`   Health: http://localhost:${PORT}/health`);
     console.log(`   API Docs: http://localhost:${PORT}/api`);
     console.log(`   Auth: http://localhost:${PORT}/api/auth/*`);
+    
+    if (profileRoutes) {
+        console.log(`   Profile: http://localhost:${PORT}/api/profile/*`);
+    }
+    
     console.log(`   Jobs: http://localhost:${PORT}/api/jobs/*`);
     console.log(`   Quotes: http://localhost:${PORT}/api/quotes/*`);
     console.log(`   Messages: http://localhost:${PORT}/api/messages/*`);
@@ -501,7 +544,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     }
     
     console.log('\n🚀 SteelConnect Backend is ready to serve requests!');
-    console.log('📝 Check logs above for any missing features or configurations');
+    console.log('🔍 Check logs above for any missing features or configurations');
     console.log('');
 });
 

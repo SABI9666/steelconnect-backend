@@ -1,4 +1,4 @@
-// src/routes/admin.js - FIXED FILE WITH PROPER ENDPOINTS
+// src/routes/admin.js - FIXED FILE WITH PDF DOWNLOADS & MESSAGE BLOCKING
 import express from 'express';
 import { authenticateToken, isAdmin } from '../middleware/authMiddleware.js';
 import { adminDb } from '../config/firebase.js';
@@ -13,8 +13,12 @@ import {
     getEstimationById,
     getEstimationFiles,
     getEstimationResult,
+    downloadEstimationFile,
+    downloadEstimationResult,
     updateEstimationStatus,
     setEstimationDueDate,
+    blockMessage,
+    blockUserMessages,
     updateUserStatus,
     deleteUser
 } from '../controllers/adminController.js';
@@ -33,7 +37,7 @@ router.get('/users', getAllUsers);
 router.patch('/users/:userId/status', updateUserStatus);
 router.delete('/users/:userId', deleteUser);
 
-// FIXED: Messages management - proper endpoint structure with full CRUD operations
+// FIXED: Messages management with blocking controls
 router.get('/messages', getAllMessages);
 
 // Get single message details
@@ -78,6 +82,10 @@ router.get('/messages/:messageId', async (req, res) => {
             type: messageData.type || 'general',
             status: messageData.status || (messageData.isRead ? 'read' : 'unread'),
             isRead: messageData.isRead || false,
+            isBlocked: messageData.isBlocked || false,
+            blockedAt: messageData.blockedAt || null,
+            blockedBy: messageData.blockedBy || null,
+            blockReason: messageData.blockReason || null,
             attachments: messageData.attachments || [],
             thread: messageData.thread || [],
             createdAt: messageData.createdAt,
@@ -100,7 +108,7 @@ router.get('/messages/:messageId', async (req, res) => {
     }
 });
 
-// Update message status - ENHANCED
+// Update message status - ENHANCED with blocking
 router.patch('/messages/:messageId/status', async (req, res) => {
     try {
         const { messageId } = req.params;
@@ -141,6 +149,12 @@ router.patch('/messages/:messageId/status', async (req, res) => {
     }
 });
 
+// ADDED: Block/Unblock individual message
+router.patch('/messages/:messageId/block', blockMessage);
+
+// ADDED: Block/Unblock user from sending messages
+router.patch('/messages/user/:userEmail/block', blockUserMessages);
+
 // Reply to message - ENHANCED
 router.post('/messages/:messageId/reply', async (req, res) => {
     try {
@@ -164,6 +178,15 @@ router.post('/messages/:messageId/reply', async (req, res) => {
         }
         
         const messageData = messageDoc.data();
+        
+        // Check if message is blocked
+        if (messageData.isBlocked) {
+            return res.status(400).json({
+                success: false,
+                message: 'Cannot reply to blocked message'
+            });
+        }
+        
         const replyData = {
             senderName: req.user?.name || 'Admin',
             senderEmail: req.user?.email || 'admin@steelconnect.com',
@@ -214,11 +237,16 @@ router.delete('/messages/:messageId', async (req, res) => {
     }
 });
 
-// FIXED: Estimations management - proper endpoints with file handling
+// FIXED: Estimations management with proper file download endpoints
 router.get('/estimations', getAllEstimations);
 router.get('/estimations/:estimationId', getEstimationById);
 router.get('/estimations/:estimationId/files', getEstimationFiles);
 router.get('/estimations/:estimationId/result', getEstimationResult);
+
+// ADDED: File download endpoints that actually work
+router.get('/estimations/:estimationId/files/:fileName/download', downloadEstimationFile);
+router.get('/estimations/:estimationId/result/download', downloadEstimationResult);
+
 router.patch('/estimations/:estimationId/status', updateEstimationStatus);
 router.patch('/estimations/:estimationId/due-date', setEstimationDueDate);
 

@@ -1,9 +1,9 @@
-// src/routes/profile.js - Profile management routes
+// src/routes/profile.js - Complete Profile management routes
 import express from 'express';
 import multer from 'multer';
 import { authenticateToken } from '../middleware/authMiddleware.js';
-import { adminDb } from '../config/firebase.js';
-import { sendEmail } from '../utils/emailService.js';
+import { adminDb, adminStorage } from '../config/firebase.js';
+import { sendEmail, sendProfileApprovalEmail } from '../utils/emailService.js';
 
 const router = express.Router();
 
@@ -29,6 +29,36 @@ const upload = multer({
         }
     }
 });
+
+// Helper function to upload file to Firebase Storage
+async function uploadToFirebaseStorage(file, path) {
+    try {
+        const bucket = adminStorage.bucket();
+        const fileRef = bucket.file(path);
+        
+        const stream = fileRef.createWriteStream({
+            metadata: {
+                contentType: file.mimetype,
+            },
+        });
+
+        return new Promise((resolve, reject) => {
+            stream.on('error', reject);
+            stream.on('finish', async () => {
+                try {
+                    await fileRef.makePublic();
+                    const publicUrl = `https://storage.googleapis.com/${bucket.name}/${path}`;
+                    resolve(publicUrl);
+                } catch (error) {
+                    reject(error);
+                }
+            });
+            stream.end(file.buffer);
+        });
+    } catch (error) {
+        throw error;
+    }
+}
 
 // Apply authentication to all routes
 router.use(authenticateToken);
@@ -64,7 +94,7 @@ router.get('/me', async (req, res) => {
     }
 });
 
-// Update profile (with file uploads)
+// Complete profile submission
 router.put('/complete', upload.fields([
     { name: 'resume', maxCount: 1 },
     { name: 'certificates', maxCount: 5 }
@@ -72,6 +102,8 @@ router.put('/complete', upload.fields([
     try {
         const userId = req.user.userId;
         const userType = req.user.type;
+        
+        console.log(`Profile completion for user ${userId} (${userType})`);
         
         // Get current user data
         const userDoc = await adminDb.collection('users').doc(userId).get();
@@ -84,15 +116,24 @@ router.put('/complete', upload.fields([
 
         const currentUserData = userDoc.data();
         
-        // Prepare profile data based on user type
+        // Base profile data
         let profileData = {
             profileCompleted: true,
-            profileStatus: 'pending', // pending, approved, rejected
+            profileStatus: 'pending',
             updatedAt: new Date().toISOString(),
             submittedAt: new Date().toISOString()
         };
 
+        // Type-specific profile fields
         if (userType === 'designer') {
+            // Validate required fields for designers
+            if (!req.body.linkedinProfile || !req.body.skills) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'LinkedIn profile and skills are required for designers'
+                });
+            }
+
             // Designer profile fields
             profileData = {
                 ...profileData,
@@ -101,37 +142,68 @@ router.put('/complete', upload.fields([
                 experience: req.body.experience || '',
                 education: req.body.education || '',
                 specializations: req.body.specializations ? req.body.specializations.split(',').map(s => s.trim()) : [],
-                bio: req.body.bio || ''
+                bio: req.body.bio || '',
+                hourlyRate: req.body.hourlyRate ? parseFloat(req.body.hourlyRate) : null
             };
 
             // Handle file uploads for designers
             if (req.files) {
                 if (req.files.resume && req.files.resume[0]) {
                     const resumeFile = req.files.resume[0];
-                    // In a real implementation, upload to cloud storage (AWS S3, Google Cloud Storage, etc.)
-                    // For now, we'll store file metadata
-                    profileData.resume = {
-                        filename: resumeFile.originalname,
-                        mimetype: resumeFile.mimetype,
-                        size: resumeFile.size,
-                        uploadedAt: new Date().toISOString(),
-                        // In production, store the actual file URL after uploading to cloud storage
-                        url: `/uploads/resumes/${userId}_${Date.now()}_${resumeFile.originalname}`
-                    };
+                    try {
+                        const resumePath = `profiles/resumes/${userId}_${Date.now()}_${resumeFile.originalname}`;
+                        const resumeUrl = await uploadToFirebaseStorage(resumeFile, resumePath);
+                        
+                        profileData.resume = {
+                            filename: resumeFile.originalname,
+                            mimetype: resumeFile.mimetype,
+                            size: resumeFile.size,
+                            uploadedAt: new Date().toISOString(),
+                            url: resumeUrl
+                        };
+                    } catch (uploadError) {
+                        console.error('Resume upload error:', uploadError);
+                        return res.status(500).json({
+                            success: false,
+                            message: 'Failed to upload resume'
+                        });
+                    }
                 }
 
                 if (req.files.certificates && req.files.certificates.length > 0) {
-                    profileData.certificates = req.files.certificates.map((cert, index) => ({
-                        filename: cert.originalname,
-                        mimetype: cert.mimetype,
-                        size: cert.size,
-                        uploadedAt: new Date().toISOString(),
-                        // In production, store the actual file URL after uploading to cloud storage
-                        url: `/uploads/certificates/${userId}_${Date.now()}_${index}_${cert.originalname}`
-                    }));
+                    try {
+                        profileData.certificates = [];
+                        for (let i = 0; i < req.files.certificates.length; i++) {
+                            const cert = req.files.certificates[i];
+                            const certPath = `profiles/certificates/${userId}_${Date.now()}_${i}_${cert.originalname}`;
+                            const certUrl = await uploadToFirebaseStorage(cert, certPath);
+                            
+                            profileData.certificates.push({
+                                filename: cert.originalname,
+                                mimetype: cert.mimetype,
+                                size: cert.size,
+                                uploadedAt: new Date().toISOString(),
+                                url: certUrl
+                            });
+                        }
+                    } catch (uploadError) {
+                        console.error('Certificate upload error:', uploadError);
+                        return res.status(500).json({
+                            success: false,
+                            message: 'Failed to upload certificates'
+                        });
+                    }
                 }
             }
         } else if (userType === 'contractor') {
+            // Validate required fields for contractors
+            if (!req.body.companyName || !req.body.linkedinProfile) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Company name and LinkedIn profile are required for contractors'
+                });
+            }
+
             // Contractor profile fields
             profileData = {
                 ...profileData,
@@ -139,7 +211,7 @@ router.put('/complete', upload.fields([
                 linkedinProfile: req.body.linkedinProfile || '',
                 companyWebsite: req.body.companyWebsite || '',
                 businessType: req.body.businessType || '',
-                yearEstablished: req.body.yearEstablished || '',
+                yearEstablished: req.body.yearEstablished ? parseInt(req.body.yearEstablished) : null,
                 companySize: req.body.companySize || '',
                 description: req.body.description || '',
                 address: req.body.address || '',
@@ -172,32 +244,40 @@ router.put('/complete', upload.fields([
                 to: currentUserData.email,
                 subject: 'Profile Submitted for Review - SteelConnect',
                 html: `
-                    <h2>Profile Submission Confirmation</h2>
-                    <p>Dear ${currentUserData.name},</p>
-                    <p>Your profile has been successfully submitted for review. Our admin team will review your profile within 24-48 hours.</p>
-                    <p>You will receive an email notification once your profile is approved.</p>
-                    <p>Until approval, your account will have limited functionality.</p>
-                    <br>
-                    <p>Thank you for joining SteelConnect!</p>
-                    <p>The SteelConnect Team</p>
+                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center;">
+                            <h1>Profile Submission Confirmation</h1>
+                        </div>
+                        <div style="padding: 30px;">
+                            <h2>Dear ${currentUserData.name},</h2>
+                            <p>Your ${userType} profile has been successfully submitted for review. Our admin team will review your profile within 24-48 hours.</p>
+                            <p>You will receive an email notification once your profile is approved.</p>
+                            <p><strong>Note:</strong> Until approval, your account will have limited functionality. You'll be able to access the platform fully once approved.</p>
+                            <br>
+                            <p>Thank you for joining SteelConnect!</p>
+                            <p>The SteelConnect Team</p>
+                        </div>
+                    </div>
                 `
             });
         } catch (emailError) {
             console.error('Failed to send profile submission email:', emailError);
-            // Don't fail the request if email fails
         }
 
-        // Update user's canAccess flag
+        // Restrict access until approved
         await adminDb.collection('users').doc(userId).update({
-            canAccess: false // Restrict access until approved
+            canAccess: false
         });
+
+        console.log(`Profile submitted for review: ${currentUserData.email}`);
 
         res.json({
             success: true,
             message: 'Profile submitted for review successfully',
             data: {
                 status: 'pending',
-                profileCompleted: true
+                profileCompleted: true,
+                message: 'Your profile is under review. You will receive an email once approved.'
             }
         });
 
@@ -231,8 +311,9 @@ router.get('/status', async (req, res) => {
             data: {
                 profileCompleted: userData.profileCompleted || false,
                 profileStatus: userData.profileStatus || 'incomplete',
-                canAccess: userData.canAccess !== false, // Default to true for backward compatibility
-                rejectionReason: userData.rejectionReason || null
+                canAccess: userData.canAccess !== false,
+                rejectionReason: userData.rejectionReason || null,
+                userType: userData.type
             }
         });
     } catch (error) {
@@ -240,6 +321,95 @@ router.get('/status', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error checking profile status'
+        });
+    }
+});
+
+// Update profile after approval (settings page)
+router.put('/update', upload.fields([
+    { name: 'resume', maxCount: 1 },
+    { name: 'certificates', maxCount: 5 }
+]), async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        const userType = req.user.type;
+        
+        // Get current user data
+        const userDoc = await adminDb.collection('users').doc(userId).get();
+        if (!userDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        const currentUserData = userDoc.data();
+        
+        // Check if profile is approved
+        if (currentUserData.profileStatus !== 'approved') {
+            return res.status(403).json({
+                success: false,
+                message: 'Profile must be approved before updates'
+            });
+        }
+
+        let updateData = {
+            updatedAt: new Date().toISOString()
+        };
+
+        // Update basic info
+        if (req.body.name) updateData.name = req.body.name;
+
+        // Type-specific updates
+        if (userType === 'designer') {
+            if (req.body.linkedinProfile) updateData.linkedinProfile = req.body.linkedinProfile;
+            if (req.body.skills) updateData.skills = req.body.skills.split(',').map(s => s.trim());
+            if (req.body.experience) updateData.experience = req.body.experience;
+            if (req.body.education) updateData.education = req.body.education;
+            if (req.body.specializations) updateData.specializations = req.body.specializations.split(',').map(s => s.trim());
+            if (req.body.bio) updateData.bio = req.body.bio;
+            if (req.body.hourlyRate) updateData.hourlyRate = parseFloat(req.body.hourlyRate);
+
+            // Handle file updates
+            if (req.files && req.files.resume && req.files.resume[0]) {
+                const resumeFile = req.files.resume[0];
+                const resumePath = `profiles/resumes/${userId}_${Date.now()}_${resumeFile.originalname}`;
+                const resumeUrl = await uploadToFirebaseStorage(resumeFile, resumePath);
+                
+                updateData.resume = {
+                    filename: resumeFile.originalname,
+                    mimetype: resumeFile.mimetype,
+                    size: resumeFile.size,
+                    uploadedAt: new Date().toISOString(),
+                    url: resumeUrl
+                };
+            }
+
+        } else if (userType === 'contractor') {
+            if (req.body.companyName) updateData.companyName = req.body.companyName;
+            if (req.body.linkedinProfile) updateData.linkedinProfile = req.body.linkedinProfile;
+            if (req.body.companyWebsite) updateData.companyWebsite = req.body.companyWebsite;
+            if (req.body.businessType) updateData.businessType = req.body.businessType;
+            if (req.body.yearEstablished) updateData.yearEstablished = parseInt(req.body.yearEstablished);
+            if (req.body.companySize) updateData.companySize = req.body.companySize;
+            if (req.body.description) updateData.description = req.body.description;
+            if (req.body.address) updateData.address = req.body.address;
+            if (req.body.phone) updateData.phone = req.body.phone;
+        }
+
+        // Update user profile
+        await adminDb.collection('users').doc(userId).update(updateData);
+
+        res.json({
+            success: true,
+            message: 'Profile updated successfully'
+        });
+
+    } catch (error) {
+        console.error('Error updating profile:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error updating profile'
         });
     }
 });
@@ -253,26 +423,27 @@ router.get('/form-fields', async (req, res) => {
         
         if (userType === 'designer') {
             fields = [
-                { name: 'linkedinProfile', type: 'url', label: 'LinkedIn Profile', required: true },
-                { name: 'skills', type: 'text', label: 'Skills (comma-separated)', required: true },
-                { name: 'experience', type: 'textarea', label: 'Experience', required: true },
-                { name: 'education', type: 'textarea', label: 'Education', required: true },
-                { name: 'specializations', type: 'text', label: 'Specializations (comma-separated)', required: false },
-                { name: 'bio', type: 'textarea', label: 'Professional Bio', required: true },
+                { name: 'linkedinProfile', type: 'url', label: 'LinkedIn Profile URL', required: true, placeholder: 'https://linkedin.com/in/yourprofile' },
+                { name: 'skills', type: 'text', label: 'Skills (comma-separated)', required: true, placeholder: 'AutoCAD, Revit, Structural Analysis, Steel Design' },
+                { name: 'experience', type: 'textarea', label: 'Years of Experience', required: false, placeholder: 'Describe your professional experience...' },
+                { name: 'education', type: 'textarea', label: 'Education Background', required: false, placeholder: 'Your educational qualifications...' },
+                { name: 'specializations', type: 'text', label: 'Specializations (comma-separated)', required: false, placeholder: 'Seismic Design, Bridge Engineering, High-rise Structures' },
+                { name: 'bio', type: 'textarea', label: 'Professional Bio', required: false, placeholder: 'Brief professional summary...' },
+                { name: 'hourlyRate', type: 'number', label: 'Hourly Rate (USD)', required: false, placeholder: '75' },
                 { name: 'resume', type: 'file', label: 'Resume (PDF/DOC)', required: true, accept: '.pdf,.doc,.docx' },
                 { name: 'certificates', type: 'file', label: 'Certificates (Optional)', required: false, multiple: true, accept: '.pdf,.jpg,.png' }
             ];
         } else if (userType === 'contractor') {
             fields = [
-                { name: 'companyName', type: 'text', label: 'Company Name', required: true },
-                { name: 'linkedinProfile', type: 'url', label: 'LinkedIn Profile', required: true },
-                { name: 'companyWebsite', type: 'url', label: 'Company Website', required: false },
-                { name: 'businessType', type: 'select', label: 'Business Type', required: true, options: ['Construction', 'Engineering', 'Architecture', 'Consulting', 'Other'] },
-                { name: 'yearEstablished', type: 'number', label: 'Year Established', required: false },
+                { name: 'companyName', type: 'text', label: 'Company Name', required: true, placeholder: 'Your Company LLC' },
+                { name: 'linkedinProfile', type: 'url', label: 'LinkedIn Profile URL', required: true, placeholder: 'https://linkedin.com/company/yourcompany' },
+                { name: 'companyWebsite', type: 'url', label: 'Company Website', required: false, placeholder: 'https://yourcompany.com' },
+                { name: 'businessType', type: 'select', label: 'Business Type', required: false, options: ['Construction', 'Engineering', 'Architecture', 'Consulting', 'Other'] },
+                { name: 'yearEstablished', type: 'number', label: 'Year Established', required: false, placeholder: '2010' },
                 { name: 'companySize', type: 'select', label: 'Company Size', required: false, options: ['1-10', '11-50', '51-200', '201-500', '500+'] },
-                { name: 'description', type: 'textarea', label: 'Company Description', required: true },
-                { name: 'address', type: 'textarea', label: 'Business Address', required: false },
-                { name: 'phone', type: 'tel', label: 'Business Phone', required: false }
+                { name: 'description', type: 'textarea', label: 'Company Description', required: false, placeholder: 'Brief description of your company...' },
+                { name: 'address', type: 'textarea', label: 'Business Address', required: false, placeholder: 'Your business address...' },
+                { name: 'phone', type: 'tel', label: 'Business Phone', required: false, placeholder: '+1 (555) 123-4567' }
             ];
         }
         

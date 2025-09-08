@@ -1,4 +1,4 @@
-/ src/utils/emailService.js - Email service with fallback when Resend is not available
+// src/utils/emailService.js - Email service with fallback when Resend is not available
 let Resend;
 let resend;
 
@@ -333,3 +333,4 @@ export async function sendProfileApprovalEmail(user, userType, notes = '') {
         console.error('❌ Failed to send profile approval email:', error);
     }
 }
+

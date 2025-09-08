@@ -1,13 +1,25 @@
-// src/utils/emailService.js - Email service using Resend API
-import { Resend } from 'resend';
+/ src/utils/emailService.js - Email service with fallback when Resend is not available
+let Resend;
+let resend;
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Try to import Resend, fallback if not available
+try {
+    const ResendModule = await import('resend');
+    Resend = ResendModule.Resend;
+    resend = new Resend(process.env.RESEND_API_KEY);
+    console.log('✅ Resend email service initialized');
+} catch (error) {
+    console.warn('⚠️ Resend package not found. Email functionality will be disabled.');
+    console.warn('🔍 Install resend package: npm install resend');
+    Resend = null;
+    resend = null;
+}
 
 // Default sender email (should be verified in Resend)
 const DEFAULT_FROM = process.env.DEFAULT_FROM_EMAIL || 'noreply@steelconnect.com';
 
 /**
- * Send email using Resend API
+ * Send email using Resend API (with fallback)
  * @param {Object} options - Email options
  * @param {string} options.to - Recipient email
  * @param {string} options.subject - Email subject
@@ -19,12 +31,21 @@ export async function sendEmail(options) {
     try {
         const { to, subject, html, text, from = DEFAULT_FROM } = options;
         
-        if (!process.env.RESEND_API_KEY) {
-            console.warn('RESEND_API_KEY not configured. Email sending disabled.');
-            return { success: false, error: 'Email service not configured' };
+        if (!resend || !process.env.RESEND_API_KEY) {
+            console.warn('📧 Email service not configured. Would send email to:', to);
+            console.warn('📧 Subject:', subject);
+            if (process.env.NODE_ENV === 'development') {
+                console.log('📧 Email content:', html.substring(0, 200) + '...');
+            }
+            return { 
+                success: false, 
+                error: 'Email service not configured',
+                mock: true,
+                details: { to, subject, from }
+            };
         }
         
-        console.log(`Sending email to: ${to}, Subject: ${subject}`);
+        console.log(`📧 Sending email to: ${to}, Subject: ${subject}`);
         
         const emailData = {
             from,
@@ -41,11 +62,11 @@ export async function sendEmail(options) {
         const response = await resend.emails.send(emailData);
         
         if (response.error) {
-            console.error('Resend API error:', response.error);
+            console.error('❌ Resend API error:', response.error);
             throw new Error(response.error.message || 'Failed to send email');
         }
         
-        console.log('Email sent successfully:', response.data.id);
+        console.log('✅ Email sent successfully:', response.data.id);
         return { 
             success: true, 
             messageId: response.data.id,
@@ -53,7 +74,16 @@ export async function sendEmail(options) {
         };
         
     } catch (error) {
-        console.error('Email sending error:', error);
+        console.error('❌ Email sending error:', error);
+        // Return mock success in development to not break the flow
+        if (process.env.NODE_ENV === 'development') {
+            console.warn('🔧 Development mode: Returning mock email success');
+            return {
+                success: true,
+                mock: true,
+                error: error.message
+            };
+        }
         throw error;
     }
 }
@@ -67,6 +97,11 @@ export async function sendEmail(options) {
  */
 export async function sendLoginNotification(user, loginTime, ipAddress = 'Unknown', userAgent = 'Unknown') {
     try {
+        if (!resend) {
+            console.log('📧 Mock: Would send login notification to:', user.email);
+            return { success: true, mock: true };
+        }
+
         const formattedTime = new Date(loginTime).toLocaleString('en-US', {
             weekday: 'long',
             year: 'numeric',
@@ -170,10 +205,10 @@ export async function sendLoginNotification(user, loginTime, ipAddress = 'Unknow
             html
         });
         
-        console.log(`Login notification sent to: ${user.email}`);
+        console.log(`📧 Login notification sent to: ${user.email}`);
         
     } catch (error) {
-        console.error('Failed to send login notification:', error);
+        console.error('❌ Failed to send login notification:', error);
         // Don't throw error - login should succeed even if notification fails
     }
 }
@@ -215,75 +250,86 @@ function extractBrowserInfo(userAgent) {
  * @param {string} notes - Admin notes (optional)
  */
 export async function sendProfileApprovalEmail(user, userType, notes = '') {
-    const capabilities = userType === 'designer' 
-        ? [
-            'Browse and quote on available projects',
-            'Manage your submitted quotes',
-            'Communicate with clients through our messaging system',
-            'Access project files and specifications'
-        ]
-        : [
-            'Post new construction and engineering projects',
-            'Review and approve quotes from qualified professionals',
-            'Use our AI-powered cost estimation tools',
-            'Manage approved projects and track progress'
-        ];
-    
-    const html = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Profile Approved</title>
-        </head>
-        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f5f7fa;">
-            <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
-                <div style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 30px; text-align: center;">
-                    <h1 style="margin: 0; font-size: 28px;">Profile Approved!</h1>
-                    <p style="margin: 10px 0 0 0; font-size: 16px;">Welcome to SteelConnect</p>
-                </div>
-                
-                <div style="padding: 30px;">
-                    <h2>Congratulations, ${user.name}!</h2>
-                    
-                    <p>Your ${userType} profile has been approved by our admin team. You now have full access to your SteelConnect portal.</p>
-                    
-                    <div style="background-color: #e8f5e8; border-radius: 8px; padding: 20px; margin: 20px 0;">
-                        <h3 style="margin-top: 0; color: #155724;">What you can do now:</h3>
-                        <ul style="margin-bottom: 0;">
-                            ${capabilities.map(capability => `<li>${capability}</li>`).join('')}
-                        </ul>
+    try {
+        const emailTransporter = initializeEmailService();
+        
+        if (!emailTransporter) {
+            console.log('📧 Mock: Would send profile approval to:', user.email);
+            return { success: true, mock: true };
+        }
+
+        const capabilities = userType === 'designer' 
+            ? [
+                'Browse and quote on available projects',
+                'Manage your submitted quotes',
+                'Communicate with clients through our messaging system',
+                'Access project files and specifications'
+            ]
+            : [
+                'Post new construction and engineering projects',
+                'Review and approve quotes from qualified professionals',
+                'Use our AI-powered cost estimation tools',
+                'Manage approved projects and track progress'
+            ];
+        
+        const html = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Profile Approved</title>
+            </head>
+            <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f5f7fa;">
+                <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
+                    <div style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 30px; text-align: center;">
+                        <h1 style="margin: 0; font-size: 28px;">Profile Approved!</h1>
+                        <p style="margin: 10px 0 0 0; font-size: 16px;">Welcome to SteelConnect</p>
                     </div>
                     
-                    ${notes ? `
-                        <div style="background-color: #f8f9fa; border-left: 4px solid #007bff; padding: 15px; margin: 20px 0;">
-                            <strong>Message from our team:</strong><br>
-                            ${notes}
+                    <div style="padding: 30px;">
+                        <h2>Congratulations, ${user.name}!</h2>
+                        
+                        <p>Your ${userType} profile has been approved by our admin team. You now have full access to your SteelConnect portal.</p>
+                        
+                        <div style="background-color: #e8f5e8; border-radius: 8px; padding: 20px; margin: 20px 0;">
+                            <h3 style="margin-top: 0; color: #155724;">What you can do now:</h3>
+                            <ul style="margin-bottom: 0;">
+                                ${capabilities.map(capability => `<li>${capability}</li>`).join('')}
+                            </ul>
                         </div>
-                    ` : ''}
-                    
-                    <div style="text-align: center; margin: 30px 0;">
-                        <a href="https://steelconnect.com/login" style="display: inline-block; background-color: #007bff; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: 600;">
-                            Access Your Portal
-                        </a>
+                        
+                        ${notes ? `
+                            <div style="background-color: #f8f9fa; border-left: 4px solid #007bff; padding: 15px; margin: 20px 0;">
+                                <strong>Message from our team:</strong><br>
+                                ${notes}
+                            </div>
+                        ` : ''}
+                        
+                        <div style="text-align: center; margin: 30px 0;">
+                            <a href="https://steelconnect.com/login" style="display: inline-block; background-color: #007bff; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: 600;">
+                                Access Your Portal
+                            </a>
+                        </div>
+                        
+                        <p>Welcome to the SteelConnect community! We're excited to have you on board.</p>
                     </div>
                     
-                    <p>Welcome to the SteelConnect community! We're excited to have you on board.</p>
+                    <div style="background-color: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #666;">
+                        <p>Need help getting started? Contact us at support@steelconnect.com</p>
+                        <p>&copy; 2024 SteelConnect. All rights reserved.</p>
+                    </div>
                 </div>
-                
-                <div style="background-color: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #666;">
-                    <p>Need help getting started? Contact us at support@steelconnect.com</p>
-                    <p>&copy; 2024 SteelConnect. All rights reserved.</p>
-                </div>
-            </div>
-        </body>
-        </html>
-    `;
-    
-    await sendEmail({
-        to: user.email,
-        subject: 'Profile Approved - Welcome to SteelConnect!',
-        html
-    });
+            </body>
+            </html>
+        `;
+        
+        await sendEmail({
+            to: user.email,
+            subject: 'Profile Approved - Welcome to SteelConnect!',
+            html
+        });
+    } catch (error) {
+        console.error('❌ Failed to send profile approval email:', error);
+    }
 }

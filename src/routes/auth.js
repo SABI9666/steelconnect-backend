@@ -1,7 +1,9 @@
+// src/routes/auth.js - Updated authentication routes with profile integration
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { adminDb } from '../config/firebase.js';
+import { sendLoginNotification } from '../utils/emailService.js';
 
 const router = express.Router();
 
@@ -18,7 +20,8 @@ router.get('/test', (req, res) => {
       'GET /profile',
       'PUT /profile',
       'PUT /change-password',
-      'POST /logout'
+      'POST /logout',
+      'GET /verify'
     ]
   });
 });
@@ -26,7 +29,7 @@ router.get('/test', (req, res) => {
 // --- Admin Login Route ---
 router.post('/login/admin', async (req, res) => {
   try {
-    console.log('🔐 Admin login attempt received');
+    console.log('🔍 Admin login attempt received');
     const { email, password } = req.body;
 
     // Validation
@@ -62,6 +65,18 @@ router.post('/login/admin', async (req, res) => {
           process.env.JWT_SECRET || 'your_default_secret_key_change_in_production',
           { expiresIn: '24h' }
         );
+
+        // Send login notification (optional for admin)
+        try {
+          await sendLoginNotification(
+            { name: 'Administrator', email: adminEmail, type: 'admin' },
+            new Date().toISOString(),
+            req.ip || 'Unknown',
+            req.get('User-Agent') || 'Unknown'
+          );
+        } catch (emailError) {
+          console.warn('Failed to send admin login notification:', emailError.message);
+        }
 
         return res.status(200).json({
           message: 'Admin login successful',
@@ -133,6 +148,18 @@ router.post('/login/admin', async (req, res) => {
           { expiresIn: '24h' }
         );
 
+        // Send login notification
+        try {
+          await sendLoginNotification(
+            adminData,
+            new Date().toISOString(),
+            req.ip || 'Unknown',
+            req.get('User-Agent') || 'Unknown'
+          );
+        } catch (emailError) {
+          console.warn('Failed to send admin login notification:', emailError.message);
+        }
+
         return res.status(200).json({
           message: 'Admin login successful',
           success: true,
@@ -185,6 +212,18 @@ router.post('/login/admin', async (req, res) => {
           process.env.JWT_SECRET || 'your_default_secret_key_change_in_production',
           { expiresIn: '24h' }
         );
+
+        // Send login notification
+        try {
+          await sendLoginNotification(
+            { ...adminData, name: adminData.name || 'Administrator' },
+            new Date().toISOString(),
+            req.ip || 'Unknown',
+            req.get('User-Agent') || 'Unknown'
+          );
+        } catch (emailError) {
+          console.warn('Failed to send admin login notification:', emailError.message);
+        }
 
         return res.status(200).json({
           message: 'Admin login successful',
@@ -271,7 +310,7 @@ router.post('/register', async (req, res) => {
     const saltRounds = 12;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    // Create new user object
+    // Create new user object with profile fields
     const newUser = {
       email: email.toLowerCase().trim(),
       password: hashedPassword,
@@ -279,7 +318,12 @@ router.post('/register', async (req, res) => {
       type,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      isActive: true
+      isActive: true,
+      // Profile related fields
+      profileCompleted: false,
+      profileStatus: 'incomplete', // incomplete, pending, approved, rejected
+      canAccess: true, // Allow access initially, restrict after profile submission
+      rejectionReason: null
     };
 
     // Save user to database
@@ -303,13 +347,14 @@ router.post('/register', async (req, res) => {
     );
 
     res.status(201).json({
-      message: 'User registered successfully.',
+      message: 'User registered successfully. Please complete your profile to access all features.',
       success: true,
       token,
       user: { 
         id: userRef.id, 
         ...userToReturn 
-      }
+      },
+      nextStep: 'profile_completion'
     });
 
   } catch (error) {
@@ -392,20 +437,50 @@ router.post('/login', async (req, res) => {
       { expiresIn: '7d' }
     );
 
+    // Send login notification email
+    try {
+      await sendLoginNotification(
+        userData,
+        new Date().toISOString(),
+        req.ip || 'Unknown',
+        req.get('User-Agent') || 'Unknown'
+      );
+    } catch (emailError) {
+      console.warn('Failed to send login notification:', emailError.message);
+      // Don't fail login if email fails
+    }
+
     console.log('✅ Regular user login successful');
+
+    // Prepare response with profile status
+    const responseUser = {
+      id: userDoc.id,
+      name: userData.name,
+      email: userData.email,
+      type: userData.type,
+      createdAt: userData.createdAt,
+      lastLoginAt: new Date().toISOString(),
+      profileCompleted: userData.profileCompleted || false,
+      profileStatus: userData.profileStatus || 'incomplete',
+      canAccess: userData.canAccess !== false
+    };
+
+    // Add warnings based on profile status
+    let warnings = [];
+    if (!userData.profileCompleted) {
+      warnings.push('Please complete your profile to access all features');
+    } else if (userData.profileStatus === 'pending') {
+      warnings.push('Your profile is pending admin approval');
+    } else if (userData.profileStatus === 'rejected') {
+      warnings.push('Your profile was rejected. Please update and resubmit');
+    }
 
     res.status(200).json({
       message: 'Login successful',
       success: true,
       token: token,
-      user: {
-        id: userDoc.id,
-        name: userData.name,
-        email: userData.email,
-        type: userData.type,
-        createdAt: userData.createdAt,
-        lastLoginAt: new Date().toISOString()
-      }
+      user: responseUser,
+      warnings: warnings.length > 0 ? warnings : undefined
     });
 
   } catch (error) {
@@ -726,14 +801,24 @@ router.get('/verify', async (req, res) => {
         });
       }
 
-      // For regular users, optionally fetch fresh data
+      // For regular users, get fresh data to include profile status
+      const userDoc = await adminDb.collection('users').doc(decoded.userId).get();
+      
+      if (!userDoc.exists) {
+        return res.status(404).json({ 
+          error: 'User not found.',
+          success: false 
+        });
+      }
+
+      const userData = userDoc.data();
+      const { password, ...userProfile } = userData;
+
       res.status(200).json({
         success: true,
         user: {
-          id: decoded.userId,
-          name: decoded.name,
-          email: decoded.email,
-          type: decoded.type
+          id: userDoc.id,
+          ...userProfile
         }
       });
 
@@ -753,5 +838,5 @@ router.get('/verify', async (req, res) => {
   }
 });
 
-
 export default router;
+        

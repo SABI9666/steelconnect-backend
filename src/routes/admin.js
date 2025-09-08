@@ -1,676 +1,439 @@
-// src/routes/admin.js - FIXED FILE WITH PROPER ENDPOINTS
+// src/routes/admin.js - Complete Admin routes with profile approval
 import express from 'express';
 import { authenticateToken, isAdmin } from '../middleware/authMiddleware.js';
 import { adminDb } from '../config/firebase.js';
-import {
-    getDashboardStats,
-    getAllUsers,
-    getAllQuotes,
-    getAllJobs,
-    getAllMessages,
-    getAllSubscriptions,
-    getAllEstimations,
-    getEstimationById,
-    getEstimationFiles,
-    getEstimationResult,
-    updateEstimationStatus,
-    setEstimationDueDate,
-    updateUserStatus,
-    deleteUser
-} from '../controllers/adminController.js';
+import { sendProfileApprovalEmail, sendEmail } from '../utils/emailService.js';
 
 const router = express.Router();
 
-// Apply authentication and admin middleware to all routes
+// Apply authentication and admin check to all routes
 router.use(authenticateToken);
 router.use(isAdmin);
 
-// Dashboard stats - FIXES /api/admin/dashboard 404
-router.get('/dashboard', getDashboardStats);
-
-// Users management - FIXES /api/admin/users 404
-router.get('/users', getAllUsers);
-router.patch('/users/:userId/status', updateUserStatus);
-router.delete('/users/:userId', deleteUser);
-
-// FIXED: Messages management - proper endpoint structure
-router.get('/messages', getAllMessages);
-
-// Get single message details
-router.get('/messages/:messageId', async (req, res) => {
+// Get all pending profile reviews
+router.get('/profile-reviews', async (req, res) => {
     try {
-        const { messageId } = req.params;
-        console.log(`Admin fetching message details for ID: ${messageId}`);
+        console.log('Admin fetching profile reviews...');
         
-        const doc = await adminDb.collection('messages').doc(messageId).get();
+        const snapshot = await adminDb.collection('profile_reviews')
+            .where('status', '==', 'pending')
+            .orderBy('createdAt', 'desc')
+            .get();
         
-        if (!doc.exists) {
+        const reviews = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+        
+        console.log(`Found ${reviews.length} pending profile reviews`);
+        
+        res.json({
+            success: true,
+            data: reviews
+        });
+    } catch (error) {
+        console.error('Error fetching profile reviews:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching profile reviews'
+        });
+    }
+});
+
+// Get specific profile review
+router.get('/profile-reviews/:reviewId', async (req, res) => {
+    try {
+        const { reviewId } = req.params;
+        
+        const reviewDoc = await adminDb.collection('profile_reviews').doc(reviewId).get();
+        
+        if (!reviewDoc.exists) {
             return res.status(404).json({
                 success: false,
-                message: 'Message not found'
+                message: 'Profile review not found'
             });
         }
-        
-        const messageData = doc.data();
-        let userData = null;
-        
-        // Try to fetch sender data
-        if (messageData.senderId) {
-            try {
-                const userDoc = await adminDb.collection('users').doc(messageData.senderId).get();
-                if (userDoc.exists) {
-                    const { password, ...userInfo } = userDoc.data();
-                    userData = { id: userDoc.id, ...userInfo };
-                }
-            } catch (userError) {
-                console.warn(`Could not fetch user data for senderId: ${messageData.senderId}`);
-            }
-        }
-        
-        const message = {
-            _id: doc.id,
-            id: doc.id,
-            senderName: userData?.name || messageData.senderName || messageData.from || 'Anonymous',
-            senderEmail: userData?.email || messageData.senderEmail || messageData.email || 'N/A',
-            senderAvatar: userData?.avatar || messageData.senderAvatar || null,
-            subject: messageData.subject || messageData.title || 'No Subject',
-            content: messageData.content || messageData.message || messageData.text || '',
-            type: messageData.type || 'general',
-            status: messageData.status || (messageData.isRead ? 'read' : 'unread'),
-            isRead: messageData.isRead || false,
-            attachments: messageData.attachments || [],
-            thread: messageData.thread || [],
-            createdAt: messageData.createdAt,
-            ...messageData
-        };
         
         res.json({
             success: true,
             data: {
-                message: message
+                id: reviewDoc.id,
+                ...reviewDoc.data()
             }
         });
     } catch (error) {
-        console.error('Error fetching message details:', error);
+        console.error('Error fetching profile review:', error);
         res.status(500).json({
             success: false,
-            message: 'Error fetching message details',
-            error: error.message
+            message: 'Error fetching profile review'
         });
     }
 });
 
-// Update message status
-router.patch('/messages/:messageId/status', async (req, res) => {
+// Approve profile
+router.post('/profile-reviews/:reviewId/approve', async (req, res) => {
     try {
-        const { messageId } = req.params;
-        const { status } = req.body;
-        
-        if (!status) {
-            return res.status(400).json({
-                success: false,
-                message: 'Status is required'
-            });
-        }
-        
-        await adminDb.collection('messages').doc(messageId).update({
-            status: status,
-            isRead: status === 'read' || status === 'replied',
-            updatedAt: new Date().toISOString()
-        });
-        
-        res.json({
-            success: true,
-            message: 'Message status updated successfully'
-        });
-    } catch (error) {
-        console.error('Error updating message status:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error updating message status',
-            error: error.message
-        });
-    }
-});
-
-// Reply to message
-router.post('/messages/:messageId/reply', async (req, res) => {
-    try {
-        const { messageId } = req.params;
-        const { content } = req.body;
-        
-        if (!content) {
-            return res.status(400).json({
-                success: false,
-                message: 'Reply content is required'
-            });
-        }
-        
-        // Get original message
-        const messageDoc = await adminDb.collection('messages').doc(messageId).get();
-        if (!messageDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'Original message not found'
-            });
-        }
-        
-        const messageData = messageDoc.data();
-        const replyData = {
-            senderName: req.user?.name || 'Admin',
-            senderEmail: req.user?.email || 'admin@steelconnect.com',
-            content: content,
-            sentAt: new Date().toISOString(),
-            isAdmin: true
-        };
-        
-        // Update original message with reply and mark as replied
-        await adminDb.collection('messages').doc(messageId).update({
-            status: 'replied',
-            isRead: true,
-            thread: [...(messageData.thread || []), replyData],
-            lastReplyAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-        });
-        
-        res.json({
-            success: true,
-            message: 'Reply sent successfully'
-        });
-    } catch (error) {
-        console.error('Error sending reply:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error sending reply',
-            error: error.message
-        });
-    }
-});
-
-// Delete message
-router.delete('/messages/:messageId', async (req, res) => {
-    try {
-        const { messageId } = req.params;
-        await adminDb.collection('messages').doc(messageId).delete();
-        res.json({
-            success: true,
-            message: 'Message deleted successfully'
-        });
-    } catch (error) {
-        console.error('Error deleting message:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error deleting message',
-            error: error.message
-        });
-    }
-});
-
-// FIXED: Estimations management - proper endpoints
-router.get('/estimations', getAllEstimations);
-router.get('/estimations/:estimationId', getEstimationById);
-router.get('/estimations/:estimationId/files', getEstimationFiles);
-router.get('/estimations/:estimationId/result', getEstimationResult);
-router.patch('/estimations/:estimationId/status', updateEstimationStatus);
-router.patch('/estimations/:estimationId/due-date', setEstimationDueDate);
-
-// Upload estimation result
-router.post('/estimations/:estimationId/result', async (req, res) => {
-    try {
-        const { estimationId } = req.params;
+        const { reviewId } = req.params;
         const { notes } = req.body;
+        const adminEmail = req.user.email;
         
-        // Check if estimation exists
-        const estimationDoc = await adminDb.collection('estimations').doc(estimationId).get();
-        if (!estimationDoc.exists) {
+        console.log(`Admin ${adminEmail} approving profile review ${reviewId}`);
+        
+        // Get the review
+        const reviewDoc = await adminDb.collection('profile_reviews').doc(reviewId).get();
+        
+        if (!reviewDoc.exists) {
             return res.status(404).json({
                 success: false,
-                message: 'Estimation not found'
+                message: 'Profile review not found'
             });
         }
         
-        // Handle file upload (you'll need to implement file upload middleware)
-        if (!req.file && !req.files) {
+        const reviewData = reviewDoc.data();
+        
+        if (reviewData.status !== 'pending') {
             return res.status(400).json({
                 success: false,
-                message: 'No result file uploaded'
+                message: 'Profile review is not pending'
             });
         }
         
-        const file = req.file || req.files.resultFile;
-        
-        // Create result file object
-        const resultFile = {
-            name: file.originalname || file.name,
-            url: file.path || file.url, // Adjust based on your file storage setup
-            size: file.size,
-            type: file.mimetype || file.type,
-            uploadedAt: new Date().toISOString(),
-            uploadedBy: req.user?.email || 'admin'
-        };
-        
-        // Update estimation with result file
-        await adminDb.collection('estimations').doc(estimationId).update({
-            resultFile: resultFile,
-            status: 'completed',
-            notes: notes || '',
-            completedAt: new Date().toISOString(),
+        // Update the review
+        await adminDb.collection('profile_reviews').doc(reviewId).update({
+            status: 'approved',
+            reviewedAt: new Date().toISOString(),
+            reviewedBy: adminEmail,
+            reviewNotes: notes || '',
             updatedAt: new Date().toISOString()
         });
         
-        res.json({
-            success: true,
-            message: 'Estimation result uploaded successfully',
-            data: {
-                resultFile: resultFile
-            }
-        });
-    } catch (error) {
-        console.error('Error uploading estimation result:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error uploading estimation result',
-            error: error.message
-        });
-    }
-});
-
-// Delete estimation
-router.delete('/estimations/:estimationId', async (req, res) => {
-    try {
-        const { estimationId } = req.params;
-        await adminDb.collection('estimations').doc(estimationId).delete();
-        res.json({
-            success: true,
-            message: 'Estimation deleted successfully'
-        });
-    } catch (error) {
-        console.error('Error deleting estimation:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error deleting estimation',
-            error: error.message
-        });
-    }
-});
-
-// Quotes management - FIXES /api/admin/quotes 404  
-router.get('/quotes', getAllQuotes);
-
-// Update quote status
-router.patch('/quotes/:quoteId/status', async (req, res) => {
-    try {
-        const { quoteId } = req.params;
-        const { status } = req.body;
-        
-        if (!status) {
-            return res.status(400).json({
-                success: false,
-                message: 'Status is required'
-            });
-        }
-        
-        await adminDb.collection('quotes').doc(quoteId).update({
-            status: status,
+        // Update the user's profile status
+        await adminDb.collection('users').doc(reviewData.userId).update({
+            profileStatus: 'approved',
+            canAccess: true,
+            approvedAt: new Date().toISOString(),
+            approvedBy: adminEmail,
             updatedAt: new Date().toISOString()
         });
         
+        // Get user data for email
+        const userDoc = await adminDb.collection('users').doc(reviewData.userId).get();
+        const userData = userDoc.data();
+        
+        // Send approval email
+        try {
+            await sendProfileApprovalEmail(userData, reviewData.userType, notes);
+        } catch (emailError) {
+            console.error('Failed to send approval email:', emailError);
+        }
+        
+        console.log(`Profile approved: ${userData.email} (${reviewData.userType})`);
+        
         res.json({
             success: true,
-            message: 'Quote status updated successfully'
+            message: 'Profile approved successfully'
         });
+        
     } catch (error) {
-        console.error('Error updating quote status:', error);
+        console.error('Error approving profile:', error);
         res.status(500).json({
             success: false,
-            message: 'Error updating quote status',
-            error: error.message
+            message: 'Error approving profile'
         });
     }
 });
 
-// Update quote amount
-router.patch('/quotes/:quoteId/amount', async (req, res) => {
+// Reject profile
+router.post('/profile-reviews/:reviewId/reject', async (req, res) => {
     try {
-        const { quoteId } = req.params;
-        const { amount } = req.body;
+        const { reviewId } = req.params;
+        const { reason, notes } = req.body;
+        const adminEmail = req.user.email;
         
-        if (amount === undefined || amount < 0) {
+        if (!reason) {
             return res.status(400).json({
                 success: false,
-                message: 'Valid amount is required'
+                message: 'Rejection reason is required'
             });
         }
         
-        await adminDb.collection('quotes').doc(quoteId).update({
-            amount: parseFloat(amount),
-            updatedAt: new Date().toISOString()
-        });
+        console.log(`Admin ${adminEmail} rejecting profile review ${reviewId}`);
         
-        res.json({
-            success: true,
-            message: 'Quote amount updated successfully'
-        });
-    } catch (error) {
-        console.error('Error updating quote amount:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error updating quote amount',
-            error: error.message
-        });
-    }
-});
-
-// Get single quote details
-router.get('/quotes/:quoteId', async (req, res) => {
-    try {
-        const { quoteId } = req.params;
-        const doc = await adminDb.collection('quotes').doc(quoteId).get();
+        // Get the review
+        const reviewDoc = await adminDb.collection('profile_reviews').doc(reviewId).get();
         
-        if (!doc.exists) {
+        if (!reviewDoc.exists) {
             return res.status(404).json({
                 success: false,
-                message: 'Quote not found'
+                message: 'Profile review not found'
             });
         }
         
-        const quoteData = doc.data();
-        let userData = null;
+        const reviewData = reviewDoc.data();
         
-        if (quoteData.userId) {
-            try {
-                const userDoc = await adminDb.collection('users').doc(quoteData.userId).get();
-                if (userDoc.exists) {
-                    const { password, ...userInfo } = userDoc.data();
-                    userData = { id: userDoc.id, ...userInfo };
-                }
-            } catch (userError) {
-                console.warn(`Could not fetch user data for quote: ${quoteId}`);
-            }
-        }
-        
-        const quote = {
-            _id: doc.id,
-            id: doc.id,
-            quoteNumber: quoteData.quoteNumber || doc.id.slice(-6),
-            clientName: userData?.name || quoteData.clientName || 'Unknown',
-            clientEmail: userData?.email || quoteData.clientEmail || 'N/A',
-            clientPhone: userData?.phone || quoteData.clientPhone || 'Not provided',
-            projectTitle: quoteData.projectTitle || quoteData.title || 'Untitled',
-            projectType: quoteData.projectType || quoteData.category || 'General',
-            description: quoteData.description || '',
-            amount: quoteData.amount || quoteData.estimatedAmount || 0,
-            status: quoteData.status || 'pending',
-            createdAt: quoteData.createdAt,
-            updatedAt: quoteData.updatedAt,
-            ...quoteData
-        };
-        
-        res.json({
-            success: true,
-            data: {
-                quote: quote
-            }
-        });
-    } catch (error) {
-        console.error('Error fetching quote details:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error fetching quote details',
-            error: error.message
-        });
-    }
-});
-
-// Delete quote
-router.delete('/quotes/:quoteId', async (req, res) => {
-    try {
-        const { quoteId } = req.params;
-        await adminDb.collection('quotes').doc(quoteId).delete();
-        res.json({
-            success: true,
-            message: 'Quote deleted successfully'
-        });
-    } catch (error) {
-        console.error('Error deleting quote:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error deleting quote',
-            error: error.message
-        });
-    }
-});
-
-// Jobs management - FIXES /api/admin/jobs 404
-router.get('/jobs', getAllJobs);
-
-// Update job status
-router.patch('/jobs/:jobId/status', async (req, res) => {
-    try {
-        const { jobId } = req.params;
-        const { status } = req.body;
-        
-        if (!status) {
+        if (reviewData.status !== 'pending') {
             return res.status(400).json({
                 success: false,
-                message: 'Status is required'
+                message: 'Profile review is not pending'
             });
         }
         
-        await adminDb.collection('jobs').doc(jobId).update({
-            status: status,
+        // Update the review
+        await adminDb.collection('profile_reviews').doc(reviewId).update({
+            status: 'rejected',
+            reviewedAt: new Date().toISOString(),
+            reviewedBy: adminEmail,
+            rejectionReason: reason,
+            reviewNotes: notes || '',
             updatedAt: new Date().toISOString()
         });
         
-        res.json({
-            success: true,
-            message: 'Job status updated successfully'
-        });
-    } catch (error) {
-        console.error('Error updating job status:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error updating job status',
-            error: error.message
-        });
-    }
-});
-
-// Update job progress
-router.patch('/jobs/:jobId/progress', async (req, res) => {
-    try {
-        const { jobId } = req.params;
-        const { progress } = req.body;
-        
-        if (progress === undefined || progress < 0 || progress > 100) {
-            return res.status(400).json({
-                success: false,
-                message: 'Progress must be between 0 and 100'
-            });
-        }
-        
-        await adminDb.collection('jobs').doc(jobId).update({
-            progress: parseInt(progress),
+        // Update the user's profile status
+        await adminDb.collection('users').doc(reviewData.userId).update({
+            profileStatus: 'rejected',
+            canAccess: false,
+            rejectionReason: reason,
+            rejectedAt: new Date().toISOString(),
+            rejectedBy: adminEmail,
             updatedAt: new Date().toISOString()
         });
         
+        // Get user data for email
+        const userDoc = await adminDb.collection('users').doc(reviewData.userId).get();
+        const userData = userDoc.data();
+        
+        // Send rejection email
+        try {
+            await sendEmail({
+                to: userData.email,
+                subject: 'Profile Review Update - SteelConnect',
+                html: `
+                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                        <div style="background: linear-gradient(135deg, #dc3545 0%, #c82333 100%); color: white; padding: 30px; text-align: center;">
+                            <h1>Profile Review Update</h1>
+                        </div>
+                        <div style="padding: 30px;">
+                            <h2>Dear ${userData.name},</h2>
+                            <p>Thank you for submitting your ${reviewData.userType} profile for review.</p>
+                            <p>After careful consideration, we need you to make some updates to your profile before we can approve it.</p>
+                            
+                            <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 20px; margin: 20px 0;">
+                                <h3 style="margin-top: 0; color: #856404;">Required Updates:</h3>
+                                <p style="margin-bottom: 0;"><strong>${reason}</strong></p>
+                                ${notes ? `<p style="margin-top: 15px; margin-bottom: 0;"><em>Additional Notes:</em> ${notes}</p>` : ''}
+                            </div>
+                            
+                            <p>Please log in to your account and update your profile with the requested information. Once updated, your profile will be automatically resubmitted for review.</p>
+                            
+                            <div style="text-align: center; margin: 30px 0;">
+                                <a href="https://steelconnect.com/login" style="display: inline-block; background-color: #007bff; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: 600;">
+                                    Update Profile
+                                </a>
+                            </div>
+                            
+                            <p>If you have any questions, please don't hesitate to contact our support team.</p>
+                            <p>Thank you for your understanding.</p>
+                            <br>
+                            <p>The SteelConnect Team</p>
+                        </div>
+                    </div>
+                `
+            });
+        } catch (emailError) {
+            console.error('Failed to send rejection email:', emailError);
+        }
+        
+        console.log(`Profile rejected: ${userData.email} (${reviewData.userType}) - Reason: ${reason}`);
+        
         res.json({
             success: true,
-            message: 'Job progress updated successfully'
+            message: 'Profile rejected successfully'
         });
+        
     } catch (error) {
-        console.error('Error updating job progress:', error);
+        console.error('Error rejecting profile:', error);
         res.status(500).json({
             success: false,
-            message: 'Error updating job progress',
-            error: error.message
+            message: 'Error rejecting profile'
         });
     }
 });
 
-// Get single job details
-router.get('/jobs/:jobId', async (req, res) => {
+// Get all users
+router.get('/users', async (req, res) => {
     try {
-        const { jobId } = req.params;
-        const doc = await adminDb.collection('jobs').doc(jobId).get();
+        const { status, type, page = 1, limit = 50 } = req.query;
         
-        if (!doc.exists) {
+        let query = adminDb.collection('users');
+        
+        if (status) {
+            query = query.where('profileStatus', '==', status);
+        }
+        
+        if (type) {
+            query = query.where('type', '==', type);
+        }
+        
+        const snapshot = await query
+            .orderBy('createdAt', 'desc')
+            .limit(parseInt(limit))
+            .get();
+        
+        const users = snapshot.docs.map(doc => {
+            const userData = doc.data();
+            const { password, ...userWithoutPassword } = userData;
+            return {
+                id: doc.id,
+                ...userWithoutPassword
+            };
+        });
+        
+        res.json({
+            success: true,
+            data: users,
+            total: users.length
+        });
+        
+    } catch (error) {
+        console.error('Error fetching users:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching users'
+        });
+    }
+});
+
+// Get user by ID
+router.get('/users/:userId', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        
+        const userDoc = await adminDb.collection('users').doc(userId).get();
+        
+        if (!userDoc.exists) {
             return res.status(404).json({
                 success: false,
-                message: 'Job not found'
+                message: 'User not found'
             });
         }
         
-        const jobData = doc.data();
-        
-        const job = {
-            _id: doc.id,
-            id: doc.id,
-            jobNumber: jobData.jobNumber || doc.id.slice(-6),
-            projectTitle: jobData.title || jobData.projectTitle || 'Untitled Job',
-            projectType: jobData.category || jobData.type || 'General',
-            clientName: jobData.clientName || jobData.posterName || 'Unknown',
-            clientEmail: jobData.clientEmail || jobData.posterEmail || 'N/A',
-            clientPhone: jobData.clientPhone || 'Not provided',
-            contractorName: jobData.contractorName || jobData.assignedTo || 'Unassigned',
-            contractorEmail: jobData.contractorEmail || 'N/A',
-            contractorCompany: jobData.contractorCompany || 'Independent',
-            value: jobData.budget || jobData.amount || jobData.value || 0,
-            status: jobData.status || 'pending',
-            progress: jobData.progress || 0,
-            description: jobData.description || '',
-            startDate: jobData.startDate,
-            expectedCompletion: jobData.expectedCompletion || jobData.deadline,
-            createdAt: jobData.createdAt,
-            updatedAt: jobData.updatedAt,
-            ...jobData
-        };
+        const userData = userDoc.data();
+        const { password, ...userWithoutPassword } = userData;
         
         res.json({
             success: true,
             data: {
-                job: job
+                id: userDoc.id,
+                ...userWithoutPassword
             }
         });
+        
     } catch (error) {
-        console.error('Error fetching job details:', error);
+        console.error('Error fetching user:', error);
         res.status(500).json({
             success: false,
-            message: 'Error fetching job details',
-            error: error.message
+            message: 'Error fetching user'
         });
     }
 });
 
-// Delete job
-router.delete('/jobs/:jobId', async (req, res) => {
+// Update user status (suspend/activate)
+router.put('/users/:userId/status', async (req, res) => {
     try {
-        const { jobId } = req.params;
-        await adminDb.collection('jobs').doc(jobId).delete();
+        const { userId } = req.params;
+        const { canAccess, reason } = req.body;
+        const adminEmail = req.user.email;
+        
+        if (typeof canAccess !== 'boolean') {
+            return res.status(400).json({
+                success: false,
+                message: 'canAccess must be boolean'
+            });
+        }
+        
+        const updateData = {
+            canAccess,
+            updatedAt: new Date().toISOString(),
+            statusUpdatedBy: adminEmail,
+            statusUpdatedAt: new Date().toISOString()
+        };
+        
+        if (reason) {
+            updateData.statusReason = reason;
+        }
+        
+        await adminDb.collection('users').doc(userId).update(updateData);
+        
+        // Get user data for logging
+        const userDoc = await adminDb.collection('users').doc(userId).get();
+        const userData = userDoc.data();
+        
+        console.log(`User ${userData.email} ${canAccess ? 'activated' : 'suspended'} by admin ${adminEmail}`);
+        
         res.json({
             success: true,
-            message: 'Job deleted successfully'
+            message: `User ${canAccess ? 'activated' : 'suspended'} successfully`
         });
+        
     } catch (error) {
-        console.error('Error deleting job:', error);
+        console.error('Error updating user status:', error);
         res.status(500).json({
             success: false,
-            message: 'Error deleting job',
-            error: error.message
+            message: 'Error updating user status'
         });
     }
 });
 
-// Subscriptions management - FIXES /api/admin/subscriptions 404
-router.get('/subscriptions', getAllSubscriptions);
-
-// Export functions
-router.get('/export/users', async (req, res) => {
+// Get admin dashboard stats
+router.get('/dashboard/stats', async (req, res) => {
     try {
-        // Implement CSV export for users
+        console.log('Admin fetching dashboard stats...');
+        
+        // Get user stats
+        const usersSnapshot = await adminDb.collection('users').get();
+        const allUsers = usersSnapshot.docs.map(doc => doc.data());
+        
+        const userStats = {
+            total: allUsers.length,
+            designers: allUsers.filter(u => u.type === 'designer').length,
+            contractors: allUsers.filter(u => u.type === 'contractor').length,
+            pending: allUsers.filter(u => u.profileStatus === 'pending').length,
+            approved: allUsers.filter(u => u.profileStatus === 'approved').length,
+            rejected: allUsers.filter(u => u.profileStatus === 'rejected').length
+        };
+        
+        // Get pending reviews count
+        const reviewsSnapshot = await adminDb.collection('profile_reviews')
+            .where('status', '==', 'pending')
+            .get();
+        
+        const pendingReviews = reviewsSnapshot.size;
+        
+        // Get recent activity (last 30 days)
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        
+        const recentUsersSnapshot = await adminDb.collection('users')
+            .where('createdAt', '>=', thirtyDaysAgo.toISOString())
+            .get();
+        
+        const recentUsers = recentUsersSnapshot.size;
+        
         res.json({
             success: true,
-            downloadUrl: '/api/admin/download/users.csv',
-            message: 'Export prepared successfully'
+            data: {
+                users: userStats,
+                pendingReviews,
+                recentUsers,
+                lastUpdated: new Date().toISOString()
+            }
         });
+        
     } catch (error) {
-        console.error('Error exporting users:', error);
+        console.error('Error fetching admin stats:', error);
         res.status(500).json({
             success: false,
-            message: 'Error exporting users',
-            error: error.message
-        });
-    }
-});
-
-router.get('/export/quotes', async (req, res) => {
-    try {
-        // Implement CSV export for quotes
-        res.json({
-            success: true,
-            downloadUrl: '/api/admin/download/quotes.csv',
-            message: 'Export prepared successfully'
-        });
-    } catch (error) {
-        console.error('Error exporting quotes:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error exporting quotes',
-            error: error.message
-        });
-    }
-});
-
-router.get('/export/estimations', async (req, res) => {
-    try {
-        // Implement CSV export for estimations
-        res.json({
-            success: true,
-            downloadUrl: '/api/admin/download/estimations.csv',
-            message: 'Export prepared successfully'
-        });
-    } catch (error) {
-        console.error('Error exporting estimations:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error exporting estimations',
-            error: error.message
-        });
-    }
-});
-
-router.get('/export/jobs', async (req, res) => {
-    try {
-        // Implement CSV export for jobs
-        res.json({
-            success: true,
-            downloadUrl: '/api/admin/download/jobs.csv',
-            message: 'Export prepared successfully'
-        });
-    } catch (error) {
-        console.error('Error exporting jobs:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error exporting jobs',
-            error: error.message
-        });
-    }
-});
-
-router.get('/export/messages', async (req, res) => {
-    try {
-        // Implement CSV export for messages
-        res.json({
-            success: true,
-            downloadUrl: '/api/admin/download/messages.csv',
-            message: 'Export prepared successfully'
-        });
-    } catch (error) {
-        console.error('Error exporting messages:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error exporting messages',
-            error: error.message
+            message: 'Error fetching dashboard stats'
         });
     }
 });

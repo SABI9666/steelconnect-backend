@@ -1,644 +1,367 @@
-// Fixed adminController.js - Corrected messages fetching and file download issues
+// Enhanced adminController.js - Add profile review functions
 import { adminDb } from '../config/firebase.js';
+import { sendEmail } from '../utils/emailService.js';
 
-// Dashboard stats - return data in expected format
-export const getDashboardStats = async (req, res) => {
+// Get all pending profile reviews
+export const getPendingProfileReviews = async (req, res) => {
     try {
-        const getCollectionCount = async (collectionName) => {
+        console.log('Fetching pending profile reviews...');
+        const snapshot = await adminDb.collection('profile_reviews')
+            .where('status', '==', 'pending')
+            .orderBy('createdAt', 'desc')
+            .get();
+        
+        const reviews = [];
+        for (const doc of snapshot.docs) {
+            const reviewData = doc.data();
+            
+            // Get full user data
+            let userData = null;
             try {
-                const snapshot = await adminDb.collection(collectionName).get();
-                return snapshot.size || 0;
-            } catch (error) {
-                console.warn(`Could not get count for collection: ${collectionName}`);
-                return 0;
-            }
-        };
-
-        const [userSnapshot, quoteSnapshot, messageSnapshot, jobsSnapshot, estimationSnapshot, subsSnapshot] = await Promise.all([
-            adminDb.collection('users').where('type', '!=', 'admin').get(),
-            adminDb.collection('quotes').get(),
-            adminDb.collection('messages').get(),
-            adminDb.collection('jobs').get(),
-            adminDb.collection('estimations').get(),
-            adminDb.collection('subscriptions').get()
-        ]);
-
-        // Count user types
-        let contractors = 0;
-        let designers = 0;
-        userSnapshot.docs.forEach(doc => {
-            const userData = doc.data();
-            if (userData.type === 'contractor') contractors++;
-            if (userData.type === 'designer') designers++;
-        });
-
-        const stats = {
-            totalUsers: userSnapshot.size,
-            contractors: contractors,
-            designers: designers,
-            totalQuotes: quoteSnapshot.size,
-            totalMessages: messageSnapshot.size,
-            totalJobs: jobsSnapshot.size,
-            totalEstimations: estimationSnapshot.size,
-            totalSubscriptions: subsSnapshot.size,
-            activeJobs: 0,
-            completedJobs: 0
-        };
-
-        // Calculate active/completed jobs
-        jobsSnapshot.docs.forEach(doc => {
-            const jobData = doc.data();
-            if (jobData.status === 'active' || jobData.status === 'open') {
-                stats.activeJobs++;
-            } else if (jobData.status === 'completed') {
-                stats.completedJobs++;
-            }
-        });
-
-        res.json({
-            success: true,
-            data: {
-                stats: stats,
-                adminUser: req.user?.email || 'admin@steelconnect.com'
-            }
-        });
-    } catch (error) {
-        console.error('Error fetching dashboard stats:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error fetching dashboard statistics',
-            error: error.message 
-        });
-    }
-};
-
-// Get all users - fix data structure
-export const getAllUsers = async (req, res) => {
-    try {
-        const snapshot = await adminDb.collection('users').where('type', '!=', 'admin').get();
-        const users = snapshot.docs.map(doc => {
-            const userData = doc.data();
-            const { password, ...userWithoutPassword } = userData;
-            return { 
-                _id: doc.id, 
-                id: doc.id,
-                name: userData.name || userData.firstName + ' ' + (userData.lastName || ''),
-                email: userData.email,
-                type: userData.type || 'user',
-                role: userData.role || userData.type || 'user',
-                isActive: userData.isActive !== false,
-                company: userData.company || userData.companyName,
-                phone: userData.phone,
-                createdAt: userData.createdAt || userData.joinedAt,
-                ...userWithoutPassword
-            };
-        });
-        
-        res.json({ 
-            success: true, 
-            data: users
-        });
-    } catch (error) {
-        console.error('Error fetching users:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error fetching users',
-            error: error.message
-        });
-    }
-};
-
-// Get all quotes - fix data structure
-export const getAllQuotes = async (req, res) => {
-    try {
-        const snapshot = await adminDb.collection('quotes').orderBy('createdAt', 'desc').get();
-        const quotes = [];
-        
-        for (const doc of snapshot.docs) {
-            const quoteData = doc.data();
-            let userData = null;
-            
-            if (quoteData.userId) {
-                try {
-                    const userDoc = await adminDb.collection('users').doc(quoteData.userId).get();
-                    if (userDoc.exists) {
-                        const { password, ...userInfo } = userDoc.data();
-                        userData = { id: userDoc.id, ...userInfo };
-                    }
-                } catch (userError) {
-                    console.warn(`Could not fetch user data for userId: ${quoteData.userId}`);
-                }
-            }
-            
-            quotes.push({
-                _id: doc.id,
-                id: doc.id,
-                clientName: userData?.name || quoteData.clientName || 'Unknown',
-                clientEmail: userData?.email || quoteData.clientEmail || 'N/A',
-                projectTitle: quoteData.projectTitle || quoteData.title || 'Untitled',
-                projectType: quoteData.projectType || quoteData.category || 'General',
-                amount: quoteData.amount || quoteData.estimatedAmount || 0,
-                status: quoteData.status || 'pending',
-                createdAt: quoteData.createdAt,
-                ...quoteData
-            });
-        }
-        
-        res.json({ 
-            success: true, 
-            data: quotes
-        });
-    } catch (error) {
-        console.error('Error fetching quotes:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error fetching quotes',
-            error: error.message
-        });
-    }
-};
-
-// Get all jobs - fix data structure
-export const getAllJobs = async (req, res) => {
-    try {
-        const snapshot = await adminDb.collection('jobs').orderBy('createdAt', 'desc').get();
-        const jobs = snapshot.docs.map(doc => {
-            const jobData = doc.data();
-            return { 
-                _id: doc.id, 
-                id: doc.id,
-                title: jobData.title || jobData.projectTitle || 'Untitled Job',
-                projectTitle: jobData.title || jobData.projectTitle || 'Untitled Job',
-                category: jobData.category || jobData.type || 'General',
-                type: jobData.type || jobData.category || 'General',
-                status: jobData.status || 'pending',
-                budget: jobData.budget || jobData.amount || 0,
-                clientName: jobData.clientName || jobData.posterName || 'Unknown',
-                clientEmail: jobData.clientEmail || jobData.posterEmail || 'N/A',
-                contractorName: jobData.contractorName || jobData.assignedTo || 'Unassigned',
-                contractorEmail: jobData.contractorEmail || 'N/A',
-                createdAt: jobData.createdAt,
-                ...jobData
-            };
-        });
-        
-        res.json({ 
-            success: true, 
-            data: jobs
-        });
-    } catch (error) {
-        console.error('Error fetching jobs:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error fetching jobs',
-            error: error.message
-        });
-    }
-};
-
-// FIXED: Get all messages - corrected data structure and response format
-export const getAllMessages = async (req, res) => {
-    try {
-        console.log('Fetching messages for admin...');
-        const snapshot = await adminDb.collection('messages').orderBy('createdAt', 'desc').get();
-        console.log(`Found ${snapshot.size} messages in database`);
-        
-        const messages = [];
-        
-        for (const doc of snapshot.docs) {
-            const messageData = doc.data();
-            let userData = null;
-            
-            // Try to fetch user data if senderId exists
-            if (messageData.senderId) {
-                try {
-                    const userDoc = await adminDb.collection('users').doc(messageData.senderId).get();
-                    if (userDoc.exists) {
-                        const { password, ...userInfo } = userDoc.data();
-                        userData = { id: userDoc.id, ...userInfo };
-                    }
-                } catch (userError) {
-                    console.warn(`Could not fetch user data for senderId: ${messageData.senderId}`);
-                }
-            }
-            
-            // Create standardized message object
-            const message = {
-                _id: doc.id,
-                id: doc.id,
-                senderName: userData?.name || messageData.senderName || messageData.from || messageData.name || 'Anonymous',
-                senderEmail: userData?.email || messageData.senderEmail || messageData.email || messageData.fromEmail || 'N/A',
-                subject: messageData.subject || messageData.title || messageData.topic || 'No Subject',
-                content: messageData.content || messageData.message || messageData.text || messageData.body || '',
-                type: messageData.type || messageData.category || 'general',
-                status: messageData.status || (messageData.isRead ? 'read' : 'unread'),
-                isRead: messageData.isRead || false,
-                createdAt: messageData.createdAt || messageData.sentAt || messageData.timestamp,
-                senderId: messageData.senderId,
-                ...messageData // Include all original data
-            };
-            
-            messages.push(message);
-        }
-        
-        console.log(`Processed ${messages.length} messages for admin response`);
-        
-        // FIXED: Return messages array wrapped in data object
-        res.json({ 
-            success: true, 
-            data: {
-                messages: messages // Correct structure expected by frontend
-            }
-        });
-    } catch (error) {
-        console.error('Error fetching messages:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error fetching messages',
-            error: error.message
-        });
-    }
-};
-
-// Get all subscriptions - fix data structure
-export const getAllSubscriptions = async (req, res) => {
-    try {
-        const snapshot = await adminDb.collection('subscriptions').orderBy('startDate', 'desc').get();
-        const subscriptions = [];
-        
-        for (const doc of snapshot.docs) {
-            const subData = doc.data();
-            let userData = null;
-            
-            if (subData.userId) {
-                try {
-                    const userDoc = await adminDb.collection('users').doc(subData.userId).get();
-                    if (userDoc.exists) {
-                        const { password, ...userInfo } = userDoc.data();
-                        userData = { id: userDoc.id, ...userInfo };
-                    }
-                } catch (userError) {
-                    console.warn(`Could not fetch user data for userId: ${subData.userId}`);
-                }
-            }
-            
-            subscriptions.push({
-                _id: doc.id,
-                id: doc.id,
-                userName: userData?.name || subData.userName || 'Unknown',
-                userEmail: userData?.email || subData.userEmail || 'N/A',
-                planName: subData.planName || subData.plan?.name || 'Unknown Plan',
-                planPrice: subData.planPrice || subData.amount || 0,
-                planInterval: subData.planInterval || subData.billing || 'month',
-                status: subData.status || 'active',
-                startDate: subData.startDate || subData.createdAt,
-                nextBillingDate: subData.nextBillingDate,
-                ...subData,
-                user: userData
-            });
-        }
-        
-        res.json({ 
-            success: true, 
-            data: subscriptions
-        });
-    } catch (error) {
-        console.error('Error fetching subscriptions:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error fetching subscriptions',
-            error: error.message
-        });
-    }
-};
-
-// FIXED: Get all estimations with proper file handling
-export const getAllEstimations = async (req, res) => {
-    try {
-        console.log('Fetching estimations for admin...');
-        const snapshot = await adminDb.collection('estimations').orderBy('createdAt', 'desc').get();
-        console.log(`Found ${snapshot.size} estimations in database`);
-        
-        const estimations = [];
-        
-        for (const doc of snapshot.docs) {
-            const estimationData = doc.data();
-            let userData = null;
-            
-            // Try to fetch contractor data
-            if (estimationData.contractorId || estimationData.userId) {
-                try {
-                    const userId = estimationData.contractorId || estimationData.userId;
-                    const userDoc = await adminDb.collection('users').doc(userId).get();
-                    if (userDoc.exists) {
-                        const { password, ...userInfo } = userDoc.data();
-                        userData = { id: userDoc.id, ...userInfo };
-                    }
-                } catch (userError) {
-                    console.warn(`Could not fetch user data for contractor: ${estimationData.contractorId || estimationData.userId}`);
-                }
-            }
-            
-            // Create standardized estimation object
-            const estimation = {
-                _id: doc.id,
-                id: doc.id,
-                projectTitle: estimationData.projectTitle || estimationData.title || 'Untitled Project',
-                projectType: estimationData.projectType || estimationData.category || 'General',
-                contractorName: userData?.name || estimationData.contractorName || 'Unknown',
-                contractorEmail: userData?.email || estimationData.contractorEmail || 'N/A',
-                contractorCompany: userData?.company || estimationData.contractorCompany || '',
-                status: estimationData.status || 'pending',
-                description: estimationData.description || '',
-                uploadedFiles: estimationData.uploadedFiles || estimationData.files || [],
-                resultFile: estimationData.resultFile || null,
-                dueDate: estimationData.dueDate,
-                createdAt: estimationData.createdAt,
-                updatedAt: estimationData.updatedAt,
-                ...estimationData
-            };
-            
-            estimations.push(estimation);
-        }
-        
-        console.log(`Processed ${estimations.length} estimations for admin response`);
-        
-        res.json({ 
-            success: true, 
-            data: {
-                estimations: estimations
-            }
-        });
-    } catch (error) {
-        console.error('Error fetching estimations:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error fetching estimations',
-            error: error.message
-        });
-    }
-};
-
-// FIXED: Get single estimation with files
-export const getEstimationById = async (req, res) => {
-    try {
-        const { estimationId } = req.params;
-        console.log(`Fetching estimation details for ID: ${estimationId}`);
-        
-        const doc = await adminDb.collection('estimations').doc(estimationId).get();
-        
-        if (!doc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'Estimation not found'
-            });
-        }
-        
-        const estimationData = doc.data();
-        let userData = null;
-        
-        // Fetch contractor data
-        if (estimationData.contractorId || estimationData.userId) {
-            try {
-                const userId = estimationData.contractorId || estimationData.userId;
-                const userDoc = await adminDb.collection('users').doc(userId).get();
+                const userDoc = await adminDb.collection('users').doc(reviewData.userId).get();
                 if (userDoc.exists) {
                     const { password, ...userInfo } = userDoc.data();
                     userData = { id: userDoc.id, ...userInfo };
                 }
             } catch (userError) {
-                console.warn(`Could not fetch user data for estimation: ${estimationId}`);
+                console.warn(`Could not fetch user data for review: ${reviewData.userId}`);
             }
+            
+            reviews.push({
+                _id: doc.id,
+                id: doc.id,
+                ...reviewData,
+                user: userData
+            });
         }
         
-        const estimation = {
+        res.json({
+            success: true,
+            data: reviews
+        });
+    } catch (error) {
+        console.error('Error fetching pending profile reviews:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching profile reviews',
+            error: error.message
+        });
+    }
+};
+
+// Get all profile reviews (with status filter)
+export const getAllProfileReviews = async (req, res) => {
+    try {
+        const { status } = req.query;
+        console.log('Fetching profile reviews with status:', status);
+        
+        let query = adminDb.collection('profile_reviews');
+        
+        if (status && status !== 'all') {
+            query = query.where('status', '==', status);
+        }
+        
+        const snapshot = await query.orderBy('createdAt', 'desc').get();
+        
+        const reviews = [];
+        for (const doc of snapshot.docs) {
+            const reviewData = doc.data();
+            
+            // Get full user data
+            let userData = null;
+            try {
+                const userDoc = await adminDb.collection('users').doc(reviewData.userId).get();
+                if (userDoc.exists) {
+                    const { password, ...userInfo } = userDoc.data();
+                    userData = { id: userDoc.id, ...userInfo };
+                }
+            } catch (userError) {
+                console.warn(`Could not fetch user data for review: ${reviewData.userId}`);
+            }
+            
+            reviews.push({
+                _id: doc.id,
+                id: doc.id,
+                ...reviewData,
+                user: userData
+            });
+        }
+        
+        res.json({
+            success: true,
+            data: reviews
+        });
+    } catch (error) {
+        console.error('Error fetching profile reviews:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching profile reviews',
+            error: error.message
+        });
+    }
+};
+
+// Get single profile review details
+export const getProfileReviewById = async (req, res) => {
+    try {
+        const { reviewId } = req.params;
+        console.log(`Fetching profile review details for ID: ${reviewId}`);
+        
+        const doc = await adminDb.collection('profile_reviews').doc(reviewId).get();
+        
+        if (!doc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'Profile review not found'
+            });
+        }
+        
+        const reviewData = doc.data();
+        
+        // Get full user data
+        let userData = null;
+        try {
+            const userDoc = await adminDb.collection('users').doc(reviewData.userId).get();
+            if (userDoc.exists) {
+                const { password, ...userInfo } = userDoc.data();
+                userData = { id: userDoc.id, ...userInfo };
+            }
+        } catch (userError) {
+            console.warn(`Could not fetch user data for review: ${reviewData.userId}`);
+        }
+        
+        const review = {
             _id: doc.id,
             id: doc.id,
-            projectTitle: estimationData.projectTitle || estimationData.title || 'Untitled Project',
-            projectType: estimationData.projectType || estimationData.category || 'General',
-            contractorName: userData?.name || estimationData.contractorName || 'Unknown',
-            contractorEmail: userData?.email || estimationData.contractorEmail || 'N/A',
-            contractorCompany: userData?.company || estimationData.contractorCompany || '',
-            status: estimationData.status || 'pending',
-            description: estimationData.description || '',
-            uploadedFiles: estimationData.uploadedFiles || estimationData.files || [],
-            resultFile: estimationData.resultFile || null,
-            dueDate: estimationData.dueDate,
-            createdAt: estimationData.createdAt,
-            updatedAt: estimationData.updatedAt,
-            ...estimationData
+            ...reviewData,
+            user: userData
         };
         
         res.json({
             success: true,
             data: {
-                estimation: estimation
+                review: review
             }
         });
     } catch (error) {
-        console.error('Error fetching estimation details:', error);
+        console.error('Error fetching profile review details:', error);
         res.status(500).json({
             success: false,
-            message: 'Error fetching estimation details',
+            message: 'Error fetching profile review details',
             error: error.message
         });
     }
 };
 
-// FIXED: Get estimation files
-export const getEstimationFiles = async (req, res) => {
+// Approve profile
+export const approveProfile = async (req, res) => {
     try {
-        const { estimationId } = req.params;
-        console.log(`Fetching files for estimation ID: ${estimationId}`);
+        const { reviewId } = req.params;
+        const { notes } = req.body;
+        const adminUser = req.user;
         
-        const doc = await adminDb.collection('estimations').doc(estimationId).get();
+        console.log(`Approving profile review: ${reviewId}`);
         
-        if (!doc.exists) {
+        // Get review data
+        const reviewDoc = await adminDb.collection('profile_reviews').doc(reviewId).get();
+        if (!reviewDoc.exists) {
             return res.status(404).json({
                 success: false,
-                message: 'Estimation not found'
+                message: 'Profile review not found'
             });
         }
         
-        const estimationData = doc.data();
-        const files = estimationData.uploadedFiles || estimationData.files || [];
+        const reviewData = reviewDoc.data();
         
-        // Ensure files have proper structure
-        const formattedFiles = files.map(file => ({
-            name: file.name || file.filename || 'Unknown File',
-            url: file.url || file.downloadURL || '',
-            size: file.size || 0,
-            type: file.type || file.mimetype || '',
-            uploadedAt: file.uploadedAt || file.createdAt || estimationData.createdAt
-        }));
+        // Update review status
+        await adminDb.collection('profile_reviews').doc(reviewId).update({
+            status: 'approved',
+            reviewedAt: new Date().toISOString(),
+            reviewedBy: adminUser.email,
+            reviewNotes: notes || 'Profile approved by admin'
+        });
+        
+        // Update user status
+        await adminDb.collection('users').doc(reviewData.userId).update({
+            profileStatus: 'approved',
+            canAccess: true,
+            approvedAt: new Date().toISOString(),
+            approvedBy: adminUser.email
+        });
+        
+        // Send approval email to user
+        try {
+            await sendEmail({
+                to: reviewData.userEmail,
+                subject: 'Profile Approved - Welcome to SteelConnect!',
+                html: `
+                    <h2>Profile Approved!</h2>
+                    <p>Dear ${reviewData.userName},</p>
+                    <p>Congratulations! Your profile has been approved by our admin team.</p>
+                    <p>You now have full access to your SteelConnect ${reviewData.userType} portal.</p>
+                    <p>You can now:</p>
+                    <ul>
+                        ${reviewData.userType === 'designer' ? `
+                            <li>Browse and quote on available projects</li>
+                            <li>Manage your submitted quotes</li>
+                            <li>Communicate with clients</li>
+                        ` : `
+                            <li>Post new projects</li>
+                            <li>Review and approve quotes</li>
+                            <li>Use AI cost estimation tools</li>
+                            <li>Manage approved projects</li>
+                        `}
+                    </ul>
+                    ${notes ? `<p><strong>Admin Note:</strong> ${notes}</p>` : ''}
+                    <p>Welcome to the SteelConnect community!</p>
+                    <br>
+                    <p>The SteelConnect Team</p>
+                `
+            });
+        } catch (emailError) {
+            console.error('Failed to send approval email:', emailError);
+            // Don't fail the request if email fails
+        }
         
         res.json({
             success: true,
-            data: {
-                files: formattedFiles
-            }
+            message: 'Profile approved successfully'
         });
+        
     } catch (error) {
-        console.error('Error fetching estimation files:', error);
+        console.error('Error approving profile:', error);
         res.status(500).json({
             success: false,
-            message: 'Error fetching estimation files',
+            message: 'Error approving profile',
             error: error.message
         });
     }
 };
 
-// FIXED: Get estimation result file
-export const getEstimationResult = async (req, res) => {
+// Reject profile
+export const rejectProfile = async (req, res) => {
     try {
-        const { estimationId } = req.params;
-        console.log(`Fetching result file for estimation ID: ${estimationId}`);
+        const { reviewId } = req.params;
+        const { reason } = req.body;
+        const adminUser = req.user;
         
-        const doc = await adminDb.collection('estimations').doc(estimationId).get();
-        
-        if (!doc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'Estimation not found'
-            });
-        }
-        
-        const estimationData = doc.data();
-        const resultFile = estimationData.resultFile;
-        
-        if (!resultFile) {
-            return res.status(404).json({
-                success: false,
-                message: 'No result file found for this estimation'
-            });
-        }
-        
-        res.json({
-            success: true,
-            data: {
-                resultFile: {
-                    name: resultFile.name || resultFile.filename || 'estimation_result.pdf',
-                    url: resultFile.url || resultFile.downloadURL || '',
-                    size: resultFile.size || 0,
-                    type: resultFile.type || resultFile.mimetype || 'application/pdf',
-                    uploadedAt: resultFile.uploadedAt || estimationData.updatedAt
-                }
-            }
-        });
-    } catch (error) {
-        console.error('Error fetching estimation result:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error fetching estimation result',
-            error: error.message
-        });
-    }
-};
-
-// Update estimation status
-export const updateEstimationStatus = async (req, res) => {
-    try {
-        const { estimationId } = req.params;
-        const { status } = req.body;
-        
-        if (!status) {
+        if (!reason || reason.trim() === '') {
             return res.status(400).json({
                 success: false,
-                message: 'Status is required'
+                message: 'Rejection reason is required'
             });
         }
         
-        await adminDb.collection('estimations').doc(estimationId).update({
-            status: status,
-            updatedAt: new Date().toISOString()
-        });
+        console.log(`Rejecting profile review: ${reviewId}`);
         
-        res.json({
-            success: true,
-            message: 'Estimation status updated successfully'
-        });
-    } catch (error) {
-        console.error('Error updating estimation status:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error updating estimation status',
-            error: error.message
-        });
-    }
-};
-
-// Set estimation due date
-export const setEstimationDueDate = async (req, res) => {
-    try {
-        const { estimationId } = req.params;
-        const { dueDate } = req.body;
-        
-        if (!dueDate) {
-            return res.status(400).json({
+        // Get review data
+        const reviewDoc = await adminDb.collection('profile_reviews').doc(reviewId).get();
+        if (!reviewDoc.exists) {
+            return res.status(404).json({
                 success: false,
-                message: 'Due date is required'
+                message: 'Profile review not found'
             });
         }
         
-        await adminDb.collection('estimations').doc(estimationId).update({
-            dueDate: dueDate,
-            updatedAt: new Date().toISOString()
+        const reviewData = reviewDoc.data();
+        
+        // Update review status
+        await adminDb.collection('profile_reviews').doc(reviewId).update({
+            status: 'rejected',
+            reviewedAt: new Date().toISOString(),
+            reviewedBy: adminUser.email,
+            reviewNotes: reason,
+            rejectionReason: reason
         });
+        
+        // Update user status
+        await adminDb.collection('users').doc(reviewData.userId).update({
+            profileStatus: 'rejected',
+            canAccess: false,
+            rejectionReason: reason,
+            rejectedAt: new Date().toISOString(),
+            rejectedBy: adminUser.email
+        });
+        
+        // Send rejection email to user
+        try {
+            await sendEmail({
+                to: reviewData.userEmail,
+                subject: 'Profile Review Update - SteelConnect',
+                html: `
+                    <h2>Profile Review Update</h2>
+                    <p>Dear ${reviewData.userName},</p>
+                    <p>Thank you for submitting your profile for review. After careful consideration, we need you to make some updates before we can approve your profile.</p>
+                    <p><strong>Reason for rejection:</strong></p>
+                    <p>${reason}</p>
+                    <p>Please log in to your account and update your profile with the necessary changes. Once updated, your profile will be automatically resubmitted for review.</p>
+                    <p>If you have any questions, please don't hesitate to contact our support team.</p>
+                    <br>
+                    <p>The SteelConnect Team</p>
+                `
+            });
+        } catch (emailError) {
+            console.error('Failed to send rejection email:', emailError);
+            // Don't fail the request if email fails
+        }
         
         res.json({
             success: true,
-            message: 'Due date set successfully'
+            message: 'Profile rejected successfully'
         });
+        
     } catch (error) {
-        console.error('Error setting due date:', error);
+        console.error('Error rejecting profile:', error);
         res.status(500).json({
             success: false,
-            message: 'Error setting due date',
+            message: 'Error rejecting profile',
             error: error.message
         });
     }
 };
 
-// User status update
-export const updateUserStatus = async (req, res) => {
+// Get profile statistics
+export const getProfileStats = async (req, res) => {
     try {
-        const { userId } = req.params;
-        const { isActive, status } = req.body;
-
-        await adminDb.collection('users').doc(userId).update({
-            isActive: isActive,
-            status: status || (isActive ? 'active' : 'inactive'),
-            updatedAt: new Date().toISOString()
+        console.log('Fetching profile statistics...');
+        
+        const [pendingSnapshot, approvedSnapshot, rejectedSnapshot] = await Promise.all([
+            adminDb.collection('profile_reviews').where('status', '==', 'pending').get(),
+            adminDb.collection('profile_reviews').where('status', '==', 'approved').get(),
+            adminDb.collection('profile_reviews').where('status', '==', 'rejected').get()
+        ]);
+        
+        // Get user type breakdown for pending reviews
+        const pendingDesigners = [];
+        const pendingContractors = [];
+        
+        pendingSnapshot.docs.forEach(doc => {
+            const reviewData = doc.data();
+            if (reviewData.userType === 'designer') {
+                pendingDesigners.push(reviewData);
+            } else if (reviewData.userType === 'contractor') {
+                pendingContractors.push(reviewData);
+            }
         });
-
-        res.json({ 
-            success: true, 
-            message: 'User status updated successfully.' 
+        
+        const stats = {
+            total: pendingSnapshot.size + approvedSnapshot.size + rejectedSnapshot.size,
+            pending: pendingSnapshot.size,
+            approved: approvedSnapshot.size,
+            rejected: rejectedSnapshot.size,
+            pendingDesigners: pendingDesigners.length,
+            pendingContractors: pendingContractors.length
+        };
+        
+        res.json({
+            success: true,
+            data: stats
         });
     } catch (error) {
-        console.error('Error updating user status:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error updating user status',
-            error: error.message
-        });
-    }
-};
-
-// Delete user
-export const deleteUser = async (req, res) => {
-    try {
-        const { userId } = req.params;
-        await adminDb.collection('users').doc(userId).delete();
-        res.json({ 
-            success: true, 
-            message: 'User deleted successfully.' 
-        });
-    } catch (error) {
-        console.error('Error deleting user:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error deleting user',
+        console.error('Error fetching profile statistics:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching profile statistics',
             error: error.message
         });
     }

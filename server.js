@@ -1,4 +1,4 @@
-// server.js - Enhanced with Profile System, Notification System & Better Error Handling
+// server.js - Complete SteelConnect Backend with Profile Management System
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -12,18 +12,18 @@ import jobsRoutes from './src/routes/jobs.js';
 import quotesRoutes from './src/routes/quotes.js';
 import messagesRoutes from './src/routes/messages.js';
 
-// Import profile routes with enhanced error handling
+// Import enhanced routes with proper error handling
 let profileRoutes;
 try {
     const profileModule = await import('./src/routes/profile.js');
     profileRoutes = profileModule.default;
     console.log('✅ Profile routes imported successfully');
 } catch (error) {
-    console.warn('⚠️ Profile routes not available:', error.message);
-    console.warn('🔍 Profile completion functionality will not work');
+    console.error('❌ Profile routes failed to load:', error.message);
+    console.error('🔍 Profile completion functionality will not work');
+    process.exit(1); // Exit since profile system is critical
 }
 
-// Import admin routes with enhanced error handling
 let adminRoutes;
 try {
     const adminModule = await import('./src/routes/admin.js');
@@ -34,7 +34,6 @@ try {
     console.warn('🔍 Admin functionality will be limited');
 }
 
-// Import estimation routes with enhanced error handling
 let estimationRoutes;
 try {
     const estimationModule = await import('./src/routes/estimation.js');
@@ -45,17 +44,14 @@ try {
     console.warn('🔍 AI estimation features will not work');
 }
 
-// Import notification routes with enhanced error handling
 let notificationRoutes;
 try {
     const notificationModule = await import('./src/routes/notifications.js');
     notificationRoutes = notificationModule.default;
     console.log('✅ Notification routes imported successfully');
-    console.log('🔔 Real-time notification system is active');
 } catch (error) {
-    console.error('❌ Notification routes failed to load:', error.message);
-    console.warn('🔍 You need to create ./src/routes/notifications.js for notifications to work');
-    console.warn('🔍 Users will not receive real-time notifications');
+    console.warn('⚠️ Notification routes not available:', error.message);
+    console.warn('🔍 Real-time notifications will not work');
 }
 
 dotenv.config();
@@ -159,7 +155,10 @@ app.use((req, res, next) => {
     console.log(`${timestamp} - ${method} ${url}`);
     
     if (process.env.NODE_ENV !== 'production' && method !== 'GET') {
-        console.log(`🔍 Body:`, JSON.stringify(req.body, null, 2).substring(0, 200));
+        const bodyStr = JSON.stringify(req.body, null, 2);
+        if (bodyStr.length < 500) {
+            console.log(`🔍 Body:`, bodyStr);
+        }
     }
     
     next();
@@ -177,7 +176,7 @@ app.get('/health', (req, res) => {
             total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + ' MB'
         },
         environment: process.env.NODE_ENV || 'development',
-        version: '1.0.0',
+        version: '2.0.0',
         services: {
             database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
             notifications: notificationRoutes ? 'available' : 'unavailable',
@@ -193,30 +192,92 @@ app.get('/health', (req, res) => {
 // --- Enhanced Root Route ---
 app.get('/', (req, res) => {
     res.json({ 
-        message: 'SteelConnect Backend API is running',
-        version: '1.0.0',
+        message: 'SteelConnect Backend API v2.0 - Profile Management System',
+        version: '2.0.0',
         status: 'healthy',
         documentation: 'Visit /api for available endpoints',
         features: {
+            'Profile Management System': profileRoutes ? '✅ Active' : '❌ Disabled',
             'Real-time Notifications': notificationRoutes ? '✅ Active' : '❌ Disabled',
             'AI Cost Estimation': estimationRoutes ? '✅ Active' : '❌ Disabled',
             'Admin Panel': adminRoutes ? '✅ Active' : '❌ Disabled',
-            'Profile System': profileRoutes ? '✅ Active' : '❌ Disabled',
             'Job Management': '✅ Active',
             'Quote System': '✅ Active',
-            'Messaging': '✅ Active'
+            'Messaging': '✅ Active',
+            'Login Email Notifications': '✅ Active'
         },
         endpoints: {
             health: '/health',
             auth: '/api/auth',
+            profile: '/api/profile',
             admin: '/api/admin',
             jobs: '/api/jobs',
             quotes: '/api/quotes',
             messages: '/api/messages',
             estimation: '/api/estimation',
-            notifications: '/api/notifications',
-            profile: '/api/profile'
+            notifications: '/api/notifications'
         }
+    });
+});
+
+// --- Enhanced API Documentation Endpoint ---
+app.get('/api', (req, res) => {
+    res.json({
+        message: 'SteelConnect API v2.0 - Profile Management System',
+        version: '2.0.0',
+        timestamp: new Date().toISOString(),
+        status: 'operational',
+        authentication: 'Bearer token required for protected routes',
+        profile_system: 'Users must complete profile and get admin approval',
+        available_endpoints: [
+            {
+                path: 'GET /health',
+                description: 'System health check',
+                authentication: 'None'
+            },
+            {
+                path: 'POST /api/auth/register',
+                description: 'User registration',
+                authentication: 'None'
+            },
+            {
+                path: 'POST /api/auth/login',
+                description: 'User login with email notification',
+                authentication: 'None'
+            },
+            {
+                path: 'GET /api/profile/status',
+                description: 'Check profile completion status',
+                authentication: 'Required'
+            },
+            {
+                path: 'PUT /api/profile/complete',
+                description: 'Submit profile for admin approval',
+                authentication: 'Required'
+            },
+            {
+                path: 'GET /api/admin/profile-reviews',
+                description: 'Get pending profile reviews',
+                authentication: 'Required (Admin)',
+                status: adminRoutes ? 'Available' : 'Disabled'
+            },
+            {
+                path: 'GET /api/jobs',
+                description: 'Get all jobs',
+                authentication: 'Required (Approved Profile)'
+            },
+            {
+                path: 'POST /api/jobs',
+                description: 'Create new job',
+                authentication: 'Required (Contractor, Approved Profile)'
+            },
+            {
+                path: 'GET /api/estimation/*',
+                description: 'AI cost estimation',
+                authentication: 'Required (Contractor, Approved Profile)',
+                status: estimationRoutes ? 'Available' : 'Disabled'
+            }
+        ]
     });
 });
 
@@ -227,10 +288,44 @@ console.log('📋 Registering routes...');
 if (authRoutes) {
     app.use('/api/auth', authRoutes);
     console.log('✅ Auth routes registered at /api/auth');
+    console.log('   • User registration with profile workflow');
+    console.log('   • Login with email notifications');
+    console.log('   • Token verification');
 } else {
     console.error('❌ CRITICAL: Auth routes failed to load');
     console.error('🔍 Authentication will not work - application cannot start');
     process.exit(1);
+}
+
+// Profile routes (Critical - for profile management system)
+if (profileRoutes) {
+    app.use('/api/profile', profileRoutes);
+    console.log('✅ Profile routes registered at /api/profile');
+    console.log('👤 Profile management system: ENABLED');
+    console.log('🔍 Profile features available:');
+    console.log('   • Profile completion workflow');
+    console.log('   • File uploads (resumes, certificates)');
+    console.log('   • Admin review system');
+    console.log('   • User type specific forms');
+    console.log('   • Email notifications for approvals');
+    console.log('   • Profile status tracking');
+} else {
+    console.error('❌ CRITICAL: Profile routes failed to load');
+    console.error('🔍 Profile management will not work - required for app functionality');
+    process.exit(1);
+}
+
+// Admin routes (Important - for profile approval)
+if (adminRoutes) {
+    app.use('/api/admin', adminRoutes);
+    console.log('✅ Admin routes registered at /api/admin');
+    console.log('👨‍💼 Admin panel: ENABLED');
+    console.log('   • Profile review and approval system');
+    console.log('   • User management');
+    console.log('   • Dashboard statistics');
+} else {
+    console.warn('⚠️ Admin routes unavailable - profile approval will not work');
+    console.warn('🔍 Create ./src/routes/admin.js for profile approval system');
 }
 
 // Jobs routes (Critical - core functionality)
@@ -263,46 +358,14 @@ if (messagesRoutes) {
     process.exit(1);
 }
 
-// Profile routes (Important - for profile management system)
-if (profileRoutes) {
-    app.use('/api/profile', profileRoutes);
-    console.log('✅ Profile routes registered at /api/profile');
-    console.log('👤 Profile management system: ENABLED');
-    console.log('📝 Profile features available:');
-    console.log('   • Profile completion & status tracking');
-    console.log('   • File uploads (resumes, certificates)');
-    console.log('   • Admin review system');
-    console.log('   • User type specific forms');
-    console.log('   • Email notifications');
-} else {
-    console.warn('⚠️ Profile routes unavailable - profile management will not work');
-    console.warn('🔍 Create ./src/routes/profile.js for profile management system');
-}
-
 // Notification routes (Important - enhances user experience)
 if (notificationRoutes) {
     app.use('/api/notifications', notificationRoutes);
     console.log('✅ Notification routes registered at /api/notifications');
-    console.log('🔔 Real-time notifications: ENABLED');
-    console.log('📱 Users will receive instant updates for:');
-    console.log('   • New job postings');
-    console.log('   • Quote submissions & approvals');
-    console.log('   • New messages');
-    console.log('   • Estimation status changes');
+    console.log('📱 Real-time notifications: ENABLED');
 } else {
     console.warn('⚠️ Notification routes unavailable - notifications will not work');
     console.warn('🔍 Create ./src/routes/notifications.js for real-time notifications');
-    console.warn('🔔 Users will not receive real-time updates');
-}
-
-// Admin routes (Optional - for administration)
-if (adminRoutes) {
-    app.use('/api/admin', adminRoutes);
-    console.log('✅ Admin routes registered at /api/admin');
-    console.log('👨‍💼 Admin panel: ENABLED');
-} else {
-    console.warn('⚠️ Admin routes unavailable - admin panel will not work');
-    console.warn('🔍 Admin functionality will be limited');
 }
 
 // Estimation routes (Optional - AI features)
@@ -310,85 +373,15 @@ if (estimationRoutes) {
     app.use('/api/estimation', estimationRoutes);
     console.log('✅ Estimation routes registered at /api/estimation');
     console.log('🤖 AI Cost Estimation: ENABLED');
+    console.log('   • File upload and processing');
+    console.log('   • Contractor estimation requests');
+    console.log('   • Admin result management');
 } else {
     console.warn('⚠️ Estimation routes unavailable - AI features disabled');
     console.warn('🔍 Cost estimation functionality will not work');
 }
 
 console.log('📦 Route registration completed');
-
-// --- Enhanced API Documentation Endpoint ---
-app.get('/api', (req, res) => {
-    res.json({
-        message: 'SteelConnect API Documentation',
-        version: '1.0.0',
-        timestamp: new Date().toISOString(),
-        status: 'operational',
-        authentication: 'Bearer token required for protected routes',
-        rate_limiting: 'Applied per endpoint',
-        available_endpoints: [
-            {
-                path: 'GET /health',
-                description: 'System health check',
-                authentication: 'None'
-            },
-            {
-                path: 'POST /api/auth/register',
-                description: 'User registration',
-                authentication: 'None'
-            },
-            {
-                path: 'POST /api/auth/login',
-                description: 'User login',
-                authentication: 'None'
-            },
-            {
-                path: 'GET /api/profile/*',
-                description: 'Profile management & completion system',
-                authentication: 'Required',
-                status: profileRoutes ? 'Available' : 'Disabled'
-            },
-            {
-                path: 'GET /api/jobs',
-                description: 'Get all jobs',
-                authentication: 'Optional'
-            },
-            {
-                path: 'POST /api/jobs',
-                description: 'Create new job',
-                authentication: 'Required (Contractor)'
-            },
-            {
-                path: 'GET /api/quotes/*',
-                description: 'Quote management',
-                authentication: 'Required'
-            },
-            {
-                path: 'GET /api/messages/*',
-                description: 'Messaging system',
-                authentication: 'Required'
-            },
-            {
-                path: 'GET /api/notifications/*',
-                description: 'Notification system',
-                authentication: 'Required',
-                status: notificationRoutes ? 'Available' : 'Disabled'
-            },
-            {
-                path: 'GET /api/estimation/*',
-                description: 'AI cost estimation',
-                authentication: 'Required',
-                status: estimationRoutes ? 'Available' : 'Disabled'
-            },
-            {
-                path: 'GET /api/admin/*',
-                description: 'Admin panel',
-                authentication: 'Required (Admin)',
-                status: adminRoutes ? 'Available' : 'Disabled'
-            }
-        ]
-    });
-});
 
 // --- Enhanced Error Handling Middleware ---
 app.use((error, req, res, next) => {
@@ -508,7 +501,7 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // --- Start Server ---
 const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log('🎉 SteelConnect Backend Server Started Successfully');
+    console.log('🎉 SteelConnect Backend v2.0 Started Successfully');
     console.log(`🔗 Server running on port ${PORT}`);
     console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`⏰ Started at: ${new Date().toISOString()}`);
@@ -524,11 +517,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`   Health: http://localhost:${PORT}/health`);
     console.log(`   API Docs: http://localhost:${PORT}/api`);
     console.log(`   Auth: http://localhost:${PORT}/api/auth/*`);
-    
-    if (profileRoutes) {
-        console.log(`   Profile: http://localhost:${PORT}/api/profile/*`);
-    }
-    
+    console.log(`   Profile: http://localhost:${PORT}/api/profile/*`);
     console.log(`   Jobs: http://localhost:${PORT}/api/jobs/*`);
     console.log(`   Quotes: http://localhost:${PORT}/api/quotes/*`);
     console.log(`   Messages: http://localhost:${PORT}/api/messages/*`);
@@ -543,7 +532,10 @@ const server = app.listen(PORT, '0.0.0.0', () => {
         console.log(`   Admin: http://localhost:${PORT}/api/admin/*`);
     }
     
-    console.log('\n🚀 SteelConnect Backend is ready to serve requests!');
+    console.log('\n🚀 SteelConnect Backend v2.0 is ready!');
+    console.log('📋 Profile Management System: ACTIVE');
+    console.log('📧 Login Email Notifications: ACTIVE');
+    console.log('👨‍💼 Admin Approval Workflow: ACTIVE');
     console.log('🔍 Check logs above for any missing features or configurations');
     console.log('');
 });

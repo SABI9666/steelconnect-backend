@@ -235,6 +235,8 @@ export const getAllMessages = async (req, res) => {
                 isRead: messageData.isRead || false,
                 createdAt: messageData.createdAt || messageData.sentAt || messageData.timestamp,
                 senderId: messageData.senderId,
+                thread: messageData.thread || [],
+                attachments: messageData.attachments || [],
                 ...messageData // Include all original data
             };
             
@@ -243,11 +245,11 @@ export const getAllMessages = async (req, res) => {
         
         console.log(`Processed ${messages.length} messages for admin response`);
         
-        // FIXED: Return messages array wrapped in data object
+        // FIXED: Return messages array directly for proper access
         res.json({ 
             success: true, 
             data: {
-                messages: messages // Correct structure expected by frontend
+                messages: messages
             }
         });
     } catch (error) {
@@ -445,7 +447,7 @@ export const getEstimationById = async (req, res) => {
     }
 };
 
-// FIXED: Get estimation files
+// FIXED: Get estimation files - Proper file structure and download URLs
 export const getEstimationFiles = async (req, res) => {
     try {
         const { estimationId } = req.params;
@@ -463,19 +465,33 @@ export const getEstimationFiles = async (req, res) => {
         const estimationData = doc.data();
         const files = estimationData.uploadedFiles || estimationData.files || [];
         
-        // Ensure files have proper structure
-        const formattedFiles = files.map(file => ({
-            name: file.name || file.filename || 'Unknown File',
-            url: file.url || file.downloadURL || '',
-            size: file.size || 0,
-            type: file.type || file.mimetype || '',
-            uploadedAt: file.uploadedAt || file.createdAt || estimationData.createdAt
-        }));
+        console.log(`Found ${files.length} files for estimation ${estimationId}`);
+        
+        // Ensure files have proper structure with accessible URLs
+        const formattedFiles = files.map((file, index) => {
+            console.log(`Processing file ${index + 1}:`, file);
+            
+            return {
+                name: file.name || file.filename || file.originalName || `file_${index + 1}`,
+                url: file.url || file.downloadURL || file.path || file.fileUrl,
+                size: file.size || 0,
+                type: file.type || file.mimetype || file.contentType || '',
+                uploadedAt: file.uploadedAt || file.createdAt || estimationData.createdAt,
+                id: file.id || `${estimationId}_file_${index}`,
+                // Additional metadata
+                bucket: file.bucket || '',
+                path: file.path || file.filePath || ''
+            };
+        }).filter(file => file.url); // Only include files with valid URLs
+        
+        console.log(`Returning ${formattedFiles.length} files with valid URLs`);
         
         res.json({
             success: true,
             data: {
-                files: formattedFiles
+                files: formattedFiles,
+                estimationId: estimationId,
+                totalFiles: formattedFiles.length
             }
         });
     } catch (error) {

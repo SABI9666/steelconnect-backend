@@ -1,4 +1,4 @@
-// Fixed adminController.js - Corrected messages fetching and file download issues
+// Fixed adminController.js - PDF Downloads & Message Blocking
 import { adminDb } from '../config/firebase.js';
 
 // Dashboard stats - return data in expected format
@@ -196,7 +196,7 @@ export const getAllJobs = async (req, res) => {
     }
 };
 
-// FIXED: Get all messages - corrected data structure and response format
+// FIXED: Get all messages with blocking control
 export const getAllMessages = async (req, res) => {
     try {
         console.log('Fetching messages for admin...');
@@ -233,11 +233,14 @@ export const getAllMessages = async (req, res) => {
                 type: messageData.type || messageData.category || 'general',
                 status: messageData.status || (messageData.isRead ? 'read' : 'unread'),
                 isRead: messageData.isRead || false,
+                isBlocked: messageData.isBlocked || false, // Added blocking status
+                blockedAt: messageData.blockedAt || null,
+                blockedBy: messageData.blockedBy || null,
                 createdAt: messageData.createdAt || messageData.sentAt || messageData.timestamp,
                 senderId: messageData.senderId,
                 thread: messageData.thread || [],
                 attachments: messageData.attachments || [],
-                ...messageData // Include all original data
+                ...messageData
             };
             
             messages.push(message);
@@ -245,7 +248,6 @@ export const getAllMessages = async (req, res) => {
         
         console.log(`Processed ${messages.length} messages for admin response`);
         
-        // FIXED: Return messages array directly for proper access
         res.json({ 
             success: true, 
             data: {
@@ -447,7 +449,7 @@ export const getEstimationById = async (req, res) => {
     }
 };
 
-// FIXED: Get estimation files - Proper file structure and download URLs
+// FIXED: Get estimation files with downloadable URLs
 export const getEstimationFiles = async (req, res) => {
     try {
         const { estimationId } = req.params;
@@ -471,14 +473,18 @@ export const getEstimationFiles = async (req, res) => {
         const formattedFiles = files.map((file, index) => {
             console.log(`Processing file ${index + 1}:`, file);
             
+            // Create download URL that goes through our API
+            const downloadUrl = file.url || file.downloadURL;
+            const apiDownloadUrl = `/api/admin/estimations/${estimationId}/files/${encodeURIComponent(file.name || `file_${index}`)}/download`;
+            
             return {
                 name: file.name || file.filename || file.originalName || `file_${index + 1}`,
-                url: file.url || file.downloadURL || file.path || file.fileUrl,
+                url: downloadUrl, // Direct Firebase URL
+                downloadUrl: apiDownloadUrl, // API endpoint for secure download
                 size: file.size || 0,
                 type: file.type || file.mimetype || file.contentType || '',
                 uploadedAt: file.uploadedAt || file.createdAt || estimationData.createdAt,
                 id: file.id || `${estimationId}_file_${index}`,
-                // Additional metadata
                 bucket: file.bucket || '',
                 path: file.path || file.filePath || ''
             };
@@ -499,6 +505,65 @@ export const getEstimationFiles = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error fetching estimation files',
+            error: error.message
+        });
+    }
+};
+
+// FIXED: Download specific estimation file
+export const downloadEstimationFile = async (req, res) => {
+    try {
+        const { estimationId, fileName } = req.params;
+        console.log(`File download requested: ${fileName} from estimation ${estimationId}`);
+        
+        const doc = await adminDb.collection('estimations').doc(estimationId).get();
+        
+        if (!doc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'Estimation not found'
+            });
+        }
+        
+        const estimationData = doc.data();
+        const files = estimationData.uploadedFiles || estimationData.files || [];
+        
+        // Find the specific file
+        const file = files.find(f => 
+            (f.name === decodeURIComponent(fileName)) || 
+            (f.filename === decodeURIComponent(fileName)) ||
+            (f.originalName === decodeURIComponent(fileName))
+        );
+        
+        if (!file) {
+            return res.status(404).json({
+                success: false,
+                message: 'File not found'
+            });
+        }
+        
+        const fileUrl = file.url || file.downloadURL;
+        if (!fileUrl) {
+            return res.status(404).json({
+                success: false,
+                message: 'File URL not available'
+            });
+        }
+        
+        console.log(`Redirecting to file URL: ${fileUrl}`);
+        
+        // Set appropriate headers for download
+        res.setHeader('Content-Disposition', `attachment; filename="${file.name || fileName}"`);
+        res.setHeader('Content-Type', file.type || 'application/octet-stream');
+        
+        // Redirect to the file URL
+        res.redirect(fileUrl);
+        
+    } catch (error) {
+        console.error('Error downloading file:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error downloading file',
             error: error.message
         });
     }
@@ -535,6 +600,7 @@ export const getEstimationResult = async (req, res) => {
                 resultFile: {
                     name: resultFile.name || resultFile.filename || 'estimation_result.pdf',
                     url: resultFile.url || resultFile.downloadURL || '',
+                    downloadUrl: `/api/admin/estimations/${estimationId}/result/download`,
                     size: resultFile.size || 0,
                     type: resultFile.type || resultFile.mimetype || 'application/pdf',
                     uploadedAt: resultFile.uploadedAt || estimationData.updatedAt
@@ -546,6 +612,58 @@ export const getEstimationResult = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error fetching estimation result',
+            error: error.message
+        });
+    }
+};
+
+// FIXED: Download estimation result file
+export const downloadEstimationResult = async (req, res) => {
+    try {
+        const { estimationId } = req.params;
+        console.log(`Result download requested for estimation ${estimationId}`);
+        
+        const doc = await adminDb.collection('estimations').doc(estimationId).get();
+        
+        if (!doc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'Estimation not found'
+            });
+        }
+        
+        const estimationData = doc.data();
+        const resultFile = estimationData.resultFile;
+        
+        if (!resultFile) {
+            return res.status(404).json({
+                success: false,
+                message: 'Result file not found'
+            });
+        }
+        
+        const fileUrl = resultFile.url || resultFile.downloadURL;
+        if (!fileUrl) {
+            return res.status(404).json({
+                success: false,
+                message: 'Result file URL not available'
+            });
+        }
+        
+        console.log(`Redirecting to result file URL: ${fileUrl}`);
+        
+        // Set appropriate headers for download
+        res.setHeader('Content-Disposition', `attachment; filename="${resultFile.name || 'estimation_result.pdf'}"`);
+        res.setHeader('Content-Type', resultFile.type || 'application/pdf');
+        
+        // Redirect to the file URL
+        res.redirect(fileUrl);
+        
+    } catch (error) {
+        console.error('Error downloading result:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error downloading result',
             error: error.message
         });
     }
@@ -610,6 +728,101 @@ export const setEstimationDueDate = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error setting due date',
+            error: error.message
+        });
+    }
+};
+
+// ADDED: Block/Unblock message functionality
+export const blockMessage = async (req, res) => {
+    try {
+        const { messageId } = req.params;
+        const { block = true, reason = '' } = req.body;
+        
+        const updateData = {
+            isBlocked: block,
+            updatedAt: new Date().toISOString()
+        };
+        
+        if (block) {
+            updateData.blockedAt = new Date().toISOString();
+            updateData.blockedBy = req.user?.email || 'admin';
+            updateData.blockReason = reason;
+            updateData.status = 'blocked';
+        } else {
+            updateData.blockedAt = null;
+            updateData.blockedBy = null;
+            updateData.blockReason = null;
+            updateData.status = updateData.isRead ? 'read' : 'unread';
+        }
+        
+        await adminDb.collection('messages').doc(messageId).update(updateData);
+        
+        res.json({
+            success: true,
+            message: `Message ${block ? 'blocked' : 'unblocked'} successfully`
+        });
+    } catch (error) {
+        console.error('Error blocking/unblocking message:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error updating message block status',
+            error: error.message
+        });
+    }
+};
+
+// ADDED: Block user from sending messages
+export const blockUserMessages = async (req, res) => {
+    try {
+        const { userEmail } = req.params;
+        const { block = true, reason = '' } = req.body;
+        
+        // Update user's message blocking status
+        const userSnapshot = await adminDb.collection('users').where('email', '==', userEmail).get();
+        
+        if (userSnapshot.empty) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+        
+        const userDoc = userSnapshot.docs[0];
+        await userDoc.ref.update({
+            messagesBlocked: block,
+            messageBlockReason: block ? reason : null,
+            messageBlockedAt: block ? new Date().toISOString() : null,
+            messageBlockedBy: block ? (req.user?.email || 'admin') : null,
+            updatedAt: new Date().toISOString()
+        });
+        
+        // Also block all existing messages from this user
+        const messagesSnapshot = await adminDb.collection('messages').where('senderEmail', '==', userEmail).get();
+        
+        const batch = adminDb.batch();
+        messagesSnapshot.docs.forEach(messageDoc => {
+            batch.update(messageDoc.ref, {
+                isBlocked: block,
+                blockedAt: block ? new Date().toISOString() : null,
+                blockedBy: block ? (req.user?.email || 'admin') : null,
+                blockReason: block ? reason : null,
+                status: block ? 'blocked' : (messageDoc.data().isRead ? 'read' : 'unread'),
+                updatedAt: new Date().toISOString()
+            });
+        });
+        
+        await batch.commit();
+        
+        res.json({
+            success: true,
+            message: `User ${block ? 'blocked' : 'unblocked'} from sending messages. ${messagesSnapshot.size} existing messages updated.`
+        });
+    } catch (error) {
+        console.error('Error blocking/unblocking user messages:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error updating user message block status',
             error: error.message
         });
     }

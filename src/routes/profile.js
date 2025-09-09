@@ -1,100 +1,6 @@
-// src/routes/profile.js - Complete Profile management routes
-import express from 'express';
-import multer from 'multer';
-import { authenticateToken } from '../middleware/authMiddleware.js';
-import { adminDb, adminStorage } from '../config/firebase.js';
-import { sendEmail, sendProfileApprovalEmail } from '../utils/emailService.js';
+/ Updated profile.js - Replace the validation sections
 
-const router = express.Router();
-
-// Configure multer for file uploads
-const storage = multer.memoryStorage();
-const upload = multer({
-    storage: storage,
-    limits: {
-        fileSize: 10 * 1024 * 1024, // 10MB limit
-    },
-    fileFilter: (req, file, cb) => {
-        const allowedTypes = [
-            'application/pdf',
-            'application/msword',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'image/jpeg',
-            'image/png'
-        ];
-        if (allowedTypes.includes(file.mimetype)) {
-            cb(null, true);
-        } else {
-            cb(new Error('Invalid file type. Only PDF, DOC, DOCX, JPG, PNG are allowed.'), false);
-        }
-    }
-});
-
-// Helper function to upload file to Firebase Storage
-async function uploadToFirebaseStorage(file, path) {
-    try {
-        const bucket = adminStorage.bucket();
-        const fileRef = bucket.file(path);
-        
-        const stream = fileRef.createWriteStream({
-            metadata: {
-                contentType: file.mimetype,
-            },
-        });
-
-        return new Promise((resolve, reject) => {
-            stream.on('error', reject);
-            stream.on('finish', async () => {
-                try {
-                    await fileRef.makePublic();
-                    const publicUrl = `https://storage.googleapis.com/${bucket.name}/${path}`;
-                    resolve(publicUrl);
-                } catch (error) {
-                    reject(error);
-                }
-            });
-            stream.end(file.buffer);
-        });
-    } catch (error) {
-        throw error;
-    }
-}
-
-// Apply authentication to all routes
-router.use(authenticateToken);
-
-// Get current user profile
-router.get('/me', async (req, res) => {
-    try {
-        const userDoc = await adminDb.collection('users').doc(req.user.userId).get();
-        
-        if (!userDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'User not found'
-            });
-        }
-
-        const userData = userDoc.data();
-        const { password, ...userProfile } = userData;
-        
-        res.json({
-            success: true,
-            data: {
-                ...userProfile,
-                id: userDoc.id
-            }
-        });
-    } catch (error) {
-        console.error('Error fetching user profile:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error fetching profile'
-        });
-    }
-});
-
-// Complete profile submission
+// Complete profile submission - UPDATED VALIDATION
 router.put('/complete', upload.fields([
     { name: 'resume', maxCount: 1 },
     { name: 'certificates', maxCount: 5 }
@@ -124,20 +30,20 @@ router.put('/complete', upload.fields([
             submittedAt: new Date().toISOString()
         };
 
-        // Type-specific profile fields
+        // Type-specific profile fields with UPDATED VALIDATION
         if (userType === 'designer') {
-            // Validate required fields for designers
-            if (!req.body.linkedinProfile || !req.body.skills) {
+            // UPDATED: Only skills are required for designers
+            if (!req.body.skills) {
                 return res.status(400).json({
                     success: false,
-                    message: 'LinkedIn profile and skills are required for designers'
+                    message: 'Skills are required for designers'
                 });
             }
 
             // Designer profile fields
             profileData = {
                 ...profileData,
-                linkedinProfile: req.body.linkedinProfile || '',
+                linkedinProfile: req.body.linkedinProfile || '', // Optional now
                 skills: req.body.skills ? req.body.skills.split(',').map(s => s.trim()) : [],
                 experience: req.body.experience || '',
                 education: req.body.education || '',
@@ -196,11 +102,11 @@ router.put('/complete', upload.fields([
                 }
             }
         } else if (userType === 'contractor') {
-            // Validate required fields for contractors
-            if (!req.body.companyName || !req.body.linkedinProfile) {
+            // UPDATED: Only company name is required for contractors
+            if (!req.body.companyName) {
                 return res.status(400).json({
                     success: false,
-                    message: 'Company name and LinkedIn profile are required for contractors'
+                    message: 'Company name is required for contractors'
                 });
             }
 
@@ -208,7 +114,7 @@ router.put('/complete', upload.fields([
             profileData = {
                 ...profileData,
                 companyName: req.body.companyName || '',
-                linkedinProfile: req.body.linkedinProfile || '',
+                linkedinProfile: req.body.linkedinProfile || '', // Optional now
                 companyWebsite: req.body.companyWebsite || '',
                 businessType: req.body.businessType || '',
                 yearEstablished: req.body.yearEstablished ? parseInt(req.body.yearEstablished) : null,
@@ -219,6 +125,7 @@ router.put('/complete', upload.fields([
             };
         }
 
+        // Rest of the function remains the same...
         // Update user profile
         await adminDb.collection('users').doc(userId).update(profileData);
 
@@ -252,7 +159,7 @@ router.put('/complete', upload.fields([
                             <h2>Dear ${currentUserData.name},</h2>
                             <p>Your ${userType} profile has been successfully submitted for review. Our admin team will review your profile within 24-48 hours.</p>
                             <p>You will receive an email notification once your profile is approved.</p>
-                            <p><strong>Note:</strong> Until approval, your account will have limited functionality. You'll be able to access the platform fully once approved.</p>
+                            <p><strong>Note:</strong> You can continue using the platform with limited functionality until approval.</p>
                             <br>
                             <p>Thank you for joining SteelConnect!</p>
                             <p>The SteelConnect Team</p>
@@ -264,10 +171,10 @@ router.put('/complete', upload.fields([
             console.error('Failed to send profile submission email:', emailError);
         }
 
-        // Restrict access until approved
-        await adminDb.collection('users').doc(userId).update({
-            canAccess: false
-        });
+        // UPDATED: Don't restrict access - allow limited access
+        // await adminDb.collection('users').doc(userId).update({
+        //     canAccess: false
+        // });
 
         console.log(`Profile submitted for review: ${currentUserData.email}`);
 
@@ -277,7 +184,7 @@ router.put('/complete', upload.fields([
             data: {
                 status: 'pending',
                 profileCompleted: true,
-                message: 'Your profile is under review. You will receive an email once approved.'
+                message: 'Your profile is under review. You have limited access until approved.'
             }
         });
 
@@ -291,130 +198,7 @@ router.put('/complete', upload.fields([
     }
 });
 
-// Check profile status
-router.get('/status', async (req, res) => {
-    try {
-        const userId = req.user.userId;
-        
-        const userDoc = await adminDb.collection('users').doc(userId).get();
-        if (!userDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'User not found'
-            });
-        }
-
-        const userData = userDoc.data();
-        
-        res.json({
-            success: true,
-            data: {
-                profileCompleted: userData.profileCompleted || false,
-                profileStatus: userData.profileStatus || 'incomplete',
-                canAccess: userData.canAccess !== false,
-                rejectionReason: userData.rejectionReason || null,
-                userType: userData.type
-            }
-        });
-    } catch (error) {
-        console.error('Error checking profile status:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error checking profile status'
-        });
-    }
-});
-
-// Update profile after approval (settings page)
-router.put('/update', upload.fields([
-    { name: 'resume', maxCount: 1 },
-    { name: 'certificates', maxCount: 5 }
-]), async (req, res) => {
-    try {
-        const userId = req.user.userId;
-        const userType = req.user.type;
-        
-        // Get current user data
-        const userDoc = await adminDb.collection('users').doc(userId).get();
-        if (!userDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'User not found'
-            });
-        }
-
-        const currentUserData = userDoc.data();
-        
-        // Check if profile is approved
-        if (currentUserData.profileStatus !== 'approved') {
-            return res.status(403).json({
-                success: false,
-                message: 'Profile must be approved before updates'
-            });
-        }
-
-        let updateData = {
-            updatedAt: new Date().toISOString()
-        };
-
-        // Update basic info
-        if (req.body.name) updateData.name = req.body.name;
-
-        // Type-specific updates
-        if (userType === 'designer') {
-            if (req.body.linkedinProfile) updateData.linkedinProfile = req.body.linkedinProfile;
-            if (req.body.skills) updateData.skills = req.body.skills.split(',').map(s => s.trim());
-            if (req.body.experience) updateData.experience = req.body.experience;
-            if (req.body.education) updateData.education = req.body.education;
-            if (req.body.specializations) updateData.specializations = req.body.specializations.split(',').map(s => s.trim());
-            if (req.body.bio) updateData.bio = req.body.bio;
-            if (req.body.hourlyRate) updateData.hourlyRate = parseFloat(req.body.hourlyRate);
-
-            // Handle file updates
-            if (req.files && req.files.resume && req.files.resume[0]) {
-                const resumeFile = req.files.resume[0];
-                const resumePath = `profiles/resumes/${userId}_${Date.now()}_${resumeFile.originalname}`;
-                const resumeUrl = await uploadToFirebaseStorage(resumeFile, resumePath);
-                
-                updateData.resume = {
-                    filename: resumeFile.originalname,
-                    mimetype: resumeFile.mimetype,
-                    size: resumeFile.size,
-                    uploadedAt: new Date().toISOString(),
-                    url: resumeUrl
-                };
-            }
-
-        } else if (userType === 'contractor') {
-            if (req.body.companyName) updateData.companyName = req.body.companyName;
-            if (req.body.linkedinProfile) updateData.linkedinProfile = req.body.linkedinProfile;
-            if (req.body.companyWebsite) updateData.companyWebsite = req.body.companyWebsite;
-            if (req.body.businessType) updateData.businessType = req.body.businessType;
-            if (req.body.yearEstablished) updateData.yearEstablished = parseInt(req.body.yearEstablished);
-            if (req.body.companySize) updateData.companySize = req.body.companySize;
-            if (req.body.description) updateData.description = req.body.description;
-            if (req.body.address) updateData.address = req.body.address;
-            if (req.body.phone) updateData.phone = req.body.phone;
-        }
-
-        // Update user profile
-        await adminDb.collection('users').doc(userId).update(updateData);
-
-        res.json({
-            success: true,
-            message: 'Profile updated successfully'
-        });
-
-    } catch (error) {
-        console.error('Error updating profile:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error updating profile'
-        });
-    }
-});
-
-// Get profile form fields based on user type
+// Updated form fields - Make LinkedIn optional
 router.get('/form-fields', async (req, res) => {
     try {
         const userType = req.user.type;
@@ -423,8 +207,8 @@ router.get('/form-fields', async (req, res) => {
         
         if (userType === 'designer') {
             fields = [
-                { name: 'linkedinProfile', type: 'url', label: 'LinkedIn Profile URL', required: true, placeholder: 'https://linkedin.com/in/yourprofile' },
                 { name: 'skills', type: 'text', label: 'Skills (comma-separated)', required: true, placeholder: 'AutoCAD, Revit, Structural Analysis, Steel Design' },
+                { name: 'linkedinProfile', type: 'url', label: 'LinkedIn Profile URL', required: false, placeholder: 'https://linkedin.com/in/yourprofile' }, // Made optional
                 { name: 'experience', type: 'textarea', label: 'Years of Experience', required: false, placeholder: 'Describe your professional experience...' },
                 { name: 'education', type: 'textarea', label: 'Education Background', required: false, placeholder: 'Your educational qualifications...' },
                 { name: 'specializations', type: 'text', label: 'Specializations (comma-separated)', required: false, placeholder: 'Seismic Design, Bridge Engineering, High-rise Structures' },
@@ -436,7 +220,7 @@ router.get('/form-fields', async (req, res) => {
         } else if (userType === 'contractor') {
             fields = [
                 { name: 'companyName', type: 'text', label: 'Company Name', required: true, placeholder: 'Your Company LLC' },
-                { name: 'linkedinProfile', type: 'url', label: 'LinkedIn Profile URL', required: true, placeholder: 'https://linkedin.com/company/yourcompany' },
+                { name: 'linkedinProfile', type: 'url', label: 'LinkedIn Profile URL', required: false, placeholder: 'https://linkedin.com/company/yourcompany' }, // Made optional
                 { name: 'companyWebsite', type: 'url', label: 'Company Website', required: false, placeholder: 'https://yourcompany.com' },
                 { name: 'businessType', type: 'select', label: 'Business Type', required: false, options: ['Construction', 'Engineering', 'Architecture', 'Consulting', 'Other'] },
                 { name: 'yearEstablished', type: 'number', label: 'Year Established', required: false, placeholder: '2010' },
@@ -462,5 +246,3 @@ router.get('/form-fields', async (req, res) => {
         });
     }
 });
-
-export default router;

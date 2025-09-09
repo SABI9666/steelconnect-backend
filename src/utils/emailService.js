@@ -1,299 +1,210 @@
-// src/utils/emailService.js - Fixed Email service using Resend API
+// src/services/emailService.js - Updated for domain verification
 import { Resend } from 'resend';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-// Use a verified sender email - MUST be verified in your Resend account
-// Use onboarding@resend.dev for testing, or your verified domain
-const DEFAULT_FROM = process.env.DEFAULT_FROM_EMAIL || 'onboarding@resend.dev';
+// Update your from address to use your verified domain
+const FROM_ADDRESS = 'noreply@steelconnect.com'; // Replace with your verified domain
+const FALLBACK_FROM = 'sabincn676@gmail.com'; // Your verified email for testing
 
-/**
- * Send email using Resend API
- */
-export async function sendEmail(options) {
-    try {
-        const { to, subject, html, text, from = DEFAULT_FROM } = options;
-        
-        if (!process.env.RESEND_API_KEY) {
-            console.warn('RESEND_API_KEY not configured. Email sending disabled.');
-            return { success: false, error: 'Email service not configured' };
-        }
-        
-        console.log(`Sending email to: ${to}, Subject: ${subject}`);
-        
-        const emailData = {
-            from,
-            to: [to],
-            subject,
-            html
-        };
-        
-        // Add plain text if provided
-        if (text) {
-            emailData.text = text;
-        }
-        
-        const response = await resend.emails.send(emailData);
-        
-        if (response.error) {
-            console.error('Resend API error:', response.error);
-            // Don't throw error for domain verification issues - just log and return
-            if (response.error.error?.includes('domain is not verified')) {
-                console.warn('Domain not verified - using default sender');
-                // Retry with default sender
-                const retryData = { ...emailData, from: 'onboarding@resend.dev' };
-                const retryResponse = await resend.emails.send(retryData);
-                
-                if (retryResponse.error) {
-                    console.error('Retry failed:', retryResponse.error);
-                    return { success: false, error: 'Email service temporarily unavailable' };
-                }
-                
-                console.log('Email sent with default sender:', retryResponse.data?.id);
-                return { 
-                    success: true, 
-                    messageId: retryResponse.data?.id,
-                    data: retryResponse.data 
-                };
+class EmailService {
+    static async sendEmail(to, subject, htmlContent, textContent = '') {
+        try {
+            // Use verified domain email or fallback for testing
+            const fromAddress = process.env.NODE_ENV === 'production' 
+                ? FROM_ADDRESS 
+                : FALLBACK_FROM;
+
+            console.log(`Attempting to send email from: ${fromAddress} to: ${to}`);
+
+            const emailData = {
+                from: fromAddress,
+                to: Array.isArray(to) ? to : [to],
+                subject,
+                html: htmlContent,
+            };
+
+            // Add text content if provided
+            if (textContent) {
+                emailData.text = textContent;
             }
-            return { success: false, error: response.error.message || 'Failed to send email' };
-        }
-        
-        console.log('Email sent successfully:', response.data?.id);
-        return { 
-            success: true, 
-            messageId: response.data?.id,
-            data: response.data 
-        };
-        
-    } catch (error) {
-        console.error('Email sending error:', error);
-        // Don't throw error - return failure response instead
-        return { success: false, error: error.message };
-    }
-}
 
-/**
- * Send login notification email - Made non-blocking
- */
-export async function sendLoginNotification(user, loginTime, ipAddress = 'Unknown', userAgent = 'Unknown') {
-    try {
-        const formattedTime = new Date(loginTime).toLocaleString('en-US', {
-            weekday: 'long',
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-            timeZoneName: 'short'
-        });
-        
-        // Extract browser info from user agent
-        const browserInfo = extractBrowserInfo(userAgent);
-        
+            const response = await resend.emails.send(emailData);
+
+            console.log('Email sent successfully:', response);
+            return { success: true, messageId: response.id };
+
+        } catch (error) {
+            console.error('Email sending failed:', error);
+            
+            // More detailed error handling
+            if (error.message && error.message.includes('testing emails')) {
+                console.log('Domain not verified - using fallback email');
+                
+                // Try again with fallback email for testing
+                try {
+                    const fallbackResponse = await resend.emails.send({
+                        from: FALLBACK_FROM,
+                        to: [FALLBACK_FROM], // Send to yourself for testing
+                        subject: `[TEST] ${subject} - Original recipient: ${to}`,
+                        html: `
+                            <p><strong>This email was originally intended for:</strong> ${to}</p>
+                            <hr>
+                            ${htmlContent}
+                        `,
+                    });
+                    
+                    console.log('Fallback email sent:', fallbackResponse);
+                    return { success: true, messageId: fallbackResponse.id, note: 'Sent to fallback email' };
+                    
+                } catch (fallbackError) {
+                    console.error('Fallback email also failed:', fallbackError);
+                    return { success: false, error: fallbackError.message };
+                }
+            }
+            
+            return { success: false, error: error.message };
+        }
+    }
+
+    // Login notification email
+    static async sendLoginNotification(userEmail, loginData) {
         const subject = 'Security Alert: Login to Your SteelConnect Account';
         
-        const html = `
+        const htmlContent = `
             <!DOCTYPE html>
             <html>
             <head>
-                <meta charset="utf-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Login Notification</title>
                 <style>
-                    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f5f7fa; }
-                    .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
-                    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }
-                    .header h1 { margin: 0; font-size: 24px; }
-                    .content { padding: 30px; }
-                    .login-details { background-color: #f8f9fa; border-radius: 8px; padding: 20px; margin: 20px 0; }
-                    .detail-row { display: flex; justify-content: space-between; margin-bottom: 10px; }
-                    .detail-label { font-weight: 600; color: #666; }
-                    .detail-value { color: #333; }
-                    .security-notice { background-color: #e3f2fd; border-left: 4px solid #2196f3; padding: 15px; margin: 20px 0; }
-                    .footer { background-color: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #666; }
-                    .btn { display: inline-block; background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 10px 0; }
+                    body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; }
+                    .header { background: #1f2937; color: white; padding: 20px; text-align: center; }
+                    .content { padding: 20px; }
+                    .alert { background: #fef2f2; border: 1px solid #fecaca; padding: 15px; border-radius: 8px; }
+                    .info { background: #f0f9ff; border: 1px solid #bae6fd; padding: 10px; border-radius: 5px; margin: 10px 0; }
                 </style>
             </head>
             <body>
-                <div class="container">
-                    <div class="header">
-                        <h1>🔒 Login Notification</h1>
-                        <p>SteelConnect Security Alert</p>
+                <div class="header">
+                    <h1>SteelConnect Security Alert</h1>
+                </div>
+                <div class="content">
+                    <div class="alert">
+                        <h2>New Login Detected</h2>
+                        <p>We detected a new login to your SteelConnect account.</p>
                     </div>
                     
-                    <div class="content">
-                        <h2>Hello ${user.name},</h2>
-                        
-                        <p>We detected a login to your SteelConnect account. Here are the details:</p>
-                        
-                        <div class="login-details">
-                            <div class="detail-row">
-                                <span class="detail-label">Time:</span>
-                                <span class="detail-value">${formattedTime}</span>
-                            </div>
-                            <div class="detail-row">
-                                <span class="detail-label">Account Type:</span>
-                                <span class="detail-value">${user.type.charAt(0).toUpperCase() + user.type.slice(1)}</span>
-                            </div>
-                            <div class="detail-row">
-                                <span class="detail-label">IP Address:</span>
-                                <span class="detail-value">${ipAddress}</span>
-                            </div>
-                            <div class="detail-row">
-                                <span class="detail-label">Browser:</span>
-                                <span class="detail-value">${browserInfo}</span>
-                            </div>
-                        </div>
-                        
-                        <div class="security-notice">
-                            <strong>Was this you?</strong><br>
-                            If you recognize this login, no action is needed. If you don't recognize this activity, please secure your account immediately.
-                        </div>
-                        
-                        <p>If this wasn't you, please:</p>
-                        <ul>
-                            <li>Change your password immediately</li>
-                            <li>Review your account activity</li>
-                            <li>Contact our support team</li>
-                        </ul>
-                        
-                        <p>Thank you for using SteelConnect!</p>
+                    <div class="info">
+                        <h3>Login Details:</h3>
+                        <p><strong>Email:</strong> ${userEmail}</p>
+                        <p><strong>Time:</strong> ${new Date().toLocaleString()}</p>
+                        <p><strong>IP Address:</strong> ${loginData.ip || 'Unknown'}</p>
+                        <p><strong>Location:</strong> ${loginData.location || 'Unknown'}</p>
                     </div>
                     
-                    <div class="footer">
-                        <p>This is an automated security notification from SteelConnect.</p>
-                        <p>If you have questions, contact us at support@steelconnect.com</p>
-                        <p>&copy; 2024 SteelConnect. All rights reserved.</p>
-                    </div>
+                    <p>If this was you, no action is required. If you don't recognize this login, please secure your account immediately.</p>
+                    
+                    <p>Best regards,<br>SteelConnect Security Team</p>
                 </div>
             </body>
             </html>
         `;
-        
-        const result = await sendEmail({
-            to: user.email,
-            subject,
-            html
-        });
-        
-        if (result.success) {
-            console.log(`Login notification sent to: ${user.email}`);
-        } else {
-            console.warn(`Failed to send login notification to: ${user.email} - ${result.error}`);
-        }
-        
-    } catch (error) {
-        console.error('Failed to send login notification:', error);
-        // Don't throw error - login should succeed even if notification fails
-    }
-}
 
-/**
- * Extract browser information from User-Agent string
- */
-function extractBrowserInfo(userAgent) {
-    if (!userAgent || userAgent === 'Unknown') {
-        return 'Unknown Browser';
-    }
-    
-    try {
-        // Simple browser detection
-        if (userAgent.includes('Chrome') && !userAgent.includes('Edg')) {
-            return 'Google Chrome';
-        } else if (userAgent.includes('Firefox')) {
-            return 'Mozilla Firefox';
-        } else if (userAgent.includes('Safari') && !userAgent.includes('Chrome')) {
-            return 'Apple Safari';
-        } else if (userAgent.includes('Edg')) {
-            return 'Microsoft Edge';
-        } else if (userAgent.includes('Opera') || userAgent.includes('OPR')) {
-            return 'Opera';
-        } else {
-            return 'Unknown Browser';
-        }
-    } catch (error) {
-        return 'Unknown Browser';
-    }
-}
+        const textContent = `
+            SteelConnect Security Alert
+            
+            New Login Detected
+            We detected a new login to your SteelConnect account.
+            
+            Login Details:
+            Email: ${userEmail}
+            Time: ${new Date().toLocaleString()}
+            IP Address: ${loginData.ip || 'Unknown'}
+            Location: ${loginData.location || 'Unknown'}
+            
+            If this was you, no action is required. If you don't recognize this login, please secure your account immediately.
+            
+            Best regards,
+            SteelConnect Security Team
+        `;
 
-/**
- * Send profile approval notification - Made non-blocking
- */
-export async function sendProfileApprovalEmail(user, userType, notes = '') {
-    try {
-        const capabilities = userType === 'designer' 
-            ? [
-                'Browse and quote on available projects',
-                'Manage your submitted quotes',
-                'Communicate with clients through our messaging system',
-                'Access project files and specifications'
-            ]
-            : [
-                'Post new construction and engineering projects',
-                'Review and approve quotes from qualified professionals',
-                'Use our AI-powered cost estimation tools',
-                'Manage approved projects and track progress'
-            ];
+        return await this.sendEmail(userEmail, subject, htmlContent, textContent);
+    }
+
+    // Welcome email
+    static async sendWelcomeEmail(userEmail, userName) {
+        const subject = 'Welcome to SteelConnect!';
         
-        const html = `
+        const htmlContent = `
             <!DOCTYPE html>
             <html>
             <head>
-                <meta charset="utf-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Profile Approved</title>
+                <style>
+                    body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; }
+                    .header { background: #1f2937; color: white; padding: 20px; text-align: center; }
+                    .content { padding: 20px; }
+                    .welcome { background: #f0fdf4; border: 1px solid #bbf7d0; padding: 15px; border-radius: 8px; }
+                </style>
             </head>
-            <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f5f7fa;">
-                <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
-                    <div style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 30px; text-align: center;">
-                        <h1 style="margin: 0; font-size: 28px;">Profile Approved!</h1>
-                        <p style="margin: 10px 0 0 0; font-size: 16px;">Welcome to SteelConnect</p>
+            <body>
+                <div class="header">
+                    <h1>Welcome to SteelConnect</h1>
+                </div>
+                <div class="content">
+                    <div class="welcome">
+                        <h2>Hello ${userName}!</h2>
+                        <p>Welcome to SteelConnect. We're excited to have you on board!</p>
                     </div>
                     
-                    <div style="padding: 30px;">
-                        <h2>Congratulations, ${user.name}!</h2>
-                        
-                        <p>Your ${userType} profile has been approved by our admin team. You now have full access to your SteelConnect portal.</p>
-                        
-                        <div style="background-color: #e8f5e8; border-radius: 8px; padding: 20px; margin: 20px 0;">
-                            <h3 style="margin-top: 0; color: #155724;">What you can do now:</h3>
-                            <ul style="margin-bottom: 0;">
-                                ${capabilities.map(capability => `<li>${capability}</li>`).join('')}
-                            </ul>
-                        </div>
-                        
-                        ${notes ? `
-                            <div style="background-color: #f8f9fa; border-left: 4px solid #007bff; padding: 15px; margin: 20px 0;">
-                                <strong>Message from our team:</strong><br>
-                                ${notes}
-                            </div>
-                        ` : ''}
-                        
-                        <p>Welcome to the SteelConnect community! We're excited to have you on board.</p>
-                    </div>
+                    <p>You can now access all our services and manage your projects through our platform.</p>
                     
-                    <div style="background-color: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #666;">
-                        <p>Need help getting started? Contact us at support@steelconnect.com</p>
-                        <p>&copy; 2024 SteelConnect. All rights reserved.</p>
-                    </div>
+                    <p>If you have any questions, feel free to reach out to our support team.</p>
+                    
+                    <p>Best regards,<br>The SteelConnect Team</p>
                 </div>
             </body>
             </html>
         `;
+
+        return await this.sendEmail(userEmail, subject, htmlContent);
+    }
+
+    // Job notification email
+    static async sendJobNotification(userEmail, jobData, type = 'update') {
+        const subject = `Job ${type.charAt(0).toUpperCase() + type.slice(1)}: ${jobData.title}`;
         
-        const result = await sendEmail({
-            to: user.email,
-            subject: 'Profile Approved - Welcome to SteelConnect!',
-            html
-        });
-        
-        if (result.success) {
-            console.log(`Profile approval email sent to: ${user.email}`);
-        } else {
-            console.warn(`Failed to send profile approval email: ${result.error}`);
-        }
-    } catch (error) {
-        console.error('Failed to send profile approval email:', error);
+        const htmlContent = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; }
+                    .header { background: #1f2937; color: white; padding: 20px; text-align: center; }
+                    .content { padding: 20px; }
+                    .job-info { background: #f8fafc; border: 1px solid #e2e8f0; padding: 15px; border-radius: 8px; }
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <h1>Job ${type.charAt(0).toUpperCase() + type.slice(1)}</h1>
+                </div>
+                <div class="content">
+                    <div class="job-info">
+                        <h2>${jobData.title}</h2>
+                        <p><strong>Status:</strong> ${jobData.status}</p>
+                        <p><strong>Description:</strong> ${jobData.description}</p>
+                        ${jobData.estimatedCost ? `<p><strong>Estimated Cost:</strong> $${jobData.estimatedCost}</p>` : ''}
+                    </div>
+                    
+                    <p>Thank you for using SteelConnect!</p>
+                    
+                    <p>Best regards,<br>The SteelConnect Team</p>
+                </div>
+            </body>
+            </html>
+        `;
+
+        return await this.sendEmail(userEmail, subject, htmlContent);
     }
 }
+
+export { EmailService };

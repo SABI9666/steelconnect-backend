@@ -1,4 +1,4 @@
-// src/routes/admin.js - Complete Admin routes with profile approval
+// src/routes/admin.js - Complete Admin routes with profile approval and dashboard
 import express from 'express';
 import { authenticateToken, isAdmin } from '../middleware/authMiddleware.js';
 import { adminDb } from '../config/firebase.js';
@@ -9,6 +9,98 @@ const router = express.Router();
 // Apply authentication and admin check to all routes
 router.use(authenticateToken);
 router.use(isAdmin);
+
+// ============= DASHBOARD ENDPOINTS =============
+
+// Get admin dashboard data
+router.get('/dashboard', async (req, res) => {
+    try {
+        console.log('Admin fetching dashboard data...');
+        
+        // Get all users
+        const usersSnapshot = await adminDb.collection('users').get();
+        const allUsers = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        
+        // Get pending profile reviews
+        const reviewsSnapshot = await adminDb.collection('profile_reviews')
+            .where('status', '==', 'pending')
+            .get();
+        
+        const pendingReviews = reviewsSnapshot.size;
+        
+        // Calculate user statistics
+        const totalUsers = allUsers.length;
+        const designers = allUsers.filter(u => u.type === 'designer').length;
+        const contractors = allUsers.filter(u => u.type === 'contractor').length;
+        const pendingProfiles = allUsers.filter(u => u.profileStatus === 'pending').length;
+        const approvedProfiles = allUsers.filter(u => u.profileStatus === 'approved').length;
+        const rejectedProfiles = allUsers.filter(u => u.profileStatus === 'rejected').length;
+        const incompleteProfiles = allUsers.filter(u => u.profileStatus === 'incomplete' || !u.profileStatus).length;
+        
+        // Get recent activity (last 7 days)
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        
+        const recentUsers = allUsers.filter(u => 
+            new Date(u.createdAt) >= sevenDaysAgo
+        ).length;
+        
+        const recentReviews = reviewsSnapshot.docs.filter(doc => 
+            new Date(doc.data().createdAt) >= sevenDaysAgo
+        ).length;
+        
+        // Prepare dashboard data
+        const dashboardData = {
+            stats: {
+                totalUsers,
+                designers,
+                contractors,
+                pendingProfiles,
+                approvedProfiles,
+                rejectedProfiles,
+                incompleteProfiles,
+                pendingReviews,
+                recentUsers,
+                recentReviews,
+                // Additional stats
+                totalJobs: 0,
+                totalQuotes: 0,
+                totalMessages: 0,
+                totalEstimations: 0,
+                activeSubscriptions: 0
+            },
+            recentActivity: [
+                {
+                    type: 'user',
+                    description: `${recentUsers} new users registered in the last 7 days`,
+                    timestamp: new Date().toISOString()
+                },
+                {
+                    type: 'review',
+                    description: `${pendingReviews} profiles awaiting review`,
+                    timestamp: new Date().toISOString()
+                }
+            ],
+            adminUser: req.user.email
+        };
+        
+        console.log(`Dashboard data loaded: ${totalUsers} total users, ${pendingReviews} pending reviews`);
+        
+        res.json({
+            success: true,
+            data: dashboardData
+        });
+        
+    } catch (error) {
+        console.error('Error fetching admin dashboard:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching dashboard data'
+        });
+    }
+});
+
+// ============= PROFILE REVIEW ENDPOINTS =============
 
 // Get all pending profile reviews
 router.get('/profile-reviews', async (req, res) => {
@@ -259,6 +351,8 @@ router.post('/profile-reviews/:reviewId/reject', async (req, res) => {
     }
 });
 
+// ============= USER MANAGEMENT ENDPOINTS =============
+
 // Get all users
 router.get('/users', async (req, res) => {
     try {
@@ -270,7 +364,7 @@ router.get('/users', async (req, res) => {
             query = query.where('profileStatus', '==', status);
         }
         
-        if (type) {
+        if (type && type !== 'admin') {
             query = query.where('type', '==', type);
         }
         
@@ -283,6 +377,7 @@ router.get('/users', async (req, res) => {
             const userData = doc.data();
             const { password, ...userWithoutPassword } = userData;
             return {
+                _id: doc.id,
                 id: doc.id,
                 ...userWithoutPassword
             };
@@ -291,6 +386,7 @@ router.get('/users', async (req, res) => {
         res.json({
             success: true,
             data: users,
+            users: users, // Alternative key for compatibility
             total: users.length
         });
         
@@ -322,7 +418,8 @@ router.get('/users/:userId', async (req, res) => {
         
         res.json({
             success: true,
-            data: {
+            user: {
+                _id: userDoc.id,
                 id: userDoc.id,
                 ...userWithoutPassword
             }
@@ -338,28 +435,24 @@ router.get('/users/:userId', async (req, res) => {
 });
 
 // Update user status (suspend/activate)
-router.put('/users/:userId/status', async (req, res) => {
+router.patch('/users/:userId/status', async (req, res) => {
     try {
         const { userId } = req.params;
-        const { canAccess, reason } = req.body;
+        const { isActive, canAccess } = req.body;
         const adminEmail = req.user.email;
         
-        if (typeof canAccess !== 'boolean') {
-            return res.status(400).json({
-                success: false,
-                message: 'canAccess must be boolean'
-            });
-        }
-        
         const updateData = {
-            canAccess,
             updatedAt: new Date().toISOString(),
             statusUpdatedBy: adminEmail,
             statusUpdatedAt: new Date().toISOString()
         };
         
-        if (reason) {
-            updateData.statusReason = reason;
+        if (typeof isActive === 'boolean') {
+            updateData.isActive = isActive;
+        }
+        
+        if (typeof canAccess === 'boolean') {
+            updateData.canAccess = canAccess;
         }
         
         await adminDb.collection('users').doc(userId).update(updateData);
@@ -368,11 +461,12 @@ router.put('/users/:userId/status', async (req, res) => {
         const userDoc = await adminDb.collection('users').doc(userId).get();
         const userData = userDoc.data();
         
-        console.log(`User ${userData.email} ${canAccess ? 'activated' : 'suspended'} by admin ${adminEmail}`);
+        const action = canAccess ? 'activated' : 'suspended';
+        console.log(`User ${userData.email} ${action} by admin ${adminEmail}`);
         
         res.json({
             success: true,
-            message: `User ${canAccess ? 'activated' : 'suspended'} successfully`
+            message: `User ${action} successfully`
         });
         
     } catch (error) {
@@ -384,56 +478,203 @@ router.put('/users/:userId/status', async (req, res) => {
     }
 });
 
-// Get admin dashboard stats
-router.get('/dashboard/stats', async (req, res) => {
+// Delete user
+router.delete('/users/:userId', async (req, res) => {
     try {
-        console.log('Admin fetching dashboard stats...');
+        const { userId } = req.params;
+        const adminEmail = req.user.email;
         
-        // Get user stats
-        const usersSnapshot = await adminDb.collection('users').get();
-        const allUsers = usersSnapshot.docs.map(doc => doc.data());
+        // Get user data before deletion for logging
+        const userDoc = await adminDb.collection('users').doc(userId).get();
+        if (!userDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
         
-        const userStats = {
-            total: allUsers.length,
-            designers: allUsers.filter(u => u.type === 'designer').length,
-            contractors: allUsers.filter(u => u.type === 'contractor').length,
-            pending: allUsers.filter(u => u.profileStatus === 'pending').length,
-            approved: allUsers.filter(u => u.profileStatus === 'approved').length,
-            rejected: allUsers.filter(u => u.profileStatus === 'rejected').length
-        };
+        const userData = userDoc.data();
         
-        // Get pending reviews count
-        const reviewsSnapshot = await adminDb.collection('profile_reviews')
-            .where('status', '==', 'pending')
-            .get();
+        // Delete the user
+        await adminDb.collection('users').doc(userId).delete();
         
-        const pendingReviews = reviewsSnapshot.size;
-        
-        // Get recent activity (last 30 days)
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-        
-        const recentUsersSnapshot = await adminDb.collection('users')
-            .where('createdAt', '>=', thirtyDaysAgo.toISOString())
-            .get();
-        
-        const recentUsers = recentUsersSnapshot.size;
+        console.log(`User deleted: ${userData.email} by admin ${adminEmail}`);
         
         res.json({
             success: true,
-            data: {
-                users: userStats,
-                pendingReviews,
-                recentUsers,
-                lastUpdated: new Date().toISOString()
-            }
+            message: 'User deleted successfully'
+        });
+        
+    } catch (error) {
+        console.error('Error deleting user:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error deleting user'
+        });
+    }
+});
+
+// ============= ADDITIONAL ADMIN ENDPOINTS =============
+
+// Get admin statistics
+router.get('/stats', async (req, res) => {
+    try {
+        // Get all users
+        const usersSnapshot = await adminDb.collection('users').get();
+        const allUsers = usersSnapshot.docs.map(doc => doc.data());
+        
+        // Get profile reviews
+        const reviewsSnapshot = await adminDb.collection('profile_reviews').get();
+        const allReviews = reviewsSnapshot.docs.map(doc => doc.data());
+        
+        const stats = {
+            totalUsers: allUsers.length,
+            contractors: allUsers.filter(u => u.type === 'contractor').length,
+            designers: allUsers.filter(u => u.type === 'designer').length,
+            pendingProfiles: allUsers.filter(u => u.profileStatus === 'pending').length,
+            approvedProfiles: allUsers.filter(u => u.profileStatus === 'approved').length,
+            rejectedProfiles: allUsers.filter(u => u.profileStatus === 'rejected').length,
+            incompleteProfiles: allUsers.filter(u => !u.profileStatus || u.profileStatus === 'incomplete').length,
+            totalReviews: allReviews.length,
+            pendingReviews: allReviews.filter(r => r.status === 'pending').length,
+            // Placeholder for additional stats
+            totalJobs: 0,
+            totalQuotes: 0,
+            totalEstimations: 0,
+            totalMessages: 0,
+            totalSubscriptions: 0
+        };
+        
+        res.json({
+            success: true,
+            data: stats
         });
         
     } catch (error) {
         console.error('Error fetching admin stats:', error);
         res.status(500).json({
             success: false,
-            message: 'Error fetching dashboard stats'
+            message: 'Error fetching statistics'
+        });
+    }
+});
+
+// Get system health check
+router.get('/health', async (req, res) => {
+    try {
+        // Check Firebase connection
+        const testDoc = await adminDb.collection('_health').limit(1).get();
+        const dbStatus = 'connected';
+        
+        const healthData = {
+            status: 'healthy',
+            timestamp: new Date().toISOString(),
+            database: dbStatus,
+            server: 'running',
+            uptime: process.uptime(),
+            memory: process.memoryUsage(),
+            version: '2.0.0'
+        };
+        
+        res.json({
+            success: true,
+            data: healthData
+        });
+        
+    } catch (error) {
+        console.error('Health check error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Health check failed',
+            error: error.message
+        });
+    }
+});
+
+// Bulk approve profiles
+router.post('/profile-reviews/bulk-approve', async (req, res) => {
+    try {
+        const { reviewIds, notes } = req.body;
+        const adminEmail = req.user.email;
+        
+        if (!reviewIds || !Array.isArray(reviewIds) || reviewIds.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Review IDs array is required'
+            });
+        }
+        
+        let approved = 0;
+        let failed = 0;
+        
+        for (const reviewId of reviewIds) {
+            try {
+                // Get the review
+                const reviewDoc = await adminDb.collection('profile_reviews').doc(reviewId).get();
+                
+                if (!reviewDoc.exists) {
+                    failed++;
+                    continue;
+                }
+                
+                const reviewData = reviewDoc.data();
+                
+                if (reviewData.status !== 'pending') {
+                    failed++;
+                    continue;
+                }
+                
+                // Update the review
+                await adminDb.collection('profile_reviews').doc(reviewId).update({
+                    status: 'approved',
+                    reviewedAt: new Date().toISOString(),
+                    reviewedBy: adminEmail,
+                    reviewNotes: notes || 'Bulk approval',
+                    updatedAt: new Date().toISOString()
+                });
+                
+                // Update the user's profile status
+                await adminDb.collection('users').doc(reviewData.userId).update({
+                    profileStatus: 'approved',
+                    canAccess: true,
+                    approvedAt: new Date().toISOString(),
+                    approvedBy: adminEmail,
+                    updatedAt: new Date().toISOString()
+                });
+                
+                // Get user data for email
+                const userDoc = await adminDb.collection('users').doc(reviewData.userId).get();
+                const userData = userDoc.data();
+                
+                // Send approval email
+                try {
+                    await sendProfileApprovalEmail(userData, reviewData.userType, notes);
+                } catch (emailError) {
+                    console.error('Failed to send bulk approval email:', emailError);
+                }
+                
+                approved++;
+                
+            } catch (error) {
+                console.error(`Error approving profile ${reviewId}:`, error);
+                failed++;
+            }
+        }
+        
+        console.log(`Bulk approval completed: ${approved} approved, ${failed} failed`);
+        
+        res.json({
+            success: true,
+            message: `Bulk approval completed: ${approved} approved, ${failed} failed`,
+            approved,
+            failed
+        });
+        
+    } catch (error) {
+        console.error('Error in bulk approval:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error in bulk approval'
         });
     }
 });

@@ -1,4 +1,4 @@
-// src/middleware/authMiddleware.js - Authentication middleware
+// src/middleware/authMiddleware.js - Fixed Authentication middleware
 import jwt from 'jsonwebtoken';
 import { adminDb } from '../config/firebase.js';
 
@@ -21,7 +21,31 @@ export async function authenticateToken(req, res, next) {
         }
 
         // Verify JWT token
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        let decoded;
+        try {
+            decoded = jwt.verify(token, process.env.JWT_SECRET);
+        } catch (jwtError) {
+            console.error('JWT verification failed:', jwtError.message);
+            
+            if (jwtError.name === 'JsonWebTokenError') {
+                return res.status(401).json({
+                    success: false,
+                    message: 'Invalid token'
+                });
+            }
+            
+            if (jwtError.name === 'TokenExpiredError') {
+                return res.status(401).json({
+                    success: false,
+                    message: 'Token has expired'
+                });
+            }
+
+            return res.status(401).json({
+                success: false,
+                message: 'Token verification failed'
+            });
+        }
         
         // Get fresh user data from database
         const userDoc = await adminDb.collection('users').doc(decoded.userId).get();
@@ -52,25 +76,14 @@ export async function authenticateToken(req, res, next) {
             role: decoded.role || decoded.type,
             profileStatus: userData.profileStatus,
             profileCompleted: userData.profileCompleted,
-            canAccess: userData.canAccess
+            canAccess: userData.canAccess,
+            name: userData.name
         };
 
+        console.log(`Authenticated user: ${req.user.email} (${req.user.type})`);
         next();
-    } catch (error) {
-        if (error.name === 'JsonWebTokenError') {
-            return res.status(401).json({
-                success: false,
-                message: 'Invalid token'
-            });
-        }
         
-        if (error.name === 'TokenExpiredError') {
-            return res.status(401).json({
-                success: false,
-                message: 'Token has expired'
-            });
-        }
-
+    } catch (error) {
         console.error('Authentication middleware error:', error);
         return res.status(500).json({
             success: false,
@@ -94,14 +107,16 @@ export async function isAdmin(req, res, next) {
             });
         }
 
+        // Check if user has admin privileges
         if (req.user.type !== 'admin' && req.user.role !== 'admin') {
+            console.log(`Access denied for non-admin user: ${req.user.email} (${req.user.type})`);
             return res.status(403).json({
                 success: false,
                 message: 'Admin access required'
             });
         }
 
-        // Optionally, double-check admin status in database
+        // Double-check admin status in database
         const userDoc = await adminDb.collection('users').doc(req.user.userId).get();
         
         if (!userDoc.exists) {
@@ -127,7 +142,9 @@ export async function isAdmin(req, res, next) {
             });
         }
 
+        console.log(`Admin access granted to: ${req.user.email}`);
         next();
+        
     } catch (error) {
         console.error('Admin check middleware error:', error);
         return res.status(500).json({
@@ -168,6 +185,7 @@ export function requireCompleteProfile(req, res, next) {
         }
 
         next();
+        
     } catch (error) {
         console.error('Profile check middleware error:', error);
         return res.status(500).json({
@@ -204,6 +222,7 @@ export function requireUserType(allowedTypes) {
             }
 
             next();
+            
         } catch (error) {
             console.error('User type check middleware error:', error);
             return res.status(500).json({
@@ -300,50 +319,10 @@ export async function optionalAuth(req, res, next) {
         }
 
         next();
+        
     } catch (error) {
         console.error('Optional auth middleware error:', error);
         req.user = null;
         next();
     }
-}
-
-/**
- * Rate limiting middleware (simple implementation)
- * @param {number} maxRequests - Maximum requests per window
- * @param {number} windowMs - Time window in milliseconds
- * @returns {Function} Express middleware function
- */
-export function rateLimit(maxRequests = 100, windowMs = 15 * 60 * 1000) {
-    const requests = new Map();
-
-    return (req, res, next) => {
-        const clientId = req.ip || req.connection.remoteAddress;
-        const now = Date.now();
-        
-        // Clean old entries
-        const cutoff = now - windowMs;
-        for (const [id, timestamps] of requests.entries()) {
-            requests.set(id, timestamps.filter(time => time > cutoff));
-            if (requests.get(id).length === 0) {
-                requests.delete(id);
-            }
-        }
-        
-        // Check current client
-        const clientRequests = requests.get(clientId) || [];
-        
-        if (clientRequests.length >= maxRequests) {
-            return res.status(429).json({
-                success: false,
-                message: 'Too many requests. Please try again later.',
-                retryAfter: Math.ceil(windowMs / 1000)
-            });
-        }
-        
-        // Add current request
-        clientRequests.push(now);
-        requests.set(clientId, clientRequests);
-        
-        next();
-    };
 }

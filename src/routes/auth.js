@@ -1,4 +1,4 @@
-// src/routes/auth.js - Enhanced with profile system and login notifications
+// src/routes/auth.js - Enhanced with profile system, login notifications, and admin login
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -87,7 +87,7 @@ router.post('/register', async (req, res) => {
     }
 });
 
-// Login user with email notification
+// Regular user login
 router.post('/login', async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -120,6 +120,15 @@ router.post('/login', async (req, res) => {
         const userDoc = userQuery.docs[0];
         const userData = userDoc.data();
         const userId = userDoc.id;
+
+        // Check if this is an admin trying to use regular login
+        if (userData.type === 'admin') {
+            return res.status(401).json({
+                success: false,
+                message: 'Admin users must use the admin login portal',
+                redirectToAdmin: true
+            });
+        }
 
         // Verify password
         const isValidPassword = await bcrypt.compare(password, userData.password);
@@ -190,6 +199,111 @@ router.post('/login', async (req, res) => {
     }
 });
 
+// Admin login route
+router.post('/login/admin', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        const clientIP = getClientIP(req);
+        const userAgent = req.headers['user-agent'] || 'Unknown';
+
+        console.log(`Admin login attempt for: ${email} from IP: ${clientIP}`);
+
+        // Validation
+        if (!email || !password) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email and password are required'
+            });
+        }
+
+        // Find admin user
+        const userQuery = await adminDb.collection('users')
+            .where('email', '==', email.toLowerCase().trim())
+            .where('type', '==', 'admin')
+            .get();
+
+        if (userQuery.empty) {
+            console.log(`Admin login failed: Admin not found for email ${email}`);
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid admin credentials'
+            });
+        }
+
+        const userDoc = userQuery.docs[0];
+        const userData = userDoc.data();
+        const userId = userDoc.id;
+
+        // Verify password
+        const isValidPassword = await bcrypt.compare(password, userData.password);
+        
+        if (!isValidPassword) {
+            console.log(`Admin login failed: Invalid password for email ${email}`);
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid admin credentials'
+            });
+        }
+
+        // Check if admin account is active
+        if (userData.canAccess === false) {
+            return res.status(403).json({
+                success: false,
+                message: 'Admin account has been suspended'
+            });
+        }
+
+        // Generate JWT token with admin role
+        const token = jwt.sign(
+            { 
+                userId: userId, 
+                email: userData.email, 
+                type: 'admin',
+                role: 'admin'
+            },
+            process.env.JWT_SECRET,
+            { expiresIn: '24h' } // Shorter expiry for admin tokens
+        );
+
+        // Update last login
+        await adminDb.collection('users').doc(userId).update({
+            lastLogin: new Date().toISOString(),
+            lastLoginIP: clientIP,
+            lastAdminLogin: new Date().toISOString()
+        });
+
+        // Prepare admin response (exclude password)
+        const { password: _, ...adminResponse } = userData;
+        const responseAdmin = {
+            ...adminResponse,
+            id: userId
+        };
+
+        console.log(`Admin login successful for: ${email}`);
+
+        // Send admin login notification (optional)
+        try {
+            await sendLoginNotification(responseAdmin, new Date().toISOString(), clientIP, userAgent);
+        } catch (emailError) {
+            console.error('Failed to send admin login notification:', emailError);
+        }
+
+        res.json({
+            success: true,
+            message: 'Admin login successful',
+            token: token,
+            user: responseAdmin
+        });
+
+    } catch (error) {
+        console.error('Admin login error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error during admin login'
+        });
+    }
+});
+
 // Verify token (for frontend auth checks)
 router.get('/verify', async (req, res) => {
     try {
@@ -230,6 +344,67 @@ router.get('/verify', async (req, res) => {
         res.status(401).json({
             success: false,
             message: 'Invalid token'
+        });
+    }
+});
+
+// Create initial admin user (run once)
+router.post('/create-admin', async (req, res) => {
+    try {
+        const { email, password, name, secretKey } = req.body;
+
+        // Check secret key for security
+        if (secretKey !== process.env.ADMIN_CREATION_SECRET) {
+            return res.status(403).json({
+                success: false,
+                message: 'Invalid secret key'
+            });
+        }
+
+        // Check if admin already exists
+        const existingAdmin = await adminDb.collection('users')
+            .where('type', '==', 'admin')
+            .get();
+
+        if (!existingAdmin.empty) {
+            return res.status(400).json({
+                success: false,
+                message: 'Admin user already exists'
+            });
+        }
+
+        // Hash password
+        const hashedPassword = await bcrypt.hash(password, 12);
+
+        // Create admin user
+        const adminData = {
+            name: name || 'Admin',
+            email: email.toLowerCase().trim(),
+            password: hashedPassword,
+            type: 'admin',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            profileCompleted: true,
+            profileStatus: 'approved',
+            canAccess: true,
+            isSuper: true
+        };
+
+        const adminRef = await adminDb.collection('users').add(adminData);
+
+        console.log(`Admin user created: ${email} (ID: ${adminRef.id})`);
+
+        res.json({
+            success: true,
+            message: 'Admin user created successfully',
+            adminId: adminRef.id
+        });
+
+    } catch (error) {
+        console.error('Admin creation error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error creating admin user'
         });
     }
 });

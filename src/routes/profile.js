@@ -1,16 +1,27 @@
-// Updated profile.js - Replace the validation sections
-
+// Fixed profile.js - Remove email service dependency
 import express from 'express';
 import multer from 'multer';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { adminDb } from '../config/firebase.js';
 import { uploadToFirebaseStorage } from '../utils/firebaseStorage.js';
-import { sendEmail } from '../utils/emailService.js';
 
 const router = express.Router();
 
 // Apply authentication to all routes
 router.use(authenticateToken);
+
+// Simple email notification function (placeholder)
+async function sendEmail({ to, subject, html }) {
+    try {
+        console.log(`Email would be sent to: ${to}`);
+        console.log(`Subject: ${subject}`);
+        console.log('Email functionality not implemented yet');
+        return { success: true, message: 'Email logged (not sent)' };
+    } catch (error) {
+        console.error('Email service error:', error);
+        return { success: false, error: error.message };
+    }
+}
 
 // Configure multer for file uploads
 const upload = multer({
@@ -217,7 +228,7 @@ router.put('/complete', upload.fields([
 
         await adminDb.collection('profile_reviews').add(reviewRequest);
 
-        // Send notification email to user
+        // Send notification email to user (placeholder - just log for now)
         try {
             await sendEmail({
                 to: currentUserData.email,
@@ -275,7 +286,7 @@ router.get('/form-fields', async (req, res) => {
         if (userType === 'designer') {
             fields = [
                 { name: 'skills', type: 'text', label: 'Skills (comma-separated)', required: true, placeholder: 'AutoCAD, Revit, Structural Analysis, Steel Design' },
-                { name: 'linkedinProfile', type: 'url', label: 'LinkedIn Profile URL', required: false, placeholder: 'https://linkedin.com/in/yourprofile' }, // Made optional
+                { name: 'linkedinProfile', type: 'url', label: 'LinkedIn Profile URL', required: false, placeholder: 'https://linkedin.com/in/yourprofile' },
                 { name: 'experience', type: 'textarea', label: 'Years of Experience', required: false, placeholder: 'Describe your professional experience...' },
                 { name: 'education', type: 'textarea', label: 'Education Background', required: false, placeholder: 'Your educational qualifications...' },
                 { name: 'specializations', type: 'text', label: 'Specializations (comma-separated)', required: false, placeholder: 'Seismic Design, Bridge Engineering, High-rise Structures' },
@@ -287,7 +298,7 @@ router.get('/form-fields', async (req, res) => {
         } else if (userType === 'contractor') {
             fields = [
                 { name: 'companyName', type: 'text', label: 'Company Name', required: true, placeholder: 'Your Company LLC' },
-                { name: 'linkedinProfile', type: 'url', label: 'LinkedIn Profile URL', required: false, placeholder: 'https://linkedin.com/company/yourcompany' }, // Made optional
+                { name: 'linkedinProfile', type: 'url', label: 'LinkedIn Profile URL', required: false, placeholder: 'https://linkedin.com/company/yourcompany' },
                 { name: 'companyWebsite', type: 'url', label: 'Company Website', required: false, placeholder: 'https://yourcompany.com' },
                 { name: 'businessType', type: 'select', label: 'Business Type', required: false, options: ['Construction', 'Engineering', 'Architecture', 'Consulting', 'Other'] },
                 { name: 'yearEstablished', type: 'number', label: 'Year Established', required: false, placeholder: '2010' },

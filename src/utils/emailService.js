@@ -1,19 +1,14 @@
-// src/utils/emailService.js - Email service using Resend API
+// src/utils/emailService.js - Fixed Email service using Resend API
 import { Resend } from 'resend';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-// Default sender email (should be verified in Resend)
-const DEFAULT_FROM = process.env.DEFAULT_FROM_EMAIL || 'noreply@steelconnect.com';
+// Use a verified sender email - MUST be verified in your Resend account
+// Use onboarding@resend.dev for testing, or your verified domain
+const DEFAULT_FROM = process.env.DEFAULT_FROM_EMAIL || 'onboarding@resend.dev';
 
 /**
  * Send email using Resend API
- * @param {Object} options - Email options
- * @param {string} options.to - Recipient email
- * @param {string} options.subject - Email subject
- * @param {string} options.html - HTML content
- * @param {string} options.text - Plain text content (optional)
- * @param {string} options.from - Sender email (optional)
  */
 export async function sendEmail(options) {
     try {
@@ -42,28 +37,44 @@ export async function sendEmail(options) {
         
         if (response.error) {
             console.error('Resend API error:', response.error);
-            throw new Error(response.error.message || 'Failed to send email');
+            // Don't throw error for domain verification issues - just log and return
+            if (response.error.error?.includes('domain is not verified')) {
+                console.warn('Domain not verified - using default sender');
+                // Retry with default sender
+                const retryData = { ...emailData, from: 'onboarding@resend.dev' };
+                const retryResponse = await resend.emails.send(retryData);
+                
+                if (retryResponse.error) {
+                    console.error('Retry failed:', retryResponse.error);
+                    return { success: false, error: 'Email service temporarily unavailable' };
+                }
+                
+                console.log('Email sent with default sender:', retryResponse.data?.id);
+                return { 
+                    success: true, 
+                    messageId: retryResponse.data?.id,
+                    data: retryResponse.data 
+                };
+            }
+            return { success: false, error: response.error.message || 'Failed to send email' };
         }
         
-        console.log('Email sent successfully:', response.data.id);
+        console.log('Email sent successfully:', response.data?.id);
         return { 
             success: true, 
-            messageId: response.data.id,
+            messageId: response.data?.id,
             data: response.data 
         };
         
     } catch (error) {
         console.error('Email sending error:', error);
-        throw error;
+        // Don't throw error - return failure response instead
+        return { success: false, error: error.message };
     }
 }
 
 /**
- * Send login notification email
- * @param {Object} user - User object
- * @param {string} loginTime - Login timestamp
- * @param {string} ipAddress - User's IP address
- * @param {string} userAgent - User's browser/device info
+ * Send login notification email - Made non-blocking
  */
 export async function sendLoginNotification(user, loginTime, ipAddress = 'Unknown', userAgent = 'Unknown') {
     try {
@@ -107,7 +118,7 @@ export async function sendLoginNotification(user, loginTime, ipAddress = 'Unknow
             <body>
                 <div class="container">
                     <div class="header">
-                        <h1>🔐 Login Notification</h1>
+                        <h1>🔒 Login Notification</h1>
                         <p>SteelConnect Security Alert</p>
                     </div>
                     
@@ -147,10 +158,6 @@ export async function sendLoginNotification(user, loginTime, ipAddress = 'Unknow
                             <li>Contact our support team</li>
                         </ul>
                         
-                        <div style="text-align: center; margin: 30px 0;">
-                            <a href="https://steelconnect.com/account/security" class="btn">Review Account Security</a>
-                        </div>
-                        
                         <p>Thank you for using SteelConnect!</p>
                     </div>
                     
@@ -164,13 +171,17 @@ export async function sendLoginNotification(user, loginTime, ipAddress = 'Unknow
             </html>
         `;
         
-        await sendEmail({
+        const result = await sendEmail({
             to: user.email,
             subject,
             html
         });
         
-        console.log(`Login notification sent to: ${user.email}`);
+        if (result.success) {
+            console.log(`Login notification sent to: ${user.email}`);
+        } else {
+            console.warn(`Failed to send login notification to: ${user.email} - ${result.error}`);
+        }
         
     } catch (error) {
         console.error('Failed to send login notification:', error);
@@ -180,8 +191,6 @@ export async function sendLoginNotification(user, loginTime, ipAddress = 'Unknow
 
 /**
  * Extract browser information from User-Agent string
- * @param {string} userAgent - User agent string
- * @returns {string} Formatted browser info
  */
 function extractBrowserInfo(userAgent) {
     if (!userAgent || userAgent === 'Unknown') {
@@ -209,81 +218,82 @@ function extractBrowserInfo(userAgent) {
 }
 
 /**
- * Send profile approval notification
- * @param {Object} user - User object
- * @param {string} userType - User type (designer/contractor)
- * @param {string} notes - Admin notes (optional)
+ * Send profile approval notification - Made non-blocking
  */
 export async function sendProfileApprovalEmail(user, userType, notes = '') {
-    const capabilities = userType === 'designer' 
-        ? [
-            'Browse and quote on available projects',
-            'Manage your submitted quotes',
-            'Communicate with clients through our messaging system',
-            'Access project files and specifications'
-        ]
-        : [
-            'Post new construction and engineering projects',
-            'Review and approve quotes from qualified professionals',
-            'Use our AI-powered cost estimation tools',
-            'Manage approved projects and track progress'
-        ];
-    
-    const html = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Profile Approved</title>
-        </head>
-        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f5f7fa;">
-            <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
-                <div style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 30px; text-align: center;">
-                    <h1 style="margin: 0; font-size: 28px;">Profile Approved!</h1>
-                    <p style="margin: 10px 0 0 0; font-size: 16px;">Welcome to SteelConnect</p>
-                </div>
-                
-                <div style="padding: 30px;">
-                    <h2>Congratulations, ${user.name}!</h2>
-                    
-                    <p>Your ${userType} profile has been approved by our admin team. You now have full access to your SteelConnect portal.</p>
-                    
-                    <div style="background-color: #e8f5e8; border-radius: 8px; padding: 20px; margin: 20px 0;">
-                        <h3 style="margin-top: 0; color: #155724;">What you can do now:</h3>
-                        <ul style="margin-bottom: 0;">
-                            ${capabilities.map(capability => `<li>${capability}</li>`).join('')}
-                        </ul>
+    try {
+        const capabilities = userType === 'designer' 
+            ? [
+                'Browse and quote on available projects',
+                'Manage your submitted quotes',
+                'Communicate with clients through our messaging system',
+                'Access project files and specifications'
+            ]
+            : [
+                'Post new construction and engineering projects',
+                'Review and approve quotes from qualified professionals',
+                'Use our AI-powered cost estimation tools',
+                'Manage approved projects and track progress'
+            ];
+        
+        const html = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Profile Approved</title>
+            </head>
+            <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f5f7fa;">
+                <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
+                    <div style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 30px; text-align: center;">
+                        <h1 style="margin: 0; font-size: 28px;">Profile Approved!</h1>
+                        <p style="margin: 10px 0 0 0; font-size: 16px;">Welcome to SteelConnect</p>
                     </div>
                     
-                    ${notes ? `
-                        <div style="background-color: #f8f9fa; border-left: 4px solid #007bff; padding: 15px; margin: 20px 0;">
-                            <strong>Message from our team:</strong><br>
-                            ${notes}
+                    <div style="padding: 30px;">
+                        <h2>Congratulations, ${user.name}!</h2>
+                        
+                        <p>Your ${userType} profile has been approved by our admin team. You now have full access to your SteelConnect portal.</p>
+                        
+                        <div style="background-color: #e8f5e8; border-radius: 8px; padding: 20px; margin: 20px 0;">
+                            <h3 style="margin-top: 0; color: #155724;">What you can do now:</h3>
+                            <ul style="margin-bottom: 0;">
+                                ${capabilities.map(capability => `<li>${capability}</li>`).join('')}
+                            </ul>
                         </div>
-                    ` : ''}
-                    
-                    <div style="text-align: center; margin: 30px 0;">
-                        <a href="https://steelconnect.com/login" style="display: inline-block; background-color: #007bff; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: 600;">
-                            Access Your Portal
-                        </a>
+                        
+                        ${notes ? `
+                            <div style="background-color: #f8f9fa; border-left: 4px solid #007bff; padding: 15px; margin: 20px 0;">
+                                <strong>Message from our team:</strong><br>
+                                ${notes}
+                            </div>
+                        ` : ''}
+                        
+                        <p>Welcome to the SteelConnect community! We're excited to have you on board.</p>
                     </div>
                     
-                    <p>Welcome to the SteelConnect community! We're excited to have you on board.</p>
+                    <div style="background-color: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #666;">
+                        <p>Need help getting started? Contact us at support@steelconnect.com</p>
+                        <p>&copy; 2024 SteelConnect. All rights reserved.</p>
+                    </div>
                 </div>
-                
-                <div style="background-color: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #666;">
-                    <p>Need help getting started? Contact us at support@steelconnect.com</p>
-                    <p>&copy; 2024 SteelConnect. All rights reserved.</p>
-                </div>
-            </div>
-        </body>
-        </html>
-    `;
-    
-    await sendEmail({
-        to: user.email,
-        subject: 'Profile Approved - Welcome to SteelConnect!',
-        html
-    });
+            </body>
+            </html>
+        `;
+        
+        const result = await sendEmail({
+            to: user.email,
+            subject: 'Profile Approved - Welcome to SteelConnect!',
+            html
+        });
+        
+        if (result.success) {
+            console.log(`Profile approval email sent to: ${user.email}`);
+        } else {
+            console.warn(`Failed to send profile approval email: ${result.error}`);
+        }
+    } catch (error) {
+        console.error('Failed to send profile approval email:', error);
+    }
 }

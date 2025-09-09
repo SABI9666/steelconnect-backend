@@ -1,4 +1,77 @@
-/ Updated profile.js - Replace the validation sections
+// Updated profile.js - Replace the validation sections
+
+import express from 'express';
+import multer from 'multer';
+import { authenticateToken } from '../middleware/authMiddleware.js';
+import { adminDb } from '../config/firebase.js';
+import { uploadToFirebaseStorage } from '../utils/firebaseStorage.js';
+import { sendEmail } from '../utils/emailService.js';
+
+const router = express.Router();
+
+// Apply authentication to all routes
+router.use(authenticateToken);
+
+// Configure multer for file uploads
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 10 * 1024 * 1024, // 10MB limit
+    },
+    fileFilter: (req, file, cb) => {
+        const allowedMimes = [
+            'application/pdf',
+            'application/msword',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'image/jpeg',
+            'image/png',
+            'image/gif'
+        ];
+        
+        if (allowedMimes.includes(file.mimetype)) {
+            cb(null, true);
+        } else {
+            cb(new Error(`Invalid file type: ${file.mimetype}`), false);
+        }
+    }
+});
+
+// Get profile status
+router.get('/status', async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        
+        const userDoc = await adminDb.collection('users').doc(userId).get();
+        
+        if (!userDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+        
+        const userData = userDoc.data();
+        
+        res.json({
+            success: true,
+            data: {
+                profileCompleted: userData.profileCompleted || false,
+                profileStatus: userData.profileStatus || 'incomplete',
+                canAccess: userData.canAccess !== false,
+                userType: userData.type,
+                profileData: userData.profileData || {},
+                lastUpdated: userData.updatedAt
+            }
+        });
+        
+    } catch (error) {
+        console.error('Error fetching profile status:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching profile status'
+        });
+    }
+});
 
 // Complete profile submission - UPDATED VALIDATION
 router.put('/complete', upload.fields([
@@ -125,7 +198,6 @@ router.put('/complete', upload.fields([
             };
         }
 
-        // Rest of the function remains the same...
         // Update user profile
         await adminDb.collection('users').doc(userId).update(profileData);
 
@@ -170,11 +242,6 @@ router.put('/complete', upload.fields([
         } catch (emailError) {
             console.error('Failed to send profile submission email:', emailError);
         }
-
-        // UPDATED: Don't restrict access - allow limited access
-        // await adminDb.collection('users').doc(userId).update({
-        //     canAccess: false
-        // });
 
         console.log(`Profile submitted for review: ${currentUserData.email}`);
 
@@ -246,3 +313,70 @@ router.get('/form-fields', async (req, res) => {
         });
     }
 });
+
+// Get current user's profile data
+router.get('/data', async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        
+        const userDoc = await adminDb.collection('users').doc(userId).get();
+        
+        if (!userDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+        
+        const userData = userDoc.data();
+        const { password, ...profileData } = userData;
+        
+        res.json({
+            success: true,
+            data: {
+                ...profileData,
+                id: userId
+            }
+        });
+        
+    } catch (error) {
+        console.error('Error fetching profile data:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching profile data'
+        });
+    }
+});
+
+// Update specific profile fields
+router.patch('/update', async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        const updateData = req.body;
+        
+        // Remove sensitive fields
+        delete updateData.password;
+        delete updateData.type;
+        delete updateData.profileStatus;
+        delete updateData.canAccess;
+        
+        // Add timestamp
+        updateData.updatedAt = new Date().toISOString();
+        
+        await adminDb.collection('users').doc(userId).update(updateData);
+        
+        res.json({
+            success: true,
+            message: 'Profile updated successfully'
+        });
+        
+    } catch (error) {
+        console.error('Error updating profile:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error updating profile'
+        });
+    }
+});
+
+export default router;

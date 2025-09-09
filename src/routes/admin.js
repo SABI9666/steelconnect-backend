@@ -1,6 +1,4 @@
-// COMPLETE PROFILE REVIEW SYSTEM FIX
-// Replace your existing admin route handlers with these
-
+// Complete corrected admin.js routes
 import express from 'express';
 import { authenticateToken, isAdmin } from '../middleware/authMiddleware.js';
 import { adminDb } from '../config/firebase.js';
@@ -11,61 +9,106 @@ const router = express.Router();
 router.use(authenticateToken);
 router.use(isAdmin);
 
-// === PROFILE REVIEW ROUTES ===
+// Dashboard endpoint
+router.get('/dashboard', async (req, res) => {
+    try {
+        console.log('Admin dashboard requested by:', req.user.email);
 
-// Get all profile reviews (pending and completed)
+        // Get basic statistics
+        const stats = {
+            totalUsers: 0,
+            contractors: 0,
+            designers: 0,
+            totalJobs: 0,
+            totalQuotes: 0,
+            totalEstimations: 0,
+            totalMessages: 0,
+            totalSubscriptions: 0,
+            pendingReviews: 0
+        };
+
+        // Get user statistics
+        const usersSnapshot = await adminDb.collection('users').get();
+        stats.totalUsers = usersSnapshot.size;
+        
+        usersSnapshot.forEach(doc => {
+            const userData = doc.data();
+            if (userData.type === 'contractor') stats.contractors++;
+            if (userData.type === 'designer') stats.designers++;
+        });
+
+        // Get profile review statistics
+        const profileReviewsSnapshot = await adminDb.collection('users')
+            .where('profileCompleted', '==', true)
+            .where('profileStatus', '==', 'pending')
+            .get();
+        stats.pendingReviews = profileReviewsSnapshot.size;
+
+        res.json({
+            success: true,
+            data: {
+                stats,
+                adminUser: req.user.email,
+                timestamp: new Date().toISOString()
+            }
+        });
+
+    } catch (error) {
+        console.error('Dashboard error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error loading dashboard data',
+            error: error.message
+        });
+    }
+});
+
+// Profile Reviews Management Routes
 router.get('/profile-reviews', async (req, res) => {
     try {
-        console.log('🔍 [ADMIN] Fetching profile reviews...');
-        
-        // Get all users with profile data
+        console.log('Fetching all profile reviews...');
+
+        // Get all users with completed profiles
         const usersSnapshot = await adminDb.collection('users')
             .where('type', 'in', ['designer', 'contractor'])
-            .orderBy('createdAt', 'desc')
+            .where('profileCompleted', '==', true)
+            .orderBy('submittedAt', 'desc')
             .get();
-        
+
         const reviews = [];
         
         usersSnapshot.forEach(doc => {
             const userData = doc.data();
             const { password, ...userWithoutPassword } = userData;
             
-            // Only include users who have submitted profiles
-            if (userData.profileCompleted === true) {
-                reviews.push({
-                    _id: doc.id,
+            reviews.push({
+                _id: doc.id,
+                id: doc.id,
+                userId: doc.id,
+                userEmail: userData.email,
+                userName: userData.name,
+                userType: userData.type,
+                status: userData.profileStatus || 'pending',
+                createdAt: userData.submittedAt || userData.createdAt,
+                reviewedAt: userData.reviewedAt,
+                reviewedBy: userData.reviewedBy,
+                reviewNotes: userData.reviewNotes || userData.rejectionReason,
+                user: {
                     id: doc.id,
-                    userId: doc.id,
-                    userEmail: userData.email,
-                    userName: userData.name,
-                    userType: userData.type,
-                    status: userData.profileStatus || 'pending',
-                    createdAt: userData.submittedAt || userData.createdAt,
-                    reviewedAt: userData.reviewedAt,
-                    reviewedBy: userData.reviewedBy,
-                    reviewNotes: userData.reviewNotes || userData.rejectionReason,
-                    profileData: userData,
-                    user: {
-                        id: doc.id,
-                        name: userData.name,
-                        email: userData.email,
-                        type: userData.type,
-                        profileStatus: userData.profileStatus,
-                        ...userWithoutPassword
-                    }
-                });
-            }
+                    ...userWithoutPassword
+                }
+            });
         });
-        
-        console.log(`✅ [ADMIN] Found ${reviews.length} profile reviews`);
-        
+
+        console.log(`Found ${reviews.length} profile reviews`);
+
         res.json({
             success: true,
             data: reviews
         });
-        
+
     } catch (error) {
-        console.error('❌ [ADMIN] Error fetching profile reviews:', error);
+        console.error('Error fetching profile reviews:', error);
         res.status(500).json({
             success: false,
             message: 'Error fetching profile reviews',
@@ -77,14 +120,12 @@ router.get('/profile-reviews', async (req, res) => {
 // Get pending profile reviews only
 router.get('/profile-reviews/pending', async (req, res) => {
     try {
-        console.log('🔍 [ADMIN] Fetching pending profile reviews...');
-        
         const usersSnapshot = await adminDb.collection('users')
             .where('profileStatus', '==', 'pending')
             .where('profileCompleted', '==', true)
-            .orderBy('createdAt', 'desc')
+            .orderBy('submittedAt', 'desc')
             .get();
-        
+
         const reviews = [];
         
         usersSnapshot.forEach(doc => {
@@ -100,29 +141,23 @@ router.get('/profile-reviews/pending', async (req, res) => {
                 userType: userData.type,
                 status: 'pending',
                 createdAt: userData.submittedAt || userData.createdAt,
-                profileData: userData,
                 user: {
                     id: doc.id,
-                    name: userData.name,
-                    email: userData.email,
-                    type: userData.type,
                     ...userWithoutPassword
                 }
             });
         });
-        
-        console.log(`✅ [ADMIN] Found ${reviews.length} pending reviews`);
-        
+
         res.json({
             success: true,
             data: reviews
         });
-        
+
     } catch (error) {
-        console.error('❌ [ADMIN] Error fetching pending reviews:', error);
+        console.error('Error fetching pending reviews:', error);
         res.status(500).json({
             success: false,
-            message: 'Error fetching pending profile reviews',
+            message: 'Error fetching pending reviews',
             error: error.message
         });
     }
@@ -132,20 +167,20 @@ router.get('/profile-reviews/pending', async (req, res) => {
 router.get('/profile-reviews/:reviewId', async (req, res) => {
     try {
         const { reviewId } = req.params;
-        console.log(`🔍 [ADMIN] Fetching profile review: ${reviewId}`);
-        
+        console.log(`Fetching profile review: ${reviewId}`);
+
         const userDoc = await adminDb.collection('users').doc(reviewId).get();
-        
+
         if (!userDoc.exists) {
             return res.status(404).json({
                 success: false,
                 message: 'Profile review not found'
             });
         }
-        
+
         const userData = userDoc.data();
         const { password, ...userWithoutPassword } = userData;
-        
+
         const review = {
             _id: userDoc.id,
             id: userDoc.id,
@@ -158,25 +193,21 @@ router.get('/profile-reviews/:reviewId', async (req, res) => {
             reviewedAt: userData.reviewedAt,
             reviewedBy: userData.reviewedBy,
             reviewNotes: userData.reviewNotes || userData.rejectionReason,
-            profileData: userData,
             user: {
                 id: userDoc.id,
-                name: userData.name,
-                email: userData.email,
-                type: userData.type,
                 ...userWithoutPassword
             }
         };
-        
+
         res.json({
             success: true,
             data: {
                 review: review
             }
         });
-        
+
     } catch (error) {
-        console.error('❌ [ADMIN] Error fetching profile review:', error);
+        console.error('Error fetching profile review:', error);
         res.status(500).json({
             success: false,
             message: 'Error fetching profile review details',
@@ -191,20 +222,18 @@ router.post('/profile-reviews/:reviewId/approve', async (req, res) => {
         const { reviewId } = req.params;
         const { notes } = req.body;
         const adminUser = req.user;
-        
-        console.log(`✅ [ADMIN] Approving profile: ${reviewId}`);
-        
+
+        console.log(`Approving profile: ${reviewId} by ${adminUser.email}`);
+
         const userDoc = await adminDb.collection('users').doc(reviewId).get();
-        
+
         if (!userDoc.exists) {
             return res.status(404).json({
                 success: false,
                 message: 'User not found'
             });
         }
-        
-        const userData = userDoc.data();
-        
+
         // Update user status
         await adminDb.collection('users').doc(reviewId).update({
             profileStatus: 'approved',
@@ -215,16 +244,16 @@ router.post('/profile-reviews/:reviewId/approve', async (req, res) => {
             reviewedBy: adminUser.email,
             reviewNotes: notes || 'Profile approved by admin'
         });
-        
-        console.log(`✅ [ADMIN] Profile approved for: ${userData.email}`);
-        
+
+        console.log(`Profile approved for user: ${reviewId}`);
+
         res.json({
             success: true,
             message: 'Profile approved successfully'
         });
-        
+
     } catch (error) {
-        console.error('❌ [ADMIN] Error approving profile:', error);
+        console.error('Error approving profile:', error);
         res.status(500).json({
             success: false,
             message: 'Error approving profile',
@@ -239,27 +268,25 @@ router.post('/profile-reviews/:reviewId/reject', async (req, res) => {
         const { reviewId } = req.params;
         const { reason } = req.body;
         const adminUser = req.user;
-        
+
         if (!reason || reason.trim() === '') {
             return res.status(400).json({
                 success: false,
                 message: 'Rejection reason is required'
             });
         }
-        
-        console.log(`❌ [ADMIN] Rejecting profile: ${reviewId}`);
-        
+
+        console.log(`Rejecting profile: ${reviewId} by ${adminUser.email}`);
+
         const userDoc = await adminDb.collection('users').doc(reviewId).get();
-        
+
         if (!userDoc.exists) {
             return res.status(404).json({
                 success: false,
                 message: 'User not found'
             });
         }
-        
-        const userData = userDoc.data();
-        
+
         // Update user status
         await adminDb.collection('users').doc(reviewId).update({
             profileStatus: 'rejected',
@@ -271,16 +298,16 @@ router.post('/profile-reviews/:reviewId/reject', async (req, res) => {
             reviewedBy: adminUser.email,
             reviewNotes: reason
         });
-        
-        console.log(`❌ [ADMIN] Profile rejected for: ${userData.email}`);
-        
+
+        console.log(`Profile rejected for user: ${reviewId}`);
+
         res.json({
             success: true,
             message: 'Profile rejected successfully'
         });
-        
+
     } catch (error) {
-        console.error('❌ [ADMIN] Error rejecting profile:', error);
+        console.error('Error rejecting profile:', error);
         res.status(500).json({
             success: false,
             message: 'Error rejecting profile',
@@ -292,27 +319,27 @@ router.post('/profile-reviews/:reviewId/reject', async (req, res) => {
 // Get profile statistics
 router.get('/profile-stats', async (req, res) => {
     try {
-        console.log('📊 [ADMIN] Fetching profile statistics...');
-        
+        console.log('Fetching profile statistics...');
+
         const usersSnapshot = await adminDb.collection('users')
             .where('type', 'in', ['designer', 'contractor'])
             .get();
-        
+
         let total = 0;
         let pending = 0;
         let approved = 0;
         let rejected = 0;
         let pendingDesigners = 0;
         let pendingContractors = 0;
-        
+
         usersSnapshot.forEach(doc => {
             const userData = doc.data();
-            
+
             // Only count users who have completed their profile
             if (userData.profileCompleted === true) {
                 total++;
                 const status = userData.profileStatus || 'pending';
-                
+
                 if (status === 'pending') {
                     pending++;
                     if (userData.type === 'designer') pendingDesigners++;
@@ -324,7 +351,7 @@ router.get('/profile-stats', async (req, res) => {
                 }
             }
         });
-        
+
         const stats = {
             total,
             pending,
@@ -333,16 +360,16 @@ router.get('/profile-stats', async (req, res) => {
             pendingDesigners,
             pendingContractors
         };
-        
-        console.log('📊 [ADMIN] Profile stats:', stats);
-        
+
+        console.log('Profile stats:', stats);
+
         res.json({
             success: true,
             data: stats
         });
-        
+
     } catch (error) {
-        console.error('❌ [ADMIN] Error fetching profile statistics:', error);
+        console.error('Error fetching profile statistics:', error);
         res.status(500).json({
             success: false,
             message: 'Error fetching profile statistics',
@@ -351,16 +378,13 @@ router.get('/profile-stats', async (req, res) => {
     }
 });
 
-// === DEBUG & TESTING ROUTES ===
-
-// Debug route to check profile system
+// Debug profile system
 router.get('/debug/profiles', async (req, res) => {
     try {
-        console.log('🐛 [DEBUG] Checking profile system...');
-        
-        // Get all users
+        console.log('Running profile system debug...');
+
         const allUsersSnapshot = await adminDb.collection('users').get();
-        
+
         const userBreakdown = {
             total: allUsersSnapshot.size,
             byType: {},
@@ -369,26 +393,26 @@ router.get('/debug/profiles', async (req, res) => {
             profileNotCompleted: 0,
             sampleUsers: []
         };
-        
+
         allUsersSnapshot.forEach(doc => {
             const userData = doc.data();
             const { password, ...safeUserData } = userData;
-            
+
             // Count by type
             const userType = userData.type || 'unknown';
             userBreakdown.byType[userType] = (userBreakdown.byType[userType] || 0) + 1;
-            
+
             // Count by profile status
             const profileStatus = userData.profileStatus || 'none';
             userBreakdown.byProfileStatus[profileStatus] = (userBreakdown.byProfileStatus[profileStatus] || 0) + 1;
-            
+
             // Count profile completion
             if (userData.profileCompleted === true) {
                 userBreakdown.profileCompleted++;
             } else {
                 userBreakdown.profileNotCompleted++;
             }
-            
+
             // Add sample users (first 5)
             if (userBreakdown.sampleUsers.length < 5) {
                 userBreakdown.sampleUsers.push({
@@ -402,20 +426,19 @@ router.get('/debug/profiles', async (req, res) => {
                 });
             }
         });
-        
-        console.log('🐛 [DEBUG] Profile system breakdown:', userBreakdown);
-        
+
+        console.log('Profile system breakdown:', userBreakdown);
+
         res.json({
             success: true,
             data: {
                 message: 'Profile system debug complete',
-                breakdown: userBreakdown,
-                recommendations: generateRecommendations(userBreakdown)
+                breakdown: userBreakdown
             }
         });
-        
+
     } catch (error) {
-        console.error('❌ [DEBUG] Error in profile debug:', error);
+        console.error('Error in profile debug:', error);
         res.status(500).json({
             success: false,
             message: 'Debug failed',
@@ -424,105 +447,35 @@ router.get('/debug/profiles', async (req, res) => {
     }
 });
 
-// Create test users for testing profile reviews
-router.post('/debug/create-test-users', async (req, res) => {
+// Basic users endpoint for compatibility
+router.get('/users', async (req, res) => {
     try {
-        console.log('🧪 [TEST] Creating test users...');
-        
-        const testUsers = [
-            {
-                name: 'John Designer Test',
-                email: `john.designer.test.${Date.now()}@example.com`,
-                type: 'designer',
-                profileCompleted: true,
-                profileStatus: 'pending',
-                canAccess: false,
-                createdAt: new Date().toISOString(),
-                submittedAt: new Date().toISOString(),
-                skills: ['AutoCAD', 'Revit', 'Structural Analysis'],
-                experience: '5 years in structural engineering',
-                education: 'Masters in Civil Engineering'
-            },
-            {
-                name: 'Jane Contractor Test',
-                email: `jane.contractor.test.${Date.now()}@example.com`,
-                type: 'contractor',
-                profileCompleted: true,
-                profileStatus: 'pending',
-                canAccess: false,
-                createdAt: new Date().toISOString(),
-                submittedAt: new Date().toISOString(),
-                companyName: 'Test Construction LLC',
-                businessType: 'Construction',
-                yearEstablished: 2015
-            }
-        ];
-        
-        const createdUsers = [];
-        
-        for (const userData of testUsers) {
-            const userRef = await adminDb.collection('users').add(userData);
-            createdUsers.push({
-                id: userRef.id,
-                email: userData.email,
-                name: userData.name,
-                type: userData.type
+        const usersSnapshot = await adminDb.collection('users').get();
+        const users = [];
+
+        usersSnapshot.forEach(doc => {
+            const userData = doc.data();
+            const { password, ...userWithoutPassword } = userData;
+            users.push({
+                _id: doc.id,
+                id: doc.id,
+                ...userWithoutPassword
             });
-            
-            console.log(`✅ [TEST] Created test user: ${userData.name} (${userRef.id})`);
-        }
-        
+        });
+
         res.json({
             success: true,
-            message: `Created ${createdUsers.length} test users`,
-            data: createdUsers
+            data: users
         });
-        
+
     } catch (error) {
-        console.error('❌ [TEST] Error creating test users:', error);
+        console.error('Error fetching users:', error);
         res.status(500).json({
             success: false,
-            message: 'Failed to create test users',
+            message: 'Error fetching users',
             error: error.message
         });
     }
 });
-
-// Helper function to generate recommendations
-function generateRecommendations(breakdown) {
-    const recommendations = [];
-    
-    if (breakdown.profileCompleted === 0) {
-        recommendations.push({
-            type: 'warning',
-            message: 'No users have completed their profiles yet',
-            action: 'Create test users or check profile completion workflow'
-        });
-    }
-    
-    if (breakdown.byProfileStatus.pending === 0) {
-        recommendations.push({
-            type: 'info',
-            message: 'No pending profile reviews',
-            action: 'This is normal if all profiles have been reviewed'
-        });
-    } else if (breakdown.byProfileStatus.pending > 0) {
-        recommendations.push({
-            type: 'action',
-            message: `${breakdown.byProfileStatus.pending} profiles need review`,
-            action: 'Review pending profiles to give users access'
-        });
-    }
-    
-    if (breakdown.byType.admin > 0 && breakdown.byType.admin === breakdown.total) {
-        recommendations.push({
-            type: 'warning',
-            message: 'Only admin users found',
-            action: 'Regular users need to register as designers or contractors'
-        });
-    }
-    
-    return recommendations;
-}
 
 export default router;

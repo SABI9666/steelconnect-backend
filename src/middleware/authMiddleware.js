@@ -215,6 +215,48 @@ export function requireUserType(allowedTypes) {
 }
 
 /**
+ * Check if user is contractor middleware
+ */
+export function isContractor(req, res, next) {
+    if (!req.user) {
+        return res.status(401).json({
+            success: false,
+            message: 'Authentication required'
+        });
+    }
+
+    if (req.user.type !== 'contractor') {
+        return res.status(403).json({
+            success: false,
+            message: 'Contractor access required'
+        });
+    }
+
+    next();
+}
+
+/**
+ * Check if user is designer middleware
+ */
+export function isDesigner(req, res, next) {
+    if (!req.user) {
+        return res.status(401).json({
+            success: false,
+            message: 'Authentication required'
+        });
+    }
+
+    if (req.user.type !== 'designer') {
+        return res.status(403).json({
+            success: false,
+            message: 'Designer access required'
+        });
+    }
+
+    next();
+}
+
+/**
  * Optional authentication middleware (doesn't fail if no token)
  * @param {Object} req - Express request object
  * @param {Object} res - Express response object

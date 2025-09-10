@@ -499,6 +499,7 @@ router.patch('/estimations/:estimationId/status', async (req, res) => {
     }
 });
 
+// Get estimation files
 router.get('/estimations/:estimationId/files', async (req, res) => {
     try {
         const { estimationId } = req.params;
@@ -531,6 +532,7 @@ router.get('/estimations/:estimationId/files', async (req, res) => {
     }
 });
 
+// Upload estimation result
 router.post('/estimations/:estimationId/result', upload.single('resultFile'), async (req, res) => {
     try {
         const { estimationId } = req.params;
@@ -805,7 +807,7 @@ router.delete('/messages/:messageId', async (req, res) => {
     }
 });
 
-// Profile management routes (keeping existing ones)
+// PROFILE REVIEWS MANAGEMENT
 router.get('/profile-reviews', async (req, res) => {
     try {
         const usersSnapshot = await adminDb.collection('users')
@@ -854,6 +856,7 @@ router.get('/profile-reviews', async (req, res) => {
     }
 });
 
+// Get single profile review details
 router.get('/profile-reviews/:reviewId', async (req, res) => {
     try {
         const { reviewId } = req.params;
@@ -902,6 +905,7 @@ router.get('/profile-reviews/:reviewId', async (req, res) => {
     }
 });
 
+// Approve profile
 router.post('/profile-reviews/:reviewId/approve', async (req, res) => {
     try {
         const { reviewId } = req.params;
@@ -932,6 +936,7 @@ router.post('/profile-reviews/:reviewId/approve', async (req, res) => {
     }
 });
 
+// Reject profile
 router.post('/profile-reviews/:reviewId/reject', async (req, res) => {
     try {
         const { reviewId } = req.params;
@@ -970,6 +975,7 @@ router.post('/profile-reviews/:reviewId/reject', async (req, res) => {
     }
 });
 
+// Get profile statistics
 router.get('/profile-stats', async (req, res) => {
     try {
         const usersSnapshot = await adminDb.collection('users')
@@ -1011,6 +1017,7 @@ router.get('/profile-stats', async (req, res) => {
     }
 });
 
+// Debug endpoint for profile system
 router.get('/debug/profiles', async (req, res) => {
     try {
         const allUsersSnapshot = await adminDb.collection('users').get();

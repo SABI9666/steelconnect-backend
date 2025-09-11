@@ -905,21 +905,116 @@ router.get('/profile-reviews/:reviewId', async (req, res) => {
     }
 });
 
-// Approve profile
+// Get profile files for viewing
+router.get('/profile-reviews/:reviewId/files', async (req, res) => {
+    try {
+        const { reviewId } = req.params;
+        const userDoc = await adminDb.collection('users').doc(reviewId).get();
+        if (!userDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+        const userData = userDoc.data();
+        const uploadedFiles = userData.uploadedFiles || [];
+        res.json({
+            success: true,
+            data: {
+                files: uploadedFiles
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching profile files:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching profile files',
+            error: error.message
+        });
+    }
+});
+
+// Download profile file
+router.get('/profile-reviews/:reviewId/files/:fileName/download', async (req, res) => {
+    try {
+        const { reviewId, fileName } = req.params;
+        
+        const userDoc = await adminDb.collection('users').doc(reviewId).get();
+        if (!userDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        const userData = userDoc.data();
+        const uploadedFiles = userData.uploadedFiles || [];
+        const file = uploadedFiles.find(f => f.name === fileName);
+
+        if (!file) {
+            return res.status(404).json({
+                success: false,
+                message: 'File not found'
+            });
+        }
+        
+        // Redirect to the file URL
+        res.redirect(file.url);
+    } catch (error) {
+        console.error('Error downloading file:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error downloading file',
+            error: error.message
+        });
+    }
+});
+
+// Enhanced approve profile with email notification
 router.post('/profile-reviews/:reviewId/approve', async (req, res) => {
     try {
         const { reviewId } = req.params;
         const { notes } = req.body;
 
+        // Get user data first
+        const userDoc = await adminDb.collection('users').doc(reviewId).get();
+        if (!userDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+        const userData = userDoc.data();
+
+        // Update user profile status
         await adminDb.collection('users').doc(reviewId).update({
             profileStatus: 'approved',
             canAccess: true,
+            isActive: true,
             approvedAt: new Date().toISOString(),
             approvedBy: req.user.email,
             reviewedAt: new Date().toISOString(),
             reviewedBy: req.user.email,
             reviewNotes: notes || 'Profile approved by admin'
         });
+
+        // Send approval email
+        try {
+            const emailContent = `
+                <h2>Profile Approved!</h2>
+                <p>Dear ${userData.name},</p>
+                <p>Congratulations! Your profile has been approved by our admin team.</p>
+                <p>You now have full access to your SteelConnect ${userData.type} portal.</p>
+                ${notes ? `<p><strong>Admin Note:</strong> ${notes}</p>` : ''}
+                <p>Welcome to the SteelConnect community!</p>
+                <br>
+                <p>The SteelConnect Team</p>
+            `;
+            // If you have email service configured, send email here
+            console.log('Approval email would be sent to:', userData.email);
+        } catch (emailError) {
+            console.error('Failed to send approval email:', emailError);
+        }
 
         res.json({
             success: true,
@@ -936,7 +1031,7 @@ router.post('/profile-reviews/:reviewId/approve', async (req, res) => {
     }
 });
 
-// Reject profile
+// Enhanced reject profile with email notification
 router.post('/profile-reviews/:reviewId/reject', async (req, res) => {
     try {
         const { reviewId } = req.params;
@@ -949,9 +1044,21 @@ router.post('/profile-reviews/:reviewId/reject', async (req, res) => {
             });
         }
 
+        // Get user data first
+        const userDoc = await adminDb.collection('users').doc(reviewId).get();
+        if (!userDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+        const userData = userDoc.data();
+
+        // Update user profile status
         await adminDb.collection('users').doc(reviewId).update({
             profileStatus: 'rejected',
             canAccess: false,
+            isActive: false,
             rejectionReason: reason,
             rejectedAt: new Date().toISOString(),
             rejectedBy: req.user.email,
@@ -959,6 +1066,24 @@ router.post('/profile-reviews/:reviewId/reject', async (req, res) => {
             reviewedBy: req.user.email,
             reviewNotes: reason
         });
+
+        // Send rejection email
+        try {
+            const emailContent = `
+                <h2>Profile Review Update</h2>
+                <p>Dear ${userData.name},</p>
+                <p>Thank you for submitting your profile for review. We need you to make some updates before we can approve your profile.</p>
+                <p><strong>Reason:</strong></p>
+                <p>${reason}</p>
+                <p>Please log in to your account and update your profile with the necessary changes.</p>
+                <br>
+                <p>The SteelConnect Team</p>
+            `;
+            // If you have email service configured, send email here
+            console.log('Rejection email would be sent to:', userData.email);
+        } catch (emailError) {
+            console.error('Failed to send rejection email:', emailError);
+        }
 
         res.json({
             success: true,

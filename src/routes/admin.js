@@ -1,4 +1,4 @@
-// src/routes/admin.js - Complete, working admin routes
+/ src/routes/admin.js - Complete, working admin routes
 import express from 'express';
 import multer from 'multer';
 import { authenticateToken, isAdmin } from '../middleware/authMiddleware.js';
@@ -17,33 +17,6 @@ const upload = multer({
 router.use(authenticateToken);
 router.use(isAdmin);
 
-// --- DASHBOARD ---
-router.get('/dashboard', async (req, res) => {
-    try {
-        const usersSnapshot = await adminDb.collection('users').get();
-        const pendingReviewsSnapshot = await adminDb.collection('users')
-            .where('profileCompleted', '==', true)
-            .where('profileStatus', '==', 'pending')
-            .get();
-        
-        const jobsSnapshot = await adminDb.collection('jobs').get();
-        const quotesSnapshot = await adminDb.collection('quotes').get();
-
-        const stats = {
-            totalUsers: usersSnapshot.size,
-            totalJobs: jobsSnapshot.size,
-            totalQuotes: quotesSnapshot.size,
-            pendingProfileReviews: pendingReviewsSnapshot.size,
-        };
-        res.json({ success: true, stats });
-
-    } catch (error) {
-        console.error('Dashboard error:', error);
-        res.status(500).json({ success: false, message: 'Error loading dashboard data', error: error.message });
-    }
-});
-
-
 // --- USER MANAGEMENT ---
 // Requirement: Admin can view all users.
 router.get('/users', async (req, res) => {
@@ -56,7 +29,6 @@ router.get('/users', async (req, res) => {
                 name: data.name,
                 email: data.email,
                 role: data.type,
-                // The 'isActive' flag determines login status.
                 isActive: data.isActive !== false,
                 createdAt: data.createdAt,
             };
@@ -73,7 +45,7 @@ router.patch('/users/:userId/status', async (req, res) => {
     try {
         const { userId } = req.params;
         const { isActive } = req.body;
-        // The `canAccess` flag should be checked by your login system to block login.
+        // This 'canAccess' flag should be checked by your main login system.
         await adminDb.collection('users').doc(userId).update({ 
             isActive: isActive,
             canAccess: isActive 
@@ -84,7 +56,6 @@ router.patch('/users/:userId/status', async (req, res) => {
         res.status(500).json({ success: false, message: 'Error updating user status', error: error.message });
     }
 });
-
 
 // --- PROFILE REVIEW & REJECTION FLOW ---
 router.get('/profile-reviews', async (req, res) => {
@@ -128,19 +99,17 @@ router.post('/profile-reviews/:reviewId/reject', async (req, res) => {
         const { reason } = req.body;
         if (!reason) return res.status(400).json({ success: false, message: 'Rejection reason is required' });
         
-        // IMPORTANT: Per requirements, we ONLY update the profile status and add the
-        // rejection reason. We DO NOT set `canAccess` or `isActive` to false,
-        // so the user can log back in, see the comment, and resubmit their profile.
+        // IMPORTANT: We ONLY update the status and reason. We DO NOT set `canAccess` to false.
+        // This allows the user to log in, see the comment, and resubmit their profile.
         await adminDb.collection('users').doc(req.params.reviewId).update({
             profileStatus: 'rejected',
             rejectionReason: reason,
         });
-        res.json({ success: true, message: 'Profile rejected successfully. The user can still log in to make corrections.' });
+        res.json({ success: true, message: 'Profile rejected. The user can still log in to make corrections.' });
     } catch (error) {
         res.status(500).json({ success: false, message: 'Error rejecting profile', error: error.message });
     }
 });
-
 
 // --- ESTIMATION MODULE (Admin Controls) ---
 // Requirement: Admin can download estimation file uploaded by contractor.
@@ -166,7 +135,6 @@ router.post('/estimations/:estimationId/result', upload.single('resultFile'), as
         const filePath = `estimations/results/${estimationId}/${req.file.originalname}`;
         const fileUrl = await uploadToFirebaseStorage(req.file, filePath);
         
-        // Uploading a new file effectively "edits" the previous result.
         await adminDb.collection('estimations').doc(estimationId).update({
             resultFile: { url: fileUrl, name: req.file.originalname, uploadedAt: new Date().toISOString() },
             status: 'completed',
@@ -177,7 +145,7 @@ router.post('/estimations/:estimationId/result', upload.single('resultFile'), as
     }
 });
 
-// Requirement: Admin can delete the uploaded result (by deleting the whole estimation).
+// Requirement: Admin can delete the uploaded result (by deleting the estimation).
 router.delete('/estimations/:estimationId', async (req, res) => {
     try {
         await adminDb.collection('estimations').doc(req.params.estimationId).delete();
@@ -187,24 +155,19 @@ router.delete('/estimations/:estimationId', async (req, res) => {
     }
 });
 
-
 // --- ADMIN CONTROL FOR JOBS, QUOTES, & MESSAGES ---
-// Requirements: Admin can view and delete jobs, quotes, and messages.
+// Requirement: Admin can view and delete jobs, quotes, and messages.
 const createAdminCrudEndpoints = (collectionName) => {
-    // Get all items
     router.get(`/${collectionName}`, async (req, res) => {
         try {
             const snapshot = await adminDb.collection(collectionName).orderBy('createdAt', 'desc').get();
             const items = snapshot.docs.map(doc => ({ _id: doc.id, ...doc.data() }));
-            const payload = {};
-            payload[collectionName] = items;
-            res.json({ success: true, ...payload });
+            res.json({ success: true, [collectionName]: items });
         } catch (e) {
             res.status(500).json({ success: false, message: `Error fetching ${collectionName}` });
         }
     });
 
-    // Delete an item
     router.delete(`/${collectionName}/:id`, async (req, res) => {
         try {
             await adminDb.collection(collectionName).doc(req.params.id).delete();
@@ -218,8 +181,6 @@ const createAdminCrudEndpoints = (collectionName) => {
 createAdminCrudEndpoints('jobs');
 createAdminCrudEndpoints('quotes');
 createAdminCrudEndpoints('messages');
-// Also add estimations to this simple GET view for consistency.
-createAdminCrudEndpoints('estimations');
-
+createAdminCrudEndpoints('estimations'); // Also provides a simple GET /estimations view
 
 export default router;

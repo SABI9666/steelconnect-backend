@@ -20,8 +20,9 @@ try {
     console.log('✅ Profile routes imported successfully');
 } catch (error) {
     console.error('❌ Profile routes failed to load:', error.message);
-    console.error('🔍 Profile completion functionality will not work');
-    process.exit(1); // Exit since profile system is critical
+    console.error('📝 Profile completion functionality will not work');
+    // Don't exit - allow server to start without profile routes for now
+    console.warn('⚠️ Starting server without profile routes - create src/routes/profile.js');
 }
 
 let adminRoutes;
@@ -31,7 +32,7 @@ try {
     console.log('✅ Admin routes imported successfully');
 } catch (error) {
     console.warn('⚠️ Admin routes not available:', error.message);
-    console.warn('🔍 Admin functionality will be limited');
+    console.warn('📝 Admin functionality will be limited');
 }
 
 let estimationRoutes;
@@ -41,7 +42,7 @@ try {
     console.log('✅ Estimation routes imported successfully');
 } catch (error) {
     console.warn('⚠️ Estimation routes not available:', error.message);
-    console.warn('🔍 AI estimation features will not work');
+    console.warn('📝 AI estimation features will not work');
 }
 
 let notificationRoutes;
@@ -51,7 +52,7 @@ try {
     console.log('✅ Notification routes imported successfully');
 } catch (error) {
     console.warn('⚠️ Notification routes not available:', error.message);
-    console.warn('🔍 Real-time notifications will not work');
+    console.warn('📝 Real-time notifications will not work');
 }
 
 dotenv.config();
@@ -83,7 +84,7 @@ if (process.env.MONGODB_URI) {
     })
     .catch(err => {
         console.error('❌ MongoDB connection error:', err.message);
-        console.error('🔍 Check your MONGODB_URI environment variable');
+        console.error('📝 Check your MONGODB_URI environment variable');
         process.exit(1);
     });
 
@@ -101,7 +102,7 @@ if (process.env.MONGODB_URI) {
     });
 } else {
     console.error('❌ MONGODB_URI not found in environment variables');
-    console.error('🔍 Database connection required for the application to work');
+    console.error('📝 Database connection required for the application to work');
     process.exit(1);
 }
 
@@ -157,7 +158,7 @@ app.use((req, res, next) => {
     if (process.env.NODE_ENV !== 'production' && method !== 'GET') {
         const bodyStr = JSON.stringify(req.body, null, 2);
         if (bodyStr.length < 500) {
-            console.log(`🔍 Body:`, bodyStr);
+            console.log(`📝 Body:`, bodyStr);
         }
     }
     
@@ -209,13 +210,13 @@ app.get('/', (req, res) => {
         endpoints: {
             health: '/health',
             auth: '/api/auth',
-            profile: '/api/profile',
-            admin: '/api/admin',
+            profile: profileRoutes ? '/api/profile' : 'disabled',
+            admin: adminRoutes ? '/api/admin' : 'disabled',
             jobs: '/api/jobs',
             quotes: '/api/quotes',
             messages: '/api/messages',
-            estimation: '/api/estimation',
-            notifications: '/api/notifications'
+            estimation: estimationRoutes ? '/api/estimation' : 'disabled',
+            notifications: notificationRoutes ? '/api/notifications' : 'disabled'
         }
     });
 });
@@ -228,7 +229,7 @@ app.get('/api', (req, res) => {
         timestamp: new Date().toISOString(),
         status: 'operational',
         authentication: 'Bearer token required for protected routes',
-        profile_system: 'Users must complete profile and get admin approval',
+        profile_system: profileRoutes ? 'Users must complete profile and get admin approval' : 'Profile system disabled',
         available_endpoints: [
             {
                 path: 'GET /health',
@@ -245,22 +246,30 @@ app.get('/api', (req, res) => {
                 description: 'User login with email notification',
                 authentication: 'None'
             },
-            {
-                path: 'GET /api/profile/status',
-                description: 'Check profile completion status',
-                authentication: 'Required'
-            },
-            {
-                path: 'PUT /api/profile/complete',
-                description: 'Submit profile for admin approval',
-                authentication: 'Required'
-            },
-            {
-                path: 'GET /api/admin/profile-reviews',
-                description: 'Get pending profile reviews',
-                authentication: 'Required (Admin)',
-                status: adminRoutes ? 'Available' : 'Disabled'
-            },
+            ...(profileRoutes ? [
+                {
+                    path: 'GET /api/profile/status',
+                    description: 'Check profile completion status',
+                    authentication: 'Required'
+                },
+                {
+                    path: 'PUT /api/profile/complete',
+                    description: 'Submit profile for admin approval',
+                    authentication: 'Required'
+                }
+            ] : []),
+            ...(adminRoutes ? [
+                {
+                    path: 'GET /api/admin/profile-reviews',
+                    description: 'Get pending profile reviews',
+                    authentication: 'Required (Admin)'
+                },
+                {
+                    path: 'GET /api/admin/dashboard',
+                    description: 'Admin dashboard statistics',
+                    authentication: 'Required (Admin)'
+                }
+            ] : []),
             {
                 path: 'GET /api/jobs',
                 description: 'Get all jobs',
@@ -271,12 +280,13 @@ app.get('/api', (req, res) => {
                 description: 'Create new job',
                 authentication: 'Required (Contractor, Approved Profile)'
             },
-            {
-                path: 'GET /api/estimation/*',
-                description: 'AI cost estimation',
-                authentication: 'Required (Contractor, Approved Profile)',
-                status: estimationRoutes ? 'Available' : 'Disabled'
-            }
+            ...(estimationRoutes ? [
+                {
+                    path: 'GET /api/estimation/*',
+                    description: 'AI cost estimation',
+                    authentication: 'Required (Contractor, Approved Profile)'
+                }
+            ] : [])
         ]
     });
 });
@@ -293,7 +303,7 @@ if (authRoutes) {
     console.log('   • Token verification');
 } else {
     console.error('❌ CRITICAL: Auth routes failed to load');
-    console.error('🔍 Authentication will not work - application cannot start');
+    console.error('📝 Authentication will not work - application cannot start');
     process.exit(1);
 }
 
@@ -302,7 +312,7 @@ if (profileRoutes) {
     app.use('/api/profile', profileRoutes);
     console.log('✅ Profile routes registered at /api/profile');
     console.log('👤 Profile management system: ENABLED');
-    console.log('🔍 Profile features available:');
+    console.log('📝 Profile features available:');
     console.log('   • Profile completion workflow');
     console.log('   • File uploads (resumes, certificates)');
     console.log('   • Admin review system');
@@ -310,9 +320,17 @@ if (profileRoutes) {
     console.log('   • Email notifications for approvals');
     console.log('   • Profile status tracking');
 } else {
-    console.error('❌ CRITICAL: Profile routes failed to load');
-    console.error('🔍 Profile management will not work - required for app functionality');
-    process.exit(1);
+    console.warn('⚠️ Profile routes unavailable - profile management disabled');
+    console.warn('📝 Create ./src/routes/profile.js for profile functionality');
+    
+    // Provide a fallback endpoint to prevent 404s
+    app.use('/api/profile', (req, res) => {
+        res.status(503).json({
+            success: false,
+            message: 'Profile management system is currently unavailable',
+            error: 'Profile routes not loaded - check server configuration'
+        });
+    });
 }
 
 // Admin routes (Important - for profile approval)
@@ -324,8 +342,17 @@ if (adminRoutes) {
     console.log('   • User management');
     console.log('   • Dashboard statistics');
 } else {
-    console.warn('⚠️ Admin routes unavailable - profile approval will not work');
-    console.warn('🔍 Create ./src/routes/admin.js for profile approval system');
+    console.warn('⚠️ Admin routes unavailable - admin functionality disabled');
+    console.warn('📝 Create ./src/routes/admin.js for admin panel functionality');
+    
+    // Provide a fallback endpoint
+    app.use('/api/admin', (req, res) => {
+        res.status(503).json({
+            success: false,
+            message: 'Admin panel is currently unavailable',
+            error: 'Admin routes not loaded - check server configuration'
+        });
+    });
 }
 
 // Jobs routes (Critical - core functionality)
@@ -334,7 +361,7 @@ if (jobsRoutes) {
     console.log('✅ Jobs routes registered at /api/jobs');
 } else {
     console.error('❌ CRITICAL: Jobs routes failed to load');
-    console.error('🔍 Job management will not work');
+    console.error('📝 Job management will not work');
     process.exit(1);
 }
 
@@ -344,7 +371,7 @@ if (quotesRoutes) {
     console.log('✅ Quotes routes registered at /api/quotes');
 } else {
     console.error('❌ CRITICAL: Quotes routes failed to load');
-    console.error('🔍 Quote system will not work');
+    console.error('📝 Quote system will not work');
     process.exit(1);
 }
 
@@ -354,7 +381,7 @@ if (messagesRoutes) {
     console.log('✅ Messages routes registered at /api/messages');
 } else {
     console.error('❌ CRITICAL: Messages routes failed to load');
-    console.error('🔍 Messaging system will not work');
+    console.error('📝 Messaging system will not work');
     process.exit(1);
 }
 
@@ -365,7 +392,16 @@ if (notificationRoutes) {
     console.log('📱 Real-time notifications: ENABLED');
 } else {
     console.warn('⚠️ Notification routes unavailable - notifications will not work');
-    console.warn('🔍 Create ./src/routes/notifications.js for real-time notifications');
+    console.warn('📝 Create ./src/routes/notifications.js for real-time notifications');
+    
+    // Provide a fallback endpoint
+    app.use('/api/notifications', (req, res) => {
+        res.status(503).json({
+            success: false,
+            message: 'Notification system is currently unavailable',
+            error: 'Notification routes not loaded'
+        });
+    });
 }
 
 // Estimation routes (Optional - AI features)
@@ -378,7 +414,16 @@ if (estimationRoutes) {
     console.log('   • Admin result management');
 } else {
     console.warn('⚠️ Estimation routes unavailable - AI features disabled');
-    console.warn('🔍 Cost estimation functionality will not work');
+    console.warn('📝 Cost estimation functionality will not work');
+    
+    // Provide a fallback endpoint
+    app.use('/api/estimation', (req, res) => {
+        res.status(503).json({
+            success: false,
+            message: 'Estimation system is currently unavailable',
+            error: 'Estimation routes not loaded'
+        });
+    });
 }
 
 console.log('📦 Route registration completed');
@@ -389,8 +434,8 @@ app.use((error, req, res, next) => {
     console.error(`❌ ${timestamp} - Global Error Handler:`, error);
     
     // Log request details for debugging
-    console.error(`🔍 Request: ${req.method} ${req.url}`);
-    console.error(`🔍 User-Agent: ${req.get('User-Agent')}`);
+    console.error(`📝 Request: ${req.method} ${req.url}`);
+    console.error(`📝 User-Agent: ${req.get('User-Agent')}`);
     
     if (error.code === 'LIMIT_FILE_SIZE') {
         return res.status(413).json({ 
@@ -455,7 +500,7 @@ app.use('*', (req, res) => {
             '/health',
             '/api',
             '/api/auth/*',
-            '/api/profile/*',
+            ...(profileRoutes ? ['/api/profile/*'] : ['⚠️ /api/profile/* (disabled)']),
             '/api/jobs/*',
             '/api/quotes/*',
             '/api/messages/*',
@@ -517,7 +562,13 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`   Health: http://localhost:${PORT}/health`);
     console.log(`   API Docs: http://localhost:${PORT}/api`);
     console.log(`   Auth: http://localhost:${PORT}/api/auth/*`);
-    console.log(`   Profile: http://localhost:${PORT}/api/profile/*`);
+    
+    if (profileRoutes) {
+        console.log(`   Profile: http://localhost:${PORT}/api/profile/*`);
+    } else {
+        console.log(`   Profile: ⚠️ DISABLED - create src/routes/profile.js`);
+    }
+    
     console.log(`   Jobs: http://localhost:${PORT}/api/jobs/*`);
     console.log(`   Quotes: http://localhost:${PORT}/api/quotes/*`);
     console.log(`   Messages: http://localhost:${PORT}/api/messages/*`);
@@ -533,11 +584,22 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     }
     
     console.log('\n🚀 SteelConnect Backend v2.0 is ready!');
-    console.log('📋 Profile Management System: ACTIVE');
-    console.log('📧 Login Email Notifications: ACTIVE');
-    console.log('👨‍💼 Admin Approval Workflow: ACTIVE');
-    console.log('🔍 Check logs above for any missing features or configurations');
+    console.log(`📋 Profile Management System: ${profileRoutes ? 'ACTIVE' : 'DISABLED'}`);
+    console.log('🔧 Login Email Notifications: ACTIVE');
+    console.log(`👨‍💼 Admin Approval Workflow: ${adminRoutes ? 'ACTIVE' : 'DISABLED'}`);
+    console.log('📝 Check logs above for any missing features or configurations');
     console.log('');
+    
+    // Show what needs to be created
+    if (!profileRoutes) {
+        console.log('⚠️ NEXT STEPS: Create src/routes/profile.js for profile management');
+    }
+    if (!adminRoutes) {
+        console.log('⚠️ NEXT STEPS: Create src/routes/admin.js for admin panel');
+    }
+    if (!estimationRoutes) {
+        console.log('⚠️ NEXT STEPS: Create src/routes/estimation.js for estimation features');
+    }
 });
 
 // Set server timeout for long-running requests

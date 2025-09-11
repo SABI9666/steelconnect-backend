@@ -1,34 +1,17 @@
-// Fixed profile.js - Remove email service dependency
+// src/routes/profile.js - Profile Management Routes
 import express from 'express';
 import multer from 'multer';
-import { authenticateToken } from '../middleware/authMiddleware.js';
+import { authenticateToken, requireCompleteProfile } from '../middleware/authMiddleware.js';
 import { adminDb } from '../config/firebase.js';
 import { uploadToFirebaseStorage } from '../utils/firebaseStorage.js';
+import { sendEmail } from '../utils/emailService.js';
 
 const router = express.Router();
-
-// Apply authentication to all routes
-router.use(authenticateToken);
-
-// Simple email notification function (placeholder)
-async function sendEmail({ to, subject, html }) {
-    try {
-        console.log(`Email would be sent to: ${to}`);
-        console.log(`Subject: ${subject}`);
-        console.log('Email functionality not implemented yet');
-        return { success: true, message: 'Email logged (not sent)' };
-    } catch (error) {
-        console.error('Email service error:', error);
-        return { success: false, error: error.message };
-    }
-}
 
 // Configure multer for file uploads
 const upload = multer({
     storage: multer.memoryStorage(),
-    limits: {
-        fileSize: 10 * 1024 * 1024, // 10MB limit
-    },
+    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
     fileFilter: (req, file, cb) => {
         const allowedMimes = [
             'application/pdf',
@@ -48,11 +31,9 @@ const upload = multer({
 });
 
 // Get profile status
-router.get('/status', async (req, res) => {
+router.get('/status', authenticateToken, async (req, res) => {
     try {
-        const userId = req.user.userId;
-        
-        const userDoc = await adminDb.collection('users').doc(userId).get();
+        const userDoc = await adminDb.collection('users').doc(req.user.userId).get();
         
         if (!userDoc.exists) {
             return res.status(404).json({
@@ -60,7 +41,7 @@ router.get('/status', async (req, res) => {
                 message: 'User not found'
             });
         }
-        
+
         const userData = userDoc.data();
         
         res.json({
@@ -69,268 +50,94 @@ router.get('/status', async (req, res) => {
                 profileCompleted: userData.profileCompleted || false,
                 profileStatus: userData.profileStatus || 'incomplete',
                 canAccess: userData.canAccess !== false,
-                userType: userData.type,
                 profileData: userData.profileData || {},
-                lastUpdated: userData.updatedAt
-            }
-        });
-        
-    } catch (error) {
-        console.error('Error fetching profile status:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error fetching profile status'
-        });
-    }
-});
-
-// Complete profile submission - UPDATED VALIDATION
-router.put('/complete', upload.fields([
-    { name: 'resume', maxCount: 1 },
-    { name: 'certificates', maxCount: 5 }
-]), async (req, res) => {
-    try {
-        const userId = req.user.userId;
-        const userType = req.user.type;
-        
-        console.log(`Profile completion for user ${userId} (${userType})`);
-        
-        // Get current user data
-        const userDoc = await adminDb.collection('users').doc(userId).get();
-        if (!userDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'User not found'
-            });
-        }
-
-        const currentUserData = userDoc.data();
-        
-        // Base profile data
-        let profileData = {
-            profileCompleted: true,
-            profileStatus: 'pending',
-            updatedAt: new Date().toISOString(),
-            submittedAt: new Date().toISOString()
-        };
-
-        // Type-specific profile fields with UPDATED VALIDATION
-        if (userType === 'designer') {
-            // UPDATED: Only skills are required for designers
-            if (!req.body.skills) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Skills are required for designers'
-                });
-            }
-
-            // Designer profile fields
-            profileData = {
-                ...profileData,
-                linkedinProfile: req.body.linkedinProfile || '', // Optional now
-                skills: req.body.skills ? req.body.skills.split(',').map(s => s.trim()) : [],
-                experience: req.body.experience || '',
-                education: req.body.education || '',
-                specializations: req.body.specializations ? req.body.specializations.split(',').map(s => s.trim()) : [],
-                bio: req.body.bio || '',
-                hourlyRate: req.body.hourlyRate ? parseFloat(req.body.hourlyRate) : null
-            };
-
-            // Handle file uploads for designers
-            if (req.files) {
-                if (req.files.resume && req.files.resume[0]) {
-                    const resumeFile = req.files.resume[0];
-                    try {
-                        const resumePath = `profiles/resumes/${userId}_${Date.now()}_${resumeFile.originalname}`;
-                        const resumeUrl = await uploadToFirebaseStorage(resumeFile, resumePath);
-                        
-                        profileData.resume = {
-                            filename: resumeFile.originalname,
-                            mimetype: resumeFile.mimetype,
-                            size: resumeFile.size,
-                            uploadedAt: new Date().toISOString(),
-                            url: resumeUrl
-                        };
-                    } catch (uploadError) {
-                        console.error('Resume upload error:', uploadError);
-                        return res.status(500).json({
-                            success: false,
-                            message: 'Failed to upload resume'
-                        });
-                    }
-                }
-
-                if (req.files.certificates && req.files.certificates.length > 0) {
-                    try {
-                        profileData.certificates = [];
-                        for (let i = 0; i < req.files.certificates.length; i++) {
-                            const cert = req.files.certificates[i];
-                            const certPath = `profiles/certificates/${userId}_${Date.now()}_${i}_${cert.originalname}`;
-                            const certUrl = await uploadToFirebaseStorage(cert, certPath);
-                            
-                            profileData.certificates.push({
-                                filename: cert.originalname,
-                                mimetype: cert.mimetype,
-                                size: cert.size,
-                                uploadedAt: new Date().toISOString(),
-                                url: certUrl
-                            });
-                        }
-                    } catch (uploadError) {
-                        console.error('Certificate upload error:', uploadError);
-                        return res.status(500).json({
-                            success: false,
-                            message: 'Failed to upload certificates'
-                        });
-                    }
-                }
-            }
-        } else if (userType === 'contractor') {
-            // UPDATED: Only company name is required for contractors
-            if (!req.body.companyName) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Company name is required for contractors'
-                });
-            }
-
-            // Contractor profile fields
-            profileData = {
-                ...profileData,
-                companyName: req.body.companyName || '',
-                linkedinProfile: req.body.linkedinProfile || '', // Optional now
-                companyWebsite: req.body.companyWebsite || '',
-                businessType: req.body.businessType || '',
-                yearEstablished: req.body.yearEstablished ? parseInt(req.body.yearEstablished) : null,
-                companySize: req.body.companySize || '',
-                description: req.body.description || '',
-                address: req.body.address || '',
-                phone: req.body.phone || ''
-            };
-        }
-
-        // Update user profile
-        await adminDb.collection('users').doc(userId).update(profileData);
-
-        // Create profile review request for admin
-        const reviewRequest = {
-            userId: userId,
-            userEmail: currentUserData.email,
-            userName: currentUserData.name,
-            userType: userType,
-            profileData: profileData,
-            status: 'pending',
-            createdAt: new Date().toISOString(),
-            reviewedAt: null,
-            reviewedBy: null,
-            reviewNotes: ''
-        };
-
-        await adminDb.collection('profile_reviews').add(reviewRequest);
-
-        // Send notification email to user (placeholder - just log for now)
-        try {
-            await sendEmail({
-                to: currentUserData.email,
-                subject: 'Profile Submitted for Review - SteelConnect',
-                html: `
-                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center;">
-                            <h1>Profile Submission Confirmation</h1>
-                        </div>
-                        <div style="padding: 30px;">
-                            <h2>Dear ${currentUserData.name},</h2>
-                            <p>Your ${userType} profile has been successfully submitted for review. Our admin team will review your profile within 24-48 hours.</p>
-                            <p>You will receive an email notification once your profile is approved.</p>
-                            <p><strong>Note:</strong> You can continue using the platform with limited functionality until approval.</p>
-                            <br>
-                            <p>Thank you for joining SteelConnect!</p>
-                            <p>The SteelConnect Team</p>
-                        </div>
-                    </div>
-                `
-            });
-        } catch (emailError) {
-            console.error('Failed to send profile submission email:', emailError);
-        }
-
-        console.log(`Profile submitted for review: ${currentUserData.email}`);
-
-        res.json({
-            success: true,
-            message: 'Profile submitted for review successfully',
-            data: {
-                status: 'pending',
-                profileCompleted: true,
-                message: 'Your profile is under review. You have limited access until approved.'
+                uploadedFiles: userData.uploadedFiles || []
             }
         });
 
     } catch (error) {
-        console.error('Error updating profile:', error);
+        console.error('Error getting profile status:', error);
         res.status(500).json({
             success: false,
-            message: 'Error updating profile',
+            message: 'Error getting profile status',
             error: error.message
         });
     }
 });
 
-// Updated form fields - Make LinkedIn optional
-router.get('/form-fields', async (req, res) => {
+// Complete profile with file uploads
+router.put('/complete', authenticateToken, upload.array('files', 10), async (req, res) => {
     try {
+        const userId = req.user.userId;
         const userType = req.user.type;
+        const files = req.files || [];
         
-        let fields = [];
+        console.log(`Profile completion for user ${userId} (${userType})`);
         
-        if (userType === 'designer') {
-            fields = [
-                { name: 'skills', type: 'text', label: 'Skills (comma-separated)', required: true, placeholder: 'AutoCAD, Revit, Structural Analysis, Steel Design' },
-                { name: 'linkedinProfile', type: 'url', label: 'LinkedIn Profile URL', required: false, placeholder: 'https://linkedin.com/in/yourprofile' },
-                { name: 'experience', type: 'textarea', label: 'Years of Experience', required: false, placeholder: 'Describe your professional experience...' },
-                { name: 'education', type: 'textarea', label: 'Education Background', required: false, placeholder: 'Your educational qualifications...' },
-                { name: 'specializations', type: 'text', label: 'Specializations (comma-separated)', required: false, placeholder: 'Seismic Design, Bridge Engineering, High-rise Structures' },
-                { name: 'bio', type: 'textarea', label: 'Professional Bio', required: false, placeholder: 'Brief professional summary...' },
-                { name: 'hourlyRate', type: 'number', label: 'Hourly Rate (USD)', required: false, placeholder: '75' },
-                { name: 'resume', type: 'file', label: 'Resume (PDF/DOC)', required: true, accept: '.pdf,.doc,.docx' },
-                { name: 'certificates', type: 'file', label: 'Certificates (Optional)', required: false, multiple: true, accept: '.pdf,.jpg,.png' }
-            ];
-        } else if (userType === 'contractor') {
-            fields = [
-                { name: 'companyName', type: 'text', label: 'Company Name', required: true, placeholder: 'Your Company LLC' },
-                { name: 'linkedinProfile', type: 'url', label: 'LinkedIn Profile URL', required: false, placeholder: 'https://linkedin.com/company/yourcompany' },
-                { name: 'companyWebsite', type: 'url', label: 'Company Website', required: false, placeholder: 'https://yourcompany.com' },
-                { name: 'businessType', type: 'select', label: 'Business Type', required: false, options: ['Construction', 'Engineering', 'Architecture', 'Consulting', 'Other'] },
-                { name: 'yearEstablished', type: 'number', label: 'Year Established', required: false, placeholder: '2010' },
-                { name: 'companySize', type: 'select', label: 'Company Size', required: false, options: ['1-10', '11-50', '51-200', '201-500', '500+'] },
-                { name: 'description', type: 'textarea', label: 'Company Description', required: false, placeholder: 'Brief description of your company...' },
-                { name: 'address', type: 'textarea', label: 'Business Address', required: false, placeholder: 'Your business address...' },
-                { name: 'phone', type: 'tel', label: 'Business Phone', required: false, placeholder: '+1 (555) 123-4567' }
-            ];
+        // Parse profile data from request body
+        const profileData = {
+            ...req.body,
+            completedAt: new Date().toISOString(),
+            submittedAt: new Date().toISOString()
+        };
+
+        // Upload files to Firebase Storage
+        const uploadedFiles = [];
+        if (files.length > 0) {
+            for (const file of files) {
+                try {
+                    const filePath = `profiles/${userId}/${Date.now()}_${file.originalname}`;
+                    const fileUrl = await uploadToFirebaseStorage(file, filePath);
+                    
+                    uploadedFiles.push({
+                        name: file.originalname,
+                        url: fileUrl,
+                        size: file.size,
+                        type: file.mimetype,
+                        uploadedAt: new Date().toISOString()
+                    });
+                } catch (uploadError) {
+                    console.error('File upload error:', uploadError);
+                    // Continue with other files
+                }
+            }
         }
-        
+
+        // Update user profile in database
+        await adminDb.collection('users').doc(userId).update({
+            profileData: profileData,
+            uploadedFiles: uploadedFiles,
+            profileCompleted: true,
+            profileStatus: 'pending',
+            submittedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        });
+
+        console.log(`Profile submitted for review: ${userId}`);
+
         res.json({
             success: true,
+            message: 'Profile submitted successfully for admin review',
             data: {
-                userType,
-                fields
+                profileStatus: 'pending',
+                uploadedFiles: uploadedFiles.length
             }
         });
+
     } catch (error) {
-        console.error('Error fetching form fields:', error);
+        console.error('Error completing profile:', error);
         res.status(500).json({
             success: false,
-            message: 'Error fetching form fields'
+            message: 'Error completing profile',
+            error: error.message
         });
     }
 });
 
-// Get current user's profile data
-router.get('/data', async (req, res) => {
+// Get user's uploaded files
+router.get('/files', authenticateToken, async (req, res) => {
     try {
-        const userId = req.user.userId;
-        
-        const userDoc = await adminDb.collection('users').doc(userId).get();
+        const userDoc = await adminDb.collection('users').doc(req.user.userId).get();
         
         if (!userDoc.exists) {
             return res.status(404).json({
@@ -338,54 +145,23 @@ router.get('/data', async (req, res) => {
                 message: 'User not found'
             });
         }
-        
+
         const userData = userDoc.data();
-        const { password, ...profileData } = userData;
-        
+        const uploadedFiles = userData.uploadedFiles || [];
+
         res.json({
             success: true,
             data: {
-                ...profileData,
-                id: userId
+                files: uploadedFiles
             }
         });
-        
-    } catch (error) {
-        console.error('Error fetching profile data:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error fetching profile data'
-        });
-    }
-});
 
-// Update specific profile fields
-router.patch('/update', async (req, res) => {
-    try {
-        const userId = req.user.userId;
-        const updateData = req.body;
-        
-        // Remove sensitive fields
-        delete updateData.password;
-        delete updateData.type;
-        delete updateData.profileStatus;
-        delete updateData.canAccess;
-        
-        // Add timestamp
-        updateData.updatedAt = new Date().toISOString();
-        
-        await adminDb.collection('users').doc(userId).update(updateData);
-        
-        res.json({
-            success: true,
-            message: 'Profile updated successfully'
-        });
-        
     } catch (error) {
-        console.error('Error updating profile:', error);
+        console.error('Error getting profile files:', error);
         res.status(500).json({
             success: false,
-            message: 'Error updating profile'
+            message: 'Error getting profile files',
+            error: error.message
         });
     }
 });

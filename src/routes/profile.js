@@ -1,10 +1,9 @@
-// src/routes/profile.js - Profile Management Routes
+/ src/routes/profile.js - Profile Management Routes
 import express from 'express';
 import multer from 'multer';
 import { authenticateToken, requireCompleteProfile } from '../middleware/authMiddleware.js';
 import { adminDb } from '../config/firebase.js';
 import { uploadToFirebaseStorage } from '../utils/firebaseStorage.js';
-import { sendEmail } from '../utils/emailService.js';
 
 const router = express.Router();
 
@@ -129,38 +128,6 @@ router.put('/complete', authenticateToken, upload.array('files', 10), async (req
         res.status(500).json({
             success: false,
             message: 'Error completing profile',
-            error: error.message
-        });
-    }
-});
-
-// Get user's uploaded files
-router.get('/files', authenticateToken, async (req, res) => {
-    try {
-        const userDoc = await adminDb.collection('users').doc(req.user.userId).get();
-        
-        if (!userDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'User not found'
-            });
-        }
-
-        const userData = userDoc.data();
-        const uploadedFiles = userData.uploadedFiles || [];
-
-        res.json({
-            success: true,
-            data: {
-                files: uploadedFiles
-            }
-        });
-
-    } catch (error) {
-        console.error('Error getting profile files:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error getting profile files',
             error: error.message
         });
     }

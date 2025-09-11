@@ -59,11 +59,11 @@ export async function authenticateToken(req, res, next) {
 
         const userData = userDoc.data();
         
-        // Check if user account is active
-        if (userData.canAccess === false && userData.profileStatus === 'rejected') {
+        // FIXED: Check if user account is active - simplified logic
+        if (userData.canAccess === false) {
             return res.status(403).json({
                 success: false,
-                message: 'Account access has been restricted',
+                message: 'Account access has been restricted. Please contact support.',
                 profileStatus: userData.profileStatus
             });
         }
@@ -77,7 +77,8 @@ export async function authenticateToken(req, res, next) {
             profileStatus: userData.profileStatus,
             profileCompleted: userData.profileCompleted,
             canAccess: userData.canAccess,
-            name: userData.name
+            name: userData.name,
+            isActive: userData.isActive !== false // Add isActive field
         };
 
         console.log(`Authenticated user: ${req.user.email} (${req.user.type})`);
@@ -174,6 +175,16 @@ export function requireCompleteProfile(req, res, next) {
             return next();
         }
 
+        // Check if user account is deactivated
+        if (req.user.canAccess === false) {
+            return res.status(403).json({
+                success: false,
+                message: 'Account access has been restricted. Please contact support.',
+                profileStatus: req.user.profileStatus,
+                requiresProfileCompletion: false
+            });
+        }
+
         if (!req.user.profileCompleted || req.user.profileStatus !== 'approved') {
             return res.status(403).json({
                 success: false,
@@ -212,6 +223,14 @@ export function requireUserType(allowedTypes) {
                 });
             }
 
+            // Check if user account is deactivated
+            if (req.user.canAccess === false) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Account access has been restricted. Please contact support.'
+                });
+            }
+
             if (!types.includes(req.user.type)) {
                 return res.status(403).json({
                     success: false,
@@ -244,6 +263,14 @@ export function isContractor(req, res, next) {
         });
     }
 
+    // Check if user account is deactivated
+    if (req.user.canAccess === false) {
+        return res.status(403).json({
+            success: false,
+            message: 'Account access has been restricted. Please contact support.'
+        });
+    }
+
     if (req.user.type !== 'contractor') {
         return res.status(403).json({
             success: false,
@@ -262,6 +289,14 @@ export function isDesigner(req, res, next) {
         return res.status(401).json({
             success: false,
             message: 'Authentication required'
+        });
+    }
+
+    // Check if user account is deactivated
+    if (req.user.canAccess === false) {
+        return res.status(403).json({
+            success: false,
+            message: 'Account access has been restricted. Please contact support.'
         });
     }
 
@@ -301,15 +336,23 @@ export async function optionalAuth(req, res, next) {
             
             if (userDoc.exists) {
                 const userData = userDoc.data();
-                req.user = {
-                    userId: decoded.userId,
-                    email: decoded.email,
-                    type: decoded.type,
-                    role: decoded.role || decoded.type,
-                    profileStatus: userData.profileStatus,
-                    profileCompleted: userData.profileCompleted,
-                    canAccess: userData.canAccess
-                };
+                
+                // Only attach user if account is active
+                if (userData.canAccess !== false) {
+                    req.user = {
+                        userId: decoded.userId,
+                        email: decoded.email,
+                        type: decoded.type,
+                        role: decoded.role || decoded.type,
+                        profileStatus: userData.profileStatus,
+                        profileCompleted: userData.profileCompleted,
+                        canAccess: userData.canAccess,
+                        name: userData.name,
+                        isActive: userData.isActive !== false
+                    };
+                } else {
+                    req.user = null; // User is deactivated
+                }
             } else {
                 req.user = null;
             }

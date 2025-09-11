@@ -1,4 +1,4 @@
-// server.js - Complete, stable, and secure backend server
+// server.js - Complete SteelConnect Backend with Profile & Notification Systems
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -11,9 +11,9 @@ import authRoutes from './src/routes/auth.js';
 import jobsRoutes from './src/routes/jobs.js';
 import quotesRoutes from './src/routes/quotes.js';
 import messagesRoutes from './src/routes/messages.js';
-import profileRoutes from './src/routes/profile.js'; // Restored user profile routes
-import estimationRoutes from './src/routes/estimation.js'; // Restored user estimation routes
 import adminRoutes from './src/routes/admin.js';
+import profileRoutes from './src/routes/profile.js'; // <-- ADDED
+import notificationRoutes from './src/routes/notifications.js'; // <-- ADDED
 
 dotenv.config();
 
@@ -23,10 +23,6 @@ const PORT = process.env.PORT || 10000;
 console.log('🚀 SteelConnect Backend Starting...');
 
 // --- Database Connection ---
-if (!process.env.MONGODB_URI) {
-    console.error('❌ MONGODB_URI not found. Exiting.');
-    process.exit(1);
-}
 mongoose.connect(process.env.MONGODB_URI)
     .then(() => console.log('✅ MongoDB connected successfully.'))
     .catch(err => {
@@ -36,20 +32,16 @@ mongoose.connect(process.env.MONGODB_URI)
 
 // --- Core Middleware ---
 const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',').filter(Boolean);
-
 const corsOptions = {
     origin: (origin, callback) => {
-        // Allow requests with no origin (e.g., Postman) or from whitelisted domains
         if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.vercel.app') || origin.includes('localhost')) {
             callback(null, true);
         } else {
-            console.warn(`⚠️ CORS Warning: Origin "${origin}" was blocked.`);
             callback(new Error('Not allowed by CORS'));
         }
     },
     credentials: true,
 };
-
 app.use(cors(corsOptions));
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(compression());
@@ -58,17 +50,13 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // --- API Route Registration ---
 console.log('📋 Registering API routes...');
-// ** Routes for regular users (Contractors, Designers) are now restored **
 app.use('/api/auth', authRoutes);
 app.use('/api/jobs', jobsRoutes);
 app.use('/api/quotes', quotesRoutes);
 app.use('/api/messages', messagesRoutes);
-app.use('/api/profile', profileRoutes);
-app.use('/api/estimation', estimationRoutes);
-
-// Routes for the Admin Panel
 app.use('/api/admin', adminRoutes);
-console.log('✅ Admin routes registered at /api/admin.');
+app.use('/api/profile', profileRoutes); // <-- ADDED
+app.use('/api/notifications', notificationRoutes); // <-- ADDED
 console.log('📦 All routes registered.');
 
 // --- Error & 404 Handlers ---

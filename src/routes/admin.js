@@ -1,4 +1,4 @@
-// Complete admin.js routes with all management features
+// src/routes/admin.js - Complete Admin Routes with Profile Management
 import express from 'express';
 import multer from 'multer';
 import { authenticateToken, isAdmin } from '../middleware/authMiddleware.js';
@@ -38,7 +38,7 @@ const upload = multer({
 router.use(authenticateToken);
 router.use(isAdmin);
 
-// Dashboard endpoint
+// === DASHBOARD ENDPOINT ===
 router.get('/dashboard', async (req, res) => {
     try {
         console.log('Admin dashboard requested by:', req.user.email);
@@ -115,7 +115,7 @@ router.get('/dashboard', async (req, res) => {
     }
 });
 
-// USERS MANAGEMENT
+// === USERS MANAGEMENT ===
 router.get('/users', async (req, res) => {
     try {
         const usersSnapshot = await adminDb.collection('users').orderBy('createdAt', 'desc').get();
@@ -189,6 +189,7 @@ router.get('/users/:userId', async (req, res) => {
     }
 });
 
+// FIXED: Enhanced user status update
 router.patch('/users/:userId/status', async (req, res) => {
     try {
         const { userId } = req.params;
@@ -197,8 +198,10 @@ router.patch('/users/:userId/status', async (req, res) => {
 
         console.log(`${isActive ? 'Activating' : 'Deactivating'} user ${userId} by ${adminUser.email}`);
 
+        // Update both canAccess and isActive fields
         await adminDb.collection('users').doc(userId).update({
             canAccess: isActive,
+            isActive: isActive,
             statusUpdatedAt: new Date().toISOString(),
             statusUpdatedBy: adminUser.email
         });
@@ -218,7 +221,279 @@ router.patch('/users/:userId/status', async (req, res) => {
     }
 });
 
-// JOBS MANAGEMENT
+// === PROFILE REVIEWS MANAGEMENT ===
+router.get('/profile-reviews', async (req, res) => {
+    try {
+        const usersSnapshot = await adminDb.collection('users')
+            .where('type', 'in', ['designer', 'contractor'])
+            .where('profileCompleted', '==', true)
+            .orderBy('submittedAt', 'desc')
+            .get();
+
+        const reviews = [];
+        
+        usersSnapshot.forEach(doc => {
+            const userData = doc.data();
+            const { password, ...userWithoutPassword } = userData;
+            
+            reviews.push({
+                _id: doc.id,
+                id: doc.id,
+                userId: doc.id,
+                userEmail: userData.email,
+                userName: userData.name,
+                userType: userData.type,
+                status: userData.profileStatus || 'pending',
+                createdAt: userData.submittedAt || userData.createdAt,
+                reviewedAt: userData.reviewedAt,
+                reviewedBy: userData.reviewedBy,
+                reviewNotes: userData.reviewNotes || userData.rejectionReason,
+                user: {
+                    id: doc.id,
+                    ...userWithoutPassword
+                }
+            });
+        });
+
+        res.json({
+            success: true,
+            data: reviews
+        });
+
+    } catch (error) {
+        console.error('Error fetching profile reviews:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching profile reviews',
+            error: error.message
+        });
+    }
+});
+
+// Get single profile review details
+router.get('/profile-reviews/:reviewId', async (req, res) => {
+    try {
+        const { reviewId } = req.params;
+        const userDoc = await adminDb.collection('users').doc(reviewId).get();
+
+        if (!userDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'Profile review not found'
+            });
+        }
+
+        const userData = userDoc.data();
+        const { password, ...userWithoutPassword } = userData;
+
+        const review = {
+            _id: userDoc.id,
+            id: userDoc.id,
+            userId: userDoc.id,
+            userEmail: userData.email,
+            userName: userData.name,
+            userType: userData.type,
+            status: userData.profileStatus || 'pending',
+            createdAt: userData.submittedAt || userData.createdAt,
+            reviewedAt: userData.reviewedAt,
+            reviewedBy: userData.reviewedBy,
+            reviewNotes: userData.reviewNotes || userData.rejectionReason,
+            user: {
+                id: userDoc.id,
+                ...userWithoutPassword
+            }
+        };
+
+        res.json({
+            success: true,
+            data: { review }
+        });
+
+    } catch (error) {
+        console.error('Error fetching profile review:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching profile review details',
+            error: error.message
+        });
+    }
+});
+
+// Get profile files for viewing
+router.get('/profile-reviews/:reviewId/files', async (req, res) => {
+    try {
+        const { reviewId } = req.params;
+        const userDoc = await adminDb.collection('users').doc(reviewId).get();
+
+        if (!userDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        const userData = userDoc.data();
+        const uploadedFiles = userData.uploadedFiles || [];
+
+        res.json({
+            success: true,
+            data: {
+                files: uploadedFiles
+            }
+        });
+
+    } catch (error) {
+        console.error('Error fetching profile files:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching profile files',
+            error: error.message
+        });
+    }
+});
+
+// Download profile file
+router.get('/profile-reviews/:reviewId/files/:fileName/download', async (req, res) => {
+    try {
+        const { reviewId, fileName } = req.params;
+        
+        const userDoc = await adminDb.collection('users').doc(reviewId).get();
+        if (!userDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        const userData = userDoc.data();
+        const uploadedFiles = userData.uploadedFiles || [];
+        const file = uploadedFiles.find(f => f.name === fileName);
+
+        if (!file) {
+            return res.status(404).json({
+                success: false,
+                message: 'File not found'
+            });
+        }
+
+        // Set download headers
+        res.setHeader('Content-Disposition', `attachment; filename="${file.name}"`);
+        res.setHeader('Content-Type', file.type || 'application/octet-stream');
+
+        // Redirect to the file URL
+        res.redirect(file.url);
+
+    } catch (error) {
+        console.error('Error downloading file:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error downloading file',
+            error: error.message
+        });
+    }
+});
+
+// Approve profile
+router.post('/profile-reviews/:reviewId/approve', async (req, res) => {
+    try {
+        const { reviewId } = req.params;
+        const { notes } = req.body;
+
+        // Get user data first for potential email notification
+        const userDoc = await adminDb.collection('users').doc(reviewId).get();
+        if (!userDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        const userData = userDoc.data();
+
+        // Update user profile status
+        await adminDb.collection('users').doc(reviewId).update({
+            profileStatus: 'approved',
+            canAccess: true,
+            isActive: true,
+            approvedAt: new Date().toISOString(),
+            approvedBy: req.user.email,
+            reviewedAt: new Date().toISOString(),
+            reviewedBy: req.user.email,
+            reviewNotes: notes || 'Profile approved by admin'
+        });
+
+        console.log(`Profile approved: ${userData.email} by ${req.user.email}`);
+
+        res.json({
+            success: true,
+            message: 'Profile approved successfully'
+        });
+
+    } catch (error) {
+        console.error('Error approving profile:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error approving profile',
+            error: error.message
+        });
+    }
+});
+
+// Reject profile
+router.post('/profile-reviews/:reviewId/reject', async (req, res) => {
+    try {
+        const { reviewId } = req.params;
+        const { reason } = req.body;
+
+        if (!reason || reason.trim() === '') {
+            return res.status(400).json({
+                success: false,
+                message: 'Rejection reason is required'
+            });
+        }
+
+        // Get user data first for potential email notification
+        const userDoc = await adminDb.collection('users').doc(reviewId).get();
+        if (!userDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        const userData = userDoc.data();
+
+        // Update user profile status
+        await adminDb.collection('users').doc(reviewId).update({
+            profileStatus: 'rejected',
+            canAccess: false,
+            isActive: false,
+            rejectionReason: reason,
+            rejectedAt: new Date().toISOString(),
+            rejectedBy: req.user.email,
+            reviewedAt: new Date().toISOString(),
+            reviewedBy: req.user.email,
+            reviewNotes: reason
+        });
+
+        console.log(`Profile rejected: ${userData.email} by ${req.user.email}, reason: ${reason}`);
+
+        res.json({
+            success: true,
+            message: 'Profile rejected successfully'
+        });
+
+    } catch (error) {
+        console.error('Error rejecting profile:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error rejecting profile',
+            error: error.message
+        });
+    }
+});
+
+// === JOBS MANAGEMENT ===
 router.get('/jobs', async (req, res) => {
     try {
         const jobsSnapshot = await adminDb.collection('jobs').orderBy('createdAt', 'desc').get();
@@ -325,7 +600,7 @@ router.delete('/jobs/:jobId', async (req, res) => {
     }
 });
 
-// QUOTES MANAGEMENT
+// === QUOTES MANAGEMENT ===
 router.get('/quotes', async (req, res) => {
     try {
         const quotesSnapshot = await adminDb.collection('quotes').orderBy('createdAt', 'desc').get();
@@ -412,7 +687,7 @@ router.patch('/quotes/:quoteId/status', async (req, res) => {
     }
 });
 
-// ESTIMATIONS MANAGEMENT WITH FILE HANDLING
+// === ESTIMATIONS MANAGEMENT ===
 router.get('/estimations', async (req, res) => {
     try {
         const estimationsSnapshot = await adminDb.collection('estimations').orderBy('createdAt', 'desc').get();
@@ -545,6 +820,14 @@ router.post('/estimations/:estimationId/result', upload.single('resultFile'), as
             });
         }
 
+        // Validate file type (should be PDF for results)
+        if (req.file.mimetype !== 'application/pdf') {
+            return res.status(400).json({
+                success: false,
+                message: 'Result file must be a PDF'
+            });
+        }
+
         console.log(`Uploading estimation result for: ${estimationId}`);
 
         // Upload file to Firebase Storage
@@ -595,7 +878,7 @@ router.post('/estimations/:estimationId/result', upload.single('resultFile'), as
     }
 });
 
-// MESSAGES MANAGEMENT WITH CONTROLS
+// === MESSAGES MANAGEMENT ===
 router.get('/messages', async (req, res) => {
     try {
         const messagesSnapshot = await adminDb.collection('messages').orderBy('createdAt', 'desc').get();
@@ -690,103 +973,6 @@ router.patch('/messages/:messageId/status', async (req, res) => {
     }
 });
 
-router.patch('/messages/:messageId/block', async (req, res) => {
-    try {
-        const { messageId } = req.params;
-        const { block, reason } = req.body;
-
-        const updateData = {
-            isBlocked: block,
-            updatedAt: new Date().toISOString(),
-            updatedBy: req.user.email
-        };
-
-        if (block) {
-            updateData.blockedAt = new Date().toISOString();
-            updateData.blockedBy = req.user.email;
-            updateData.blockReason = reason || 'Blocked by admin';
-            updateData.status = 'blocked';
-        } else {
-            updateData.blockedAt = null;
-            updateData.blockedBy = null;
-            updateData.blockReason = null;
-            updateData.status = 'active';
-        }
-
-        await adminDb.collection('messages').doc(messageId).update(updateData);
-
-        res.json({
-            success: true,
-            message: `Message ${block ? 'blocked' : 'unblocked'} successfully`
-        });
-
-    } catch (error) {
-        console.error('Error blocking/unblocking message:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error updating message block status',
-            error: error.message
-        });
-    }
-});
-
-router.post('/messages/:messageId/reply', async (req, res) => {
-    try {
-        const { messageId } = req.params;
-        const { content } = req.body;
-
-        if (!content || content.trim() === '') {
-            return res.status(400).json({
-                success: false,
-                message: 'Reply content is required'
-            });
-        }
-
-        const messageDoc = await adminDb.collection('messages').doc(messageId).get();
-        if (!messageDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'Message not found'
-            });
-        }
-
-        const messageData = messageDoc.data();
-        
-        // Add reply to message thread
-        const reply = {
-            content: content.trim(),
-            sentAt: new Date().toISOString(),
-            sentBy: req.user.email,
-            senderName: req.user.name || 'Admin',
-            senderType: 'admin'
-        };
-
-        const updatedThread = messageData.thread || [];
-        updatedThread.push(reply);
-
-        await adminDb.collection('messages').doc(messageId).update({
-            thread: updatedThread,
-            status: 'replied',
-            isRead: true,
-            lastReply: reply,
-            updatedAt: new Date().toISOString()
-        });
-
-        res.json({
-            success: true,
-            message: 'Reply sent successfully'
-        });
-
-    } catch (error) {
-        console.error('Error sending reply:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error sending reply',
-            error: error.message
-        });
-    }
-});
-
 router.delete('/messages/:messageId', async (req, res) => {
     try {
         const { messageId } = req.params;
@@ -802,299 +988,6 @@ router.delete('/messages/:messageId', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error deleting message',
-            error: error.message
-        });
-    }
-});
-
-// PROFILE REVIEWS MANAGEMENT
-router.get('/profile-reviews', async (req, res) => {
-    try {
-        const usersSnapshot = await adminDb.collection('users')
-            .where('type', 'in', ['designer', 'contractor'])
-            .where('profileCompleted', '==', true)
-            .orderBy('submittedAt', 'desc')
-            .get();
-
-        const reviews = [];
-        
-        usersSnapshot.forEach(doc => {
-            const userData = doc.data();
-            const { password, ...userWithoutPassword } = userData;
-            
-            reviews.push({
-                _id: doc.id,
-                id: doc.id,
-                userId: doc.id,
-                userEmail: userData.email,
-                userName: userData.name,
-                userType: userData.type,
-                status: userData.profileStatus || 'pending',
-                createdAt: userData.submittedAt || userData.createdAt,
-                reviewedAt: userData.reviewedAt,
-                reviewedBy: userData.reviewedBy,
-                reviewNotes: userData.reviewNotes || userData.rejectionReason,
-                user: {
-                    id: doc.id,
-                    ...userWithoutPassword
-                }
-            });
-        });
-
-        res.json({
-            success: true,
-            data: reviews
-        });
-
-    } catch (error) {
-        console.error('Error fetching profile reviews:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error fetching profile reviews',
-            error: error.message
-        });
-    }
-});
-
-// Get single profile review details
-router.get('/profile-reviews/:reviewId', async (req, res) => {
-    try {
-        const { reviewId } = req.params;
-        const userDoc = await adminDb.collection('users').doc(reviewId).get();
-
-        if (!userDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'Profile review not found'
-            });
-        }
-
-        const userData = userDoc.data();
-        const { password, ...userWithoutPassword } = userData;
-
-        const review = {
-            _id: userDoc.id,
-            id: userDoc.id,
-            userId: userDoc.id,
-            userEmail: userData.email,
-            userName: userData.name,
-            userType: userData.type,
-            status: userData.profileStatus || 'pending',
-            createdAt: userData.submittedAt || userData.createdAt,
-            reviewedAt: userData.reviewedAt,
-            reviewedBy: userData.reviewedBy,
-            reviewNotes: userData.reviewNotes || userData.rejectionReason,
-            user: {
-                id: userDoc.id,
-                ...userWithoutPassword
-            }
-        };
-
-        res.json({
-            success: true,
-            data: { review }
-        });
-
-    } catch (error) {
-        console.error('Error fetching profile review:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error fetching profile review details',
-            error: error.message
-        });
-    }
-});
-
-// Get profile files for viewing
-router.get('/profile-reviews/:reviewId/files', async (req, res) => {
-    try {
-        const { reviewId } = req.params;
-        const userDoc = await adminDb.collection('users').doc(reviewId).get();
-        if (!userDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'User not found'
-            });
-        }
-        const userData = userDoc.data();
-        const uploadedFiles = userData.uploadedFiles || [];
-        res.json({
-            success: true,
-            data: {
-                files: uploadedFiles
-            }
-        });
-    } catch (error) {
-        console.error('Error fetching profile files:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error fetching profile files',
-            error: error.message
-        });
-    }
-});
-
-// Download profile file
-router.get('/profile-reviews/:reviewId/files/:fileName/download', async (req, res) => {
-    try {
-        const { reviewId, fileName } = req.params;
-        
-        const userDoc = await adminDb.collection('users').doc(reviewId).get();
-        if (!userDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'User not found'
-            });
-        }
-
-        const userData = userDoc.data();
-        const uploadedFiles = userData.uploadedFiles || [];
-        const file = uploadedFiles.find(f => f.name === fileName);
-
-        if (!file) {
-            return res.status(404).json({
-                success: false,
-                message: 'File not found'
-            });
-        }
-        
-        // Redirect to the file URL
-        res.redirect(file.url);
-    } catch (error) {
-        console.error('Error downloading file:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error downloading file',
-            error: error.message
-        });
-    }
-});
-
-// Enhanced approve profile with email notification
-router.post('/profile-reviews/:reviewId/approve', async (req, res) => {
-    try {
-        const { reviewId } = req.params;
-        const { notes } = req.body;
-
-        // Get user data first
-        const userDoc = await adminDb.collection('users').doc(reviewId).get();
-        if (!userDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'User not found'
-            });
-        }
-        const userData = userDoc.data();
-
-        // Update user profile status
-        await adminDb.collection('users').doc(reviewId).update({
-            profileStatus: 'approved',
-            canAccess: true,
-            isActive: true,
-            approvedAt: new Date().toISOString(),
-            approvedBy: req.user.email,
-            reviewedAt: new Date().toISOString(),
-            reviewedBy: req.user.email,
-            reviewNotes: notes || 'Profile approved by admin'
-        });
-
-        // Send approval email
-        try {
-            const emailContent = `
-                <h2>Profile Approved!</h2>
-                <p>Dear ${userData.name},</p>
-                <p>Congratulations! Your profile has been approved by our admin team.</p>
-                <p>You now have full access to your SteelConnect ${userData.type} portal.</p>
-                ${notes ? `<p><strong>Admin Note:</strong> ${notes}</p>` : ''}
-                <p>Welcome to the SteelConnect community!</p>
-                <br>
-                <p>The SteelConnect Team</p>
-            `;
-            // If you have email service configured, send email here
-            console.log('Approval email would be sent to:', userData.email);
-        } catch (emailError) {
-            console.error('Failed to send approval email:', emailError);
-        }
-
-        res.json({
-            success: true,
-            message: 'Profile approved successfully'
-        });
-
-    } catch (error) {
-        console.error('Error approving profile:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error approving profile',
-            error: error.message
-        });
-    }
-});
-
-// Enhanced reject profile with email notification
-router.post('/profile-reviews/:reviewId/reject', async (req, res) => {
-    try {
-        const { reviewId } = req.params;
-        const { reason } = req.body;
-
-        if (!reason || reason.trim() === '') {
-            return res.status(400).json({
-                success: false,
-                message: 'Rejection reason is required'
-            });
-        }
-
-        // Get user data first
-        const userDoc = await adminDb.collection('users').doc(reviewId).get();
-        if (!userDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'User not found'
-            });
-        }
-        const userData = userDoc.data();
-
-        // Update user profile status
-        await adminDb.collection('users').doc(reviewId).update({
-            profileStatus: 'rejected',
-            canAccess: false,
-            isActive: false,
-            rejectionReason: reason,
-            rejectedAt: new Date().toISOString(),
-            rejectedBy: req.user.email,
-            reviewedAt: new Date().toISOString(),
-            reviewedBy: req.user.email,
-            reviewNotes: reason
-        });
-
-        // Send rejection email
-        try {
-            const emailContent = `
-                <h2>Profile Review Update</h2>
-                <p>Dear ${userData.name},</p>
-                <p>Thank you for submitting your profile for review. We need you to make some updates before we can approve your profile.</p>
-                <p><strong>Reason:</strong></p>
-                <p>${reason}</p>
-                <p>Please log in to your account and update your profile with the necessary changes.</p>
-                <br>
-                <p>The SteelConnect Team</p>
-            `;
-            // If you have email service configured, send email here
-            console.log('Rejection email would be sent to:', userData.email);
-        } catch (emailError) {
-            console.error('Failed to send rejection email:', emailError);
-        }
-
-        res.json({
-            success: true,
-            message: 'Profile rejected successfully'
-        });
-
-    } catch (error) {
-        console.error('Error rejecting profile:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error rejecting profile',
             error: error.message
         });
     }
@@ -1137,51 +1030,6 @@ router.get('/profile-stats', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error fetching profile statistics',
-            error: error.message
-        });
-    }
-});
-
-// Debug endpoint for profile system
-router.get('/debug/profiles', async (req, res) => {
-    try {
-        const allUsersSnapshot = await adminDb.collection('users').get();
-        const userBreakdown = {
-            total: allUsersSnapshot.size,
-            byType: {},
-            byProfileStatus: {},
-            profileCompleted: 0,
-            profileNotCompleted: 0
-        };
-
-        allUsersSnapshot.forEach(doc => {
-            const userData = doc.data();
-            const userType = userData.type || 'unknown';
-            userBreakdown.byType[userType] = (userBreakdown.byType[userType] || 0) + 1;
-            
-            const profileStatus = userData.profileStatus || 'none';
-            userBreakdown.byProfileStatus[profileStatus] = (userBreakdown.byProfileStatus[profileStatus] || 0) + 1;
-            
-            if (userData.profileCompleted === true) {
-                userBreakdown.profileCompleted++;
-            } else {
-                userBreakdown.profileNotCompleted++;
-            }
-        });
-
-        res.json({
-            success: true,
-            data: {
-                message: 'Profile system debug complete',
-                breakdown: userBreakdown
-            }
-        });
-
-    } catch (error) {
-        console.error('Error in profile debug:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Debug failed',
             error: error.message
         });
     }

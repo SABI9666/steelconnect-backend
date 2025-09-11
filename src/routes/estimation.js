@@ -77,7 +77,7 @@ router.get('/', authenticateToken, isAdmin, async (req, res) => {
     }
 });
 
-// Submit new estimation (Contractor only) - ENHANCED
+// Enhanced file upload handling for estimations (Contractor only)
 router.post('/contractor/submit', authenticateToken, isContractor, upload.array('files', 10), async (req, res) => {
     try {
         console.log('Estimation submission by contractor:', req.user?.email);
@@ -157,13 +157,12 @@ router.post('/contractor/submit', authenticateToken, isContractor, upload.array(
             data: {
                 id: estimationRef.id,
                 ...estimationData,
-                // Don't expose URLs/paths in response for security
                 uploadedFiles: uploadedFiles.map(f => ({
                     name: f.name,
                     size: f.size,
                     type: f.type,
                     uploadedAt: f.uploadedAt
-                })) 
+                })) // Don't expose URLs in response for security
             }
         });
 
@@ -220,7 +219,7 @@ router.get('/contractor/:contractorEmail', authenticateToken, async (req, res) =
     }
 });
 
-// Upload estimation result (Admin only) - ENHANCED
+// Enhanced result upload with better validation (Admin only)
 router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('resultFile'), async (req, res) => {
     try {
         const { estimationId } = req.params;
@@ -228,14 +227,14 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
         const file = req.file;
 
         console.log(`Admin ${req.user?.email} uploading result for estimation ${estimationId}`);
-
+        
         if (!file) {
             return res.status(400).json({
                 success: false,
                 message: 'Result file is required'
             });
         }
-
+        
         // Validate file type (should be PDF for results)
         if (file.mimetype !== 'application/pdf') {
             return res.status(400).json({
@@ -243,7 +242,7 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
                 message: 'Result file must be a PDF'
             });
         }
-
+        
         // Check if estimation exists
         const estimationDoc = await adminDb.collection('estimations').doc(estimationId).get();
         if (!estimationDoc.exists) {
@@ -252,12 +251,12 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
                 message: 'Estimation not found'
             });
         }
-
+        
         // Upload result file
         const timestamp = Date.now();
         const safeFileName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
         const filename = `estimation-results/${estimationId}/${timestamp}-${safeFileName}`;
-        
+                
         console.log(`Uploading result file: ${file.originalname}`);
         const publicUrl = await uploadToFirebaseStorage(file, filename);
         
@@ -270,37 +269,41 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
             uploadedBy: req.user.email,
             path: filename
         };
-
+        
         // Update estimation with result
         const updateData = {
             resultFile,
             status: 'completed',
             notes: notes || '',
             completedAt: new Date().toISOString(),
+            completedBy: req.user.email,
             updatedAt: new Date().toISOString()
         };
 
-        if (amount) {
+        if (amount && !isNaN(parseFloat(amount))) {
             updateData.estimatedAmount = parseFloat(amount);
         }
-
+        
         await adminDb.collection('estimations').doc(estimationId).update(updateData);
-
+        
         console.log(`✅ Result uploaded for estimation ${estimationId}`);
-
+        
         res.json({
             success: true,
             message: 'Estimation result uploaded successfully',
-            resultFile: { // Don't expose URL/path in response
-                name: resultFile.name,
-                size: resultFile.size,
-                type: resultFile.type,
-                uploadedAt: resultFile.uploadedAt
+            data: {
+                resultFile: {
+                    name: resultFile.name,
+                    size: resultFile.size,
+                    type: resultFile.type,
+                    uploadedAt: resultFile.uploadedAt
+                },
+                estimatedAmount: updateData.estimatedAmount
             }
         });
 
     } catch (error) {
-        console.error('Error uploading estimation result:', error);
+        console.error('❌ Error uploading estimation result:', error);
         res.status(500).json({
             success: false,
             message: 'Error uploading estimation result',
@@ -309,12 +312,12 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
     }
 });
 
-// Download estimation files
+// Enhanced file download with proper authorization
 router.get('/:estimationId/files/:fileName/download', authenticateToken, async (req, res) => {
     try {
         const { estimationId, fileName } = req.params;
         
-        console.log(`File download requested: ${fileName} from estimation ${estimationId}`);
+        console.log(`File download requested: ${fileName} from estimation ${estimationId} by ${req.user.email}`);
         
         // Get estimation to check authorization
         const estimationDoc = await adminDb.collection('estimations').doc(estimationId).get();
@@ -324,17 +327,16 @@ router.get('/:estimationId/files/:fileName/download', authenticateToken, async (
                 message: 'Estimation not found'
             });
         }
-
         const estimationData = estimationDoc.data();
         
-        // Check authorization
+        // Check authorization - admin or the contractor who submitted
         if (req.user.type !== 'admin' && req.user.email !== estimationData.contractorEmail) {
             return res.status(403).json({
                 success: false,
                 message: 'Access denied'
             });
         }
-
+        
         // Find the file in uploadedFiles
         const file = estimationData.uploadedFiles?.find(f => f.name === fileName);
         if (!file) {
@@ -343,12 +345,18 @@ router.get('/:estimationId/files/:fileName/download', authenticateToken, async (
                 message: 'File not found'
             });
         }
-
+        
+        console.log(`✅ Redirecting to file URL for download: ${fileName}`);
+        
+        // Set headers for file download
+        res.setHeader('Content-Disposition', `attachment; filename="${file.name}"`);
+        res.setHeader('Content-Type', file.type || 'application/octet-stream');
+        
         // Redirect to the file URL
         res.redirect(file.url);
 
     } catch (error) {
-        console.error('Error downloading file:', error);
+        console.error('❌ Error downloading file:', error);
         res.status(500).json({
             success: false,
             message: 'Error downloading file',
@@ -357,12 +365,12 @@ router.get('/:estimationId/files/:fileName/download', authenticateToken, async (
     }
 });
 
-// Download estimation result
+// Enhanced result download
 router.get('/:estimationId/result/download', authenticateToken, async (req, res) => {
     try {
         const { estimationId } = req.params;
         
-        console.log(`Result download requested for estimation ${estimationId}`);
+        console.log(`Result download requested for estimation ${estimationId} by ${req.user.email}`);
         
         // Get estimation to check authorization and get result file
         const estimationDoc = await adminDb.collection('estimations').doc(estimationId).get();
@@ -372,10 +380,9 @@ router.get('/:estimationId/result/download', authenticateToken, async (req, res)
                 message: 'Estimation not found'
             });
         }
-
         const estimationData = estimationDoc.data();
         
-        // Check authorization
+        // Check authorization - admin or the contractor who submitted
         if (req.user.type !== 'admin' && req.user.email !== estimationData.contractorEmail) {
             return res.status(403).json({
                 success: false,
@@ -389,12 +396,18 @@ router.get('/:estimationId/result/download', authenticateToken, async (req, res)
                 message: 'Result file not found'
             });
         }
-
+        
+        console.log(`✅ Redirecting to result file URL for download`);
+        
+        // Set headers for file download
+        res.setHeader('Content-Disposition', `attachment; filename="${estimationData.resultFile.name}"`);
+        res.setHeader('Content-Type', estimationData.resultFile.type || 'application/pdf');
+        
         // Redirect to the result file URL
         res.redirect(estimationData.resultFile.url);
 
     } catch (error) {
-        console.error('Error downloading result:', error);
+        console.error('❌ Error downloading result:', error);
         res.status(500).json({
             success: false,
             message: 'Error downloading result',

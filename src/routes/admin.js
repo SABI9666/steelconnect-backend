@@ -1,4 +1,4 @@
-// src/routes/admin.js - Fixed admin routes file
+// src/routes/admin.js - Complete fixed admin routes file with blocking and comments
 import express from 'express';
 import multer from 'multer';
 import { authenticateToken, isAdmin } from '../middleware/authMiddleware.js';
@@ -45,7 +45,9 @@ router.get('/users', async (req, res) => {
                 name: data.name, 
                 email: data.email, 
                 role: data.type, 
-                isActive: data.isActive !== false 
+                isActive: data.isActive !== false,
+                isBlocked: data.isBlocked || false,
+                canSendMessages: data.canSendMessages !== false
             };
         });
         res.json({ success: true, users });
@@ -66,6 +68,82 @@ router.patch('/users/:userId/status', async (req, res) => {
     } catch (error) {
         console.error("Update User Status Error:", error);
         res.status(500).json({ success: false, message: 'Error updating user status' });
+    }
+});
+
+// NEW: User blocking endpoint
+router.post('/users/block-user', async (req, res) => {
+    try {
+        const { email, blocked, reason } = req.body;
+        
+        if (!email) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'User email is required' 
+            });
+        }
+
+        // Find user by email
+        const userQuery = await adminDb.collection('users')
+            .where('email', '==', email)
+            .limit(1)
+            .get();
+            
+        if (userQuery.empty) {
+            return res.status(404).json({ 
+                success: false, 
+                message: 'User not found' 
+            });
+        }
+
+        const userDoc = userQuery.docs[0];
+        const userId = userDoc.id;
+        
+        // Update user's blocked status
+        const updateData = {
+            isBlocked: blocked,
+            blockedReason: reason || null,
+            blockedAt: blocked ? new Date().toISOString() : null,
+            blockedBy: blocked ? req.user.email : null,
+            canSendMessages: !blocked, // Explicitly control message sending
+            updatedAt: new Date().toISOString()
+        };
+        
+        if (!blocked) {
+            // When unblocking, remove blocked fields
+            updateData.blockedReason = null;
+            updateData.blockedAt = null;
+            updateData.blockedBy = null;
+        }
+
+        await adminDb.collection('users').doc(userId).update(updateData);
+        
+        // Also update all messages from this user to reflect the new status
+        const messagesQuery = await adminDb.collection('messages')
+            .where('senderEmail', '==', email)
+            .get();
+            
+        const batch = adminDb.batch();
+        messagesQuery.docs.forEach(doc => {
+            batch.update(doc.ref, {
+                senderBlocked: blocked,
+                updatedAt: new Date().toISOString()
+            });
+        });
+        
+        await batch.commit();
+        
+        res.json({ 
+            success: true, 
+            message: `User ${blocked ? 'blocked' : 'unblocked'} successfully` 
+        });
+        
+    } catch (error) {
+        console.error('Error blocking/unblocking user:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Error updating user block status' 
+        });
     }
 });
 
@@ -106,6 +184,7 @@ router.get('/profile-reviews', async (req, res) => {
                 status: reviewData.status || 'pending',
                 submittedAt: reviewData.createdAt,
                 reviewNotes: reviewData.reviewNotes || '',
+                adminComments: reviewData.adminComments || null,
                 user: {
                     name: userData?.name || reviewData.userName || 'Unknown',
                     email: userData?.email || reviewData.userEmail || 'Unknown',
@@ -113,6 +192,7 @@ router.get('/profile-reviews', async (req, res) => {
                     phone: userData?.phone || '',
                     company: userData?.companyName || '',
                     address: userData?.address || '',
+                    adminComments: userData?.adminComments || null,
                     // Include profile data and documents
                     documents: [
                         ...(userData?.resume ? [{
@@ -183,6 +263,7 @@ router.get('/profile-reviews/:reviewId/details', async (req, res) => {
     }
 });
 
+// UPDATED: Profile review approval with better comment handling
 router.post('/profile-reviews/:reviewId/approve', async (req, res) => {
     try {
         const { adminComments } = req.body;
@@ -195,18 +276,21 @@ router.post('/profile-reviews/:reviewId/approve', async (req, res) => {
         
         const reviewData = reviewDoc.data();
         
-        // Update the user document
+        // Update the user document with admin comments
         const userUpdateData = {
             profileStatus: 'approved',
             canAccess: true,
             isActive: true,
             rejectionReason: null,
             approvedAt: new Date().toISOString(),
-            approvedBy: req.user.email
+            approvedBy: req.user.email,
+            updatedAt: new Date().toISOString()
         };
 
-        if (adminComments) {
-            userUpdateData.adminComments = adminComments;
+        // Store admin comments in user profile (visible to user)
+        if (adminComments && adminComments.trim()) {
+            userUpdateData.adminComments = adminComments.trim();
+            userUpdateData.hasAdminComments = true;
         }
 
         // Update both the user and the review
@@ -215,16 +299,18 @@ router.post('/profile-reviews/:reviewId/approve', async (req, res) => {
             status: 'approved',
             reviewedAt: new Date().toISOString(),
             reviewedBy: req.user.email,
-            reviewNotes: adminComments || ''
+            reviewNotes: adminComments || '',
+            adminComments: adminComments || null // Store in review for admin reference
         });
         
-        res.json({ success: true, message: 'Profile approved successfully' });
+        res.json({ success: true, message: 'Profile approved successfully. User can see your comments in their profile.' });
     } catch (error) {
         console.error("Approve Profile Error:", error);
         res.status(500).json({ success: false, message: 'Error approving profile' });
     }
 });
 
+// UPDATED: Profile review rejection with better comment handling  
 router.post('/profile-reviews/:reviewId/reject', async (req, res) => {
     try {
         const { reason, adminComments } = req.body;
@@ -240,17 +326,19 @@ router.post('/profile-reviews/:reviewId/reject', async (req, res) => {
         
         const reviewData = reviewDoc.data();
         
-        // Update the user document
+        // Update the user document with admin comments (visible to user)
         const userUpdateData = {
             profileStatus: 'rejected',
             rejectionReason: reason,
             rejectedAt: new Date().toISOString(),
-            rejectedBy: req.user.email
+            rejectedBy: req.user.email,
+            updatedAt: new Date().toISOString()
         };
 
-        if (adminComments) {
-            userUpdateData.adminComments = adminComments;
-        }
+        // Store admin comments in user profile (visible to user) - use reason as the comment
+        const fullComment = adminComments ? `${reason}\n\nAdditional Comments: ${adminComments}` : reason;
+        userUpdateData.adminComments = fullComment.trim();
+        userUpdateData.hasAdminComments = true;
 
         // Update both the user and the review
         await adminDb.collection('users').doc(reviewData.userId).update(userUpdateData);
@@ -258,10 +346,11 @@ router.post('/profile-reviews/:reviewId/reject', async (req, res) => {
             status: 'rejected',
             reviewedAt: new Date().toISOString(),
             reviewedBy: req.user.email,
-            reviewNotes: reason
+            reviewNotes: reason,
+            adminComments: adminComments || null
         });
 
-        res.json({ success: true, message: 'Profile rejected. The user can still log in to make corrections.' });
+        res.json({ success: true, message: 'Profile rejected. The user can see your feedback in their profile and can resubmit after corrections.' });
     } catch (error) {
         console.error("Reject Profile Error:", error);
         res.status(500).json({ success: false, message: 'Error rejecting profile' });
@@ -440,7 +529,8 @@ router.get('/messages', async (req, res) => {
                 status: data.status || 'unread',
                 createdAt: data.createdAt,
                 readAt: data.readAt,
-                attachments: data.attachments || []
+                attachments: data.attachments || [],
+                senderBlocked: data.senderBlocked || false
             };
         });
         res.json({ success: true, messages });

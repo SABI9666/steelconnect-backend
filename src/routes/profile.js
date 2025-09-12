@@ -1,4 +1,4 @@
-// Fixed profile.js - Remove email service dependency
+// src/routes/profile.js - Complete fixed profile routes file with admin comments support
 import express from 'express';
 import multer from 'multer';
 import { authenticateToken } from '../middleware/authMiddleware.js';
@@ -47,7 +47,7 @@ const upload = multer({
     }
 });
 
-// Get profile status
+// UPDATED: Get profile status with admin comments
 router.get('/status', async (req, res) => {
     try {
         const userId = req.user.userId;
@@ -71,7 +71,19 @@ router.get('/status', async (req, res) => {
                 canAccess: userData.canAccess !== false,
                 userType: userData.type,
                 profileData: userData.profileData || {},
-                lastUpdated: userData.updatedAt
+                lastUpdated: userData.updatedAt,
+                // Include admin comments if they exist
+                adminComments: userData.adminComments || null,
+                hasAdminComments: userData.hasAdminComments || false,
+                rejectionReason: userData.rejectionReason || null,
+                approvedAt: userData.approvedAt || null,
+                rejectedAt: userData.rejectedAt || null,
+                approvedBy: userData.approvedBy || null,
+                rejectedBy: userData.rejectedBy || null,
+                // Include blocking status for messaging
+                isBlocked: userData.isBlocked || false,
+                canSendMessages: userData.canSendMessages !== false,
+                blockedReason: userData.blockedReason || null
             }
         });
         
@@ -111,7 +123,14 @@ router.put('/complete', upload.fields([
             profileCompleted: true,
             profileStatus: 'pending',
             updatedAt: new Date().toISOString(),
-            submittedAt: new Date().toISOString()
+            submittedAt: new Date().toISOString(),
+            // Clear any previous rejection data on resubmission
+            rejectionReason: null,
+            rejectedAt: null,
+            rejectedBy: null,
+            // Clear admin comments on new submission (admin will add new ones if needed)
+            adminComments: null,
+            hasAdminComments: false
         };
 
         // Type-specific profile fields with UPDATED VALIDATION
@@ -223,7 +242,8 @@ router.put('/complete', upload.fields([
             createdAt: new Date().toISOString(),
             reviewedAt: null,
             reviewedBy: null,
-            reviewNotes: ''
+            reviewNotes: '',
+            adminComments: null
         };
 
         await adminDb.collection('profile_reviews').add(reviewRequest);
@@ -325,7 +345,7 @@ router.get('/form-fields', async (req, res) => {
     }
 });
 
-// Get current user's profile data
+// UPDATED: Get current user's profile data with admin comments
 router.get('/data', async (req, res) => {
     try {
         const userId = req.user.userId;
@@ -346,7 +366,12 @@ router.get('/data', async (req, res) => {
             success: true,
             data: {
                 ...profileData,
-                id: userId
+                id: userId,
+                // Ensure admin comments are included
+                adminComments: userData.adminComments || null,
+                hasAdminComments: userData.hasAdminComments || false,
+                rejectionReason: userData.rejectionReason || null,
+                profileStatus: userData.profileStatus || 'incomplete'
             }
         });
         
@@ -365,11 +390,18 @@ router.patch('/update', async (req, res) => {
         const userId = req.user.userId;
         const updateData = req.body;
         
-        // Remove sensitive fields
+        // Remove sensitive fields that users shouldn't be able to modify
         delete updateData.password;
         delete updateData.type;
         delete updateData.profileStatus;
         delete updateData.canAccess;
+        delete updateData.isBlocked;
+        delete updateData.canSendMessages;
+        delete updateData.adminComments; // Users can't modify admin comments
+        delete updateData.hasAdminComments;
+        delete updateData.approvedBy;
+        delete updateData.rejectedBy;
+        delete updateData.blockedBy;
         
         // Add timestamp
         updateData.updatedAt = new Date().toISOString();
@@ -386,6 +418,44 @@ router.patch('/update', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error updating profile'
+        });
+    }
+});
+
+// NEW: Get admin feedback/comments for user
+router.get('/admin-feedback', async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        
+        const userDoc = await adminDb.collection('users').doc(userId).get();
+        
+        if (!userDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+        
+        const userData = userDoc.data();
+        
+        res.json({
+            success: true,
+            data: {
+                hasAdminComments: userData.hasAdminComments || false,
+                adminComments: userData.adminComments || null,
+                profileStatus: userData.profileStatus || 'incomplete',
+                rejectionReason: userData.rejectionReason || null,
+                approvedAt: userData.approvedAt || null,
+                rejectedAt: userData.rejectedAt || null,
+                lastReviewDate: userData.approvedAt || userData.rejectedAt || null
+            }
+        });
+        
+    } catch (error) {
+        console.error('Error fetching admin feedback:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching admin feedback'
         });
     }
 });

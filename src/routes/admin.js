@@ -1,4 +1,4 @@
-// src/routes/admin.js - COMPLETE FIXED VERSION with working message control
+// src/routes/admin.js - COMPLETE FINAL VERSION with all features
 import express from 'express';
 import multer from 'multer';
 import { authenticateToken, isAdmin } from '../middleware/authMiddleware.js';
@@ -19,12 +19,15 @@ router.get('/dashboard', async (req, res) => {
         const pendingReviews = await adminDb.collection('profile_reviews').where('status', '==', 'pending').get();
         const jobs = await adminDb.collection('jobs').get();
         const quotes = await adminDb.collection('quotes').get();
+        const conversations = await adminDb.collection('conversations').get();
+        
         res.json({ 
             success: true, 
             stats: { 
                 totalUsers: users.size, 
                 totalJobs: jobs.size, 
                 totalQuotes: quotes.size, 
+                totalConversations: conversations.size,
                 pendingProfileReviews: pendingReviews.size 
             } 
         });
@@ -47,7 +50,9 @@ router.get('/users', async (req, res) => {
                 role: data.type, 
                 isActive: data.isActive !== false,
                 isBlocked: data.isBlocked || false,
-                canSendMessages: data.canSendMessages !== false
+                canSendMessages: data.canSendMessages !== false,
+                profileStatus: data.profileStatus || 'incomplete',
+                createdAt: data.createdAt
             };
         });
         res.json({ success: true, users });
@@ -62,7 +67,8 @@ router.patch('/users/:userId/status', async (req, res) => {
         const { isActive } = req.body;
         await adminDb.collection('users').doc(req.params.userId).update({ 
             isActive: isActive, 
-            canAccess: isActive 
+            canAccess: isActive,
+            updatedAt: new Date().toISOString()
         });
         res.json({ success: true, message: `User has been ${isActive ? 'activated' : 'deactivated'}.` });
     } catch (error) {
@@ -150,7 +156,7 @@ router.post('/users/block-user', async (req, res) => {
     }
 });
 
-// --- PROFILE REVIEWS (keeping existing code) ---
+// --- PROFILE REVIEWS ---
 router.get('/profile-reviews', async (req, res) => {
     try {
         console.log('Fetching profile reviews...');
@@ -225,6 +231,38 @@ router.get('/profile-reviews', async (req, res) => {
     } catch (error) {
         console.error("Fetch Profile Reviews Error:", error);
         res.status(500).json({ success: false, message: 'Error fetching profile reviews' });
+    }
+});
+
+router.get('/profile-reviews/:reviewId/details', async (req, res) => {
+    try {
+        const reviewDoc = await adminDb.collection('profile_reviews').doc(req.params.reviewId).get();
+        if (!reviewDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Profile review not found' });
+        }
+        
+        const reviewData = reviewDoc.data();
+        
+        // Get the actual user data
+        let userData = null;
+        if (reviewData.userId) {
+            const userDoc = await adminDb.collection('users').doc(reviewData.userId).get();
+            if (userDoc.exists) {
+                userData = userDoc.data();
+            }
+        }
+        
+        res.json({
+            success: true,
+            profile: {
+                _id: req.params.reviewId,
+                ...reviewData,
+                userData: userData
+            }
+        });
+    } catch (error) {
+        console.error("Get Profile Details Error:", error);
+        res.status(500).json({ success: false, message: 'Error fetching profile details' });
     }
 });
 
@@ -312,7 +350,320 @@ router.post('/profile-reviews/:reviewId/reject', async (req, res) => {
     }
 });
 
-// --- FIXED MESSAGE MANAGEMENT ---
+// --- USER CONVERSATIONS MANAGEMENT ---
+router.get('/conversations', async (req, res) => {
+    try {
+        console.log('[ADMIN-CONVERSATIONS] Fetching all user conversations...');
+        
+        const snapshot = await adminDb.collection('conversations')
+            .orderBy('updatedAt', 'desc')
+            .get();
+        
+        const conversations = [];
+        
+        for (const doc of snapshot.docs) {
+            const data = doc.data();
+            
+            // Get participant details
+            const participants = [];
+            if (data.participantIds && data.participantIds.length > 0) {
+                for (const participantId of data.participantIds) {
+                    try {
+                        const userDoc = await adminDb.collection('users').doc(participantId).get();
+                        if (userDoc.exists) {
+                            const userData = userDoc.data();
+                            participants.push({
+                                id: participantId,
+                                name: userData.name || 'Unknown',
+                                email: userData.email || 'Unknown',
+                                type: userData.type || 'Unknown'
+                            });
+                        }
+                    } catch (userError) {
+                        console.error(`Error fetching participant ${participantId}:`, userError);
+                    }
+                }
+            }
+            
+            // Get job details if exists
+            let jobDetails = null;
+            if (data.jobId) {
+                try {
+                    const jobDoc = await adminDb.collection('jobs').doc(data.jobId).get();
+                    if (jobDoc.exists) {
+                        const jobData = jobDoc.data();
+                        jobDetails = {
+                            id: data.jobId,
+                            title: jobData.title || 'Unknown Job',
+                            description: jobData.description || '',
+                            budget: jobData.budget || null
+                        };
+                    }
+                } catch (jobError) {
+                    console.error(`Error fetching job ${data.jobId}:`, jobError);
+                }
+            }
+            
+            // Get message count
+            const messagesSnapshot = await adminDb.collection('conversations')
+                .doc(doc.id)
+                .collection('messages')
+                .get();
+            
+            const conversation = {
+                _id: doc.id,
+                participants: participants,
+                participantNames: participants.map(p => p.name).join(', '),
+                participantEmails: participants.map(p => p.email).join(', '),
+                jobDetails: jobDetails,
+                lastMessage: data.lastMessage || 'No messages',
+                lastMessageBy: data.lastMessageBy || 'Unknown',
+                messageCount: messagesSnapshot.size,
+                createdAt: data.createdAt,
+                updatedAt: data.updatedAt,
+                status: data.status || 'active'
+            };
+            
+            conversations.push(conversation);
+        }
+        
+        console.log(`[ADMIN-CONVERSATIONS] Returning ${conversations.length} conversations`);
+        res.json({ success: true, conversations });
+        
+    } catch (error) {
+        console.error('[ADMIN-CONVERSATIONS] Error fetching conversations:', error);
+        res.status(500).json({ success: false, message: 'Error fetching conversations' });
+    }
+});
+
+router.get('/conversations/:conversationId/messages', async (req, res) => {
+    try {
+        const { conversationId } = req.params;
+        const { limit = 100, offset = 0 } = req.query;
+        
+        console.log(`[ADMIN-CONVERSATIONS] Fetching messages for conversation ${conversationId}`);
+        
+        // Get conversation details first
+        const conversationDoc = await adminDb.collection('conversations').doc(conversationId).get();
+        if (!conversationDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Conversation not found' });
+        }
+        
+        const conversationData = conversationDoc.data();
+        
+        // Get participant details
+        const participants = [];
+        if (conversationData.participantIds) {
+            for (const participantId of conversationData.participantIds) {
+                try {
+                    const userDoc = await adminDb.collection('users').doc(participantId).get();
+                    if (userDoc.exists) {
+                        const userData = userDoc.data();
+                        participants.push({
+                            id: participantId,
+                            name: userData.name || 'Unknown',
+                            email: userData.email || 'Unknown',
+                            type: userData.type || 'Unknown'
+                        });
+                    }
+                } catch (userError) {
+                    console.error(`Error fetching participant ${participantId}:`, userError);
+                }
+            }
+        }
+        
+        // Get messages
+        let messagesQuery = adminDb.collection('conversations')
+            .doc(conversationId)
+            .collection('messages')
+            .orderBy('createdAt', 'desc')
+            .limit(parseInt(limit));
+        
+        if (offset > 0) {
+            messagesQuery = messagesQuery.offset(parseInt(offset));
+        }
+        
+        const messagesSnapshot = await messagesQuery.get();
+        const messages = messagesSnapshot.docs.map(doc => {
+            const messageData = doc.data();
+            const sender = participants.find(p => p.id === messageData.senderId);
+            
+            return {
+                _id: doc.id,
+                text: messageData.text,
+                senderId: messageData.senderId,
+                senderName: messageData.senderName || (sender ? sender.name : 'Unknown'),
+                senderEmail: sender ? sender.email : 'Unknown',
+                senderType: sender ? sender.type : 'Unknown',
+                createdAt: messageData.createdAt,
+                readBy: messageData.readBy || {}
+            };
+        }).reverse(); // Show oldest first
+        
+        res.json({
+            success: true,
+            conversation: {
+                id: conversationId,
+                participants: participants,
+                jobId: conversationData.jobId,
+                createdAt: conversationData.createdAt,
+                updatedAt: conversationData.updatedAt
+            },
+            messages: messages,
+            totalMessages: messagesSnapshot.size,
+            hasMore: messagesSnapshot.size === parseInt(limit)
+        });
+        
+    } catch (error) {
+        console.error('[ADMIN-CONVERSATIONS] Error fetching conversation messages:', error);
+        res.status(500).json({ success: false, message: 'Error fetching conversation messages' });
+    }
+});
+
+router.post('/conversations/search', async (req, res) => {
+    try {
+        const { query, type = 'all' } = req.body;
+        
+        if (!query || query.trim().length < 2) {
+            return res.status(400).json({ success: false, message: 'Search query must be at least 2 characters' });
+        }
+        
+        console.log(`[ADMIN-CONVERSATIONS] Searching conversations for: ${query}`);
+        
+        // Find users matching the search query
+        const usersSnapshot = await adminDb.collection('users')
+            .where('email', '>=', query.toLowerCase())
+            .where('email', '<=', query.toLowerCase() + '\uf8ff')
+            .get();
+        
+        const nameSearchSnapshot = await adminDb.collection('users')
+            .where('name', '>=', query)
+            .where('name', '<=', query + '\uf8ff')
+            .get();
+        
+        // Combine results and remove duplicates
+        const userIds = new Set();
+        const matchedUsers = [];
+        
+        [...usersSnapshot.docs, ...nameSearchSnapshot.docs].forEach(doc => {
+            if (!userIds.has(doc.id)) {
+                userIds.add(doc.id);
+                const userData = doc.data();
+                if (type === 'all' || userData.type === type) {
+                    matchedUsers.push({
+                        id: doc.id,
+                        name: userData.name,
+                        email: userData.email,
+                        type: userData.type
+                    });
+                }
+            }
+        });
+        
+        if (matchedUsers.length === 0) {
+            return res.json({ success: true, conversations: [], message: 'No users found matching the search query' });
+        }
+        
+        // Find conversations involving these users
+        const conversations = [];
+        const userIdsList = Array.from(userIds);
+        
+        for (const userId of userIdsList) {
+            const conversationsSnapshot = await adminDb.collection('conversations')
+                .where('participantIds', 'array-contains', userId)
+                .get();
+            
+            for (const doc of conversationsSnapshot.docs) {
+                if (!conversations.find(c => c._id === doc.id)) {
+                    const data = doc.data();
+                    
+                    const participants = [];
+                    for (const participantId of data.participantIds) {
+                        const participant = matchedUsers.find(u => u.id === participantId) || 
+                                          await getUserById(participantId);
+                        if (participant) {
+                            participants.push(participant);
+                        }
+                    }
+                    
+                    conversations.push({
+                        _id: doc.id,
+                        participants: participants,
+                        participantNames: participants.map(p => p.name).join(', '),
+                        lastMessage: data.lastMessage || 'No messages',
+                        updatedAt: data.updatedAt,
+                        createdAt: data.createdAt
+                    });
+                }
+            }
+        }
+        
+        conversations.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+        
+        res.json({ success: true, conversations, matchedUsers });
+        
+    } catch (error) {
+        console.error('[ADMIN-CONVERSATIONS] Error searching conversations:', error);
+        res.status(500).json({ success: false, message: 'Error searching conversations' });
+    }
+});
+
+// Helper function to get user by ID
+async function getUserById(userId) {
+    try {
+        const userDoc = await adminDb.collection('users').doc(userId).get();
+        if (userDoc.exists) {
+            const userData = userDoc.data();
+            return {
+                id: userId,
+                name: userData.name || 'Unknown',
+                email: userData.email || 'Unknown',
+                type: userData.type || 'Unknown'
+            };
+        }
+    } catch (error) {
+        console.error(`Error fetching user ${userId}:`, error);
+    }
+    return null;
+}
+
+router.get('/conversations/stats', async (req, res) => {
+    try {
+        const conversationsSnapshot = await adminDb.collection('conversations').get();
+        const totalConversations = conversationsSnapshot.size;
+        
+        let totalMessages = 0;
+        let activeConversations = 0;
+        const last7Days = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        
+        for (const doc of conversationsSnapshot.docs) {
+            const data = doc.data();
+            
+            const messagesSnapshot = await doc.ref.collection('messages').get();
+            totalMessages += messagesSnapshot.size;
+            
+            if (data.updatedAt && new Date(data.updatedAt) > last7Days) {
+                activeConversations++;
+            }
+        }
+        
+        res.json({
+            success: true,
+            stats: {
+                totalConversations,
+                totalMessages,
+                activeConversations,
+                averageMessagesPerConversation: totalConversations > 0 ? Math.round(totalMessages / totalConversations) : 0
+            }
+        });
+        
+    } catch (error) {
+        console.error('[ADMIN-CONVERSATIONS] Error fetching conversation stats:', error);
+        res.status(500).json({ success: false, message: 'Error fetching conversation statistics' });
+    }
+});
+
+// --- MESSAGE MANAGEMENT ---
 router.get('/messages', async (req, res) => {
     try {
         console.log('[ADMIN-MESSAGES] Fetching messages with user block status...');
@@ -320,14 +671,12 @@ router.get('/messages', async (req, res) => {
         const snapshot = await adminDb.collection('messages').orderBy('createdAt', 'desc').get();
         const messages = [];
         
-        // Create a map to cache user block status
         const userBlockStatusCache = new Map();
         
         for (const doc of snapshot.docs) {
             const data = doc.data();
             const senderEmail = data.senderEmail || data.from;
             
-            // Check if sender is blocked (with caching)
             let senderBlocked = false;
             if (senderEmail && !userBlockStatusCache.has(senderEmail)) {
                 try {
@@ -381,7 +730,6 @@ router.get('/messages', async (req, res) => {
     }
 });
 
-// FIXED: Mark message as read endpoint (was missing)
 router.patch('/messages/:messageId/read', async (req, res) => {
     try {
         console.log(`[ADMIN-MESSAGES] Marking message ${req.params.messageId} as read by ${req.user.email}`);
@@ -416,7 +764,6 @@ router.get('/messages/:messageId', async (req, res) => {
 
         const messageData = messageDoc.data();
 
-        // Auto-mark as read when viewed
         await adminDb.collection('messages').doc(req.params.messageId).update({
             adminRead: true,
             adminReadAt: new Date().toISOString(),
@@ -507,6 +854,8 @@ router.delete('/messages/:id', async (req, res) => {
 // --- ESTIMATION MANAGEMENT ---
 router.get('/estimations', async (req, res) => {
     try {
+        console.log('Fetching estimations with user details...');
+        
         const snapshot = await adminDb.collection('estimations').orderBy('createdAt', 'desc').get();
         const estimations = [];
         
@@ -580,6 +929,7 @@ router.get('/estimations', async (req, res) => {
             estimations.push(estimation);
         }
         
+        console.log(`Returning ${estimations.length} estimations with user details`);
         res.json({ success: true, estimations });
     } catch (error) {
         console.error("Fetch Estimations Error:", error);
@@ -595,6 +945,26 @@ router.get('/estimations/:estimationId/files', async (req, res) => {
     } catch (error) {
         console.error("Fetch Estimation Files Error:", error);
         res.status(500).json({ success: false, message: 'Error fetching estimation files' });
+    }
+});
+
+router.get('/estimations/:estimationId/download/:fileIndex', async (req, res) => {
+    try {
+        const estDoc = await adminDb.collection('estimations').doc(req.params.estimationId).get();
+        if (!estDoc.exists) return res.status(404).json({ success: false, message: 'Estimation not found' });
+
+        const files = estDoc.data().uploadedFiles || [];
+        const fileIndex = parseInt(req.params.fileIndex);
+
+        if (fileIndex >= files.length || fileIndex < 0) {
+            return res.status(404).json({ success: false, message: 'File not found' });
+        }
+
+        const file = files[fileIndex];
+        res.json({ success: true, file: { url: file.url, name: file.name, downloadUrl: file.url } });
+    } catch (error) {
+        console.error("Download Estimation File Error:", error);
+        res.status(500).json({ success: false, message: 'Error creating file download link' });
     }
 });
 

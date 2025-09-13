@@ -1,10 +1,109 @@
-// src/routes/estimation.js
+/ src/routes/estimation.js
 import express from 'express';
 import multer from 'multer';
 import { authenticateToken, isContractor, isAdmin } from '../middleware/authMiddleware.js';
 import { adminDb, adminStorage } from '../config/firebase.js';
 
 const router = express.Router();
+
+// TEMPORARY NOTIFICATION SERVICE for estimation notifications
+class TempEstimationNotificationService {
+    static async notifyEstimationSubmitted(estimationData) {
+        try {
+            console.log('📬 Creating estimation submission notifications...');
+            
+            // Get admin users to notify them about new estimation request
+            const adminSnapshot = await adminDb.collection('users')
+                .where('type', '==', 'admin')
+                .get();
+
+            const notifications = [];
+
+            adminSnapshot.docs.forEach(doc => {
+                notifications.push({
+                    userId: doc.id,
+                    title: 'New Estimation Request',
+                    message: `${estimationData.contractorName} submitted a new estimation request for "${estimationData.projectTitle}"`,
+                    type: 'estimation',
+                    metadata: {
+                        action: 'estimation_submitted',
+                        estimationId: estimationData.id,
+                        contractorId: estimationData.contractorId,
+                        contractorName: estimationData.contractorName,
+                        projectTitle: estimationData.projectTitle,
+                        fileCount: estimationData.uploadedFiles?.length || 0
+                    },
+                    isRead: false,
+                    seen: false,
+                    deleted: false,
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString()
+                });
+            });
+
+            // Confirmation to contractor
+            notifications.push({
+                userId: estimationData.contractorId,
+                title: 'Estimation Request Submitted',
+                message: `Your estimation request for "${estimationData.projectTitle}" has been submitted and is being processed`,
+                type: 'estimation',
+                metadata: {
+                    action: 'estimation_submitted_confirmation',
+                    estimationId: estimationData.id,
+                    projectTitle: estimationData.projectTitle
+                },
+                isRead: false,
+                seen: false,
+                deleted: false,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            });
+
+            // Save all notifications to database
+            const batch = adminDb.batch();
+            notifications.forEach(notification => {
+                const notificationRef = adminDb.collection('notifications').doc();
+                batch.set(notificationRef, notification);
+            });
+            await batch.commit();
+
+            console.log(`✅ Estimation submission notifications sent to ${adminSnapshot.size} admins`);
+        } catch (error) {
+            console.error('❌ Error in estimation submission notifications:', error);
+        }
+    }
+
+    static async notifyEstimationCompleted(estimationData) {
+        try {
+            console.log('📬 Creating estimation completion notification...');
+            
+            const notification = {
+                userId: estimationData.contractorId,
+                title: 'Estimation Complete',
+                message: `Your estimation for "${estimationData.projectTitle}" is ready for download${estimationData.estimatedAmount ? ` - Estimated cost: $${estimationData.estimatedAmount.toLocaleString()}` : ''}`,
+                type: 'estimation',
+                metadata: {
+                    action: 'estimation_completed',
+                    estimationId: estimationData.id,
+                    projectTitle: estimationData.projectTitle,
+                    estimatedAmount: estimationData.estimatedAmount,
+                    hasResultFile: !!estimationData.resultFile
+                },
+                isRead: false,
+                seen: false,
+                deleted: false,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+
+            await adminDb.collection('notifications').add(notification);
+
+            console.log('✅ Estimation completion notification sent');
+        } catch (error) {
+            console.error('❌ Error in estimation completion notification:', error);
+        }
+    }
+}
 
 // Configure multer for file uploads
 const storage = multer.memoryStorage();
@@ -77,7 +176,7 @@ router.get('/', authenticateToken, isAdmin, async (req, res) => {
     }
 });
 
-// Enhanced file upload handling for estimations (Contractor only)
+// Enhanced file upload handling for estimations (Contractor only) - WITH NOTIFICATIONS
 router.post('/contractor/submit', authenticateToken, isContractor, upload.array('files', 10), async (req, res) => {
     try {
         console.log('Estimation submission by contractor:', req.user?.email);
@@ -149,6 +248,22 @@ router.post('/contractor/submit', authenticateToken, isContractor, upload.array(
         const estimationRef = await adminDb.collection('estimations').add(estimationData);
         
         console.log(`✅ Estimation created with ID: ${estimationRef.id}`);
+
+        // SEND NOTIFICATIONS USING TEMPORARY SERVICE
+        const fullEstimationData = {
+            id: estimationRef.id,
+            ...estimationData
+        };
+
+        // Send notifications asynchronously
+        setImmediate(async () => {
+            try {
+                await TempEstimationNotificationService.notifyEstimationSubmitted(fullEstimationData);
+                console.log('✅ Estimation submission notifications sent successfully');
+            } catch (notificationError) {
+                console.error('❌ Failed to send estimation submission notifications:', notificationError);
+            }
+        });
         
         res.status(201).json({
             success: true,
@@ -219,7 +334,7 @@ router.get('/contractor/:contractorEmail', authenticateToken, async (req, res) =
     }
 });
 
-// Enhanced result upload with better validation (Admin only)
+// Enhanced result upload with better validation (Admin only) - WITH NOTIFICATIONS
 router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('resultFile'), async (req, res) => {
     try {
         const { estimationId } = req.params;
@@ -251,6 +366,8 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
                 message: 'Estimation not found'
             });
         }
+        
+        const existingEstimationData = estimationDoc.data();
         
         // Upload result file
         const timestamp = Date.now();
@@ -287,6 +404,23 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
         await adminDb.collection('estimations').doc(estimationId).update(updateData);
         
         console.log(`✅ Result uploaded for estimation ${estimationId}`);
+
+        // SEND COMPLETION NOTIFICATIONS USING TEMPORARY SERVICE
+        const completedEstimationData = {
+            id: estimationId,
+            ...existingEstimationData,
+            ...updateData
+        };
+
+        // Send notifications asynchronously
+        setImmediate(async () => {
+            try {
+                await TempEstimationNotificationService.notifyEstimationCompleted(completedEstimationData);
+                console.log('✅ Estimation completion notifications sent successfully');
+            } catch (notificationError) {
+                console.error('❌ Failed to send estimation completion notifications:', notificationError);
+            }
+        });
         
         res.json({
             success: true,

@@ -1,3 +1,4 @@
+// src/routes/jobs.js - Fixed Import Path
 import express from 'express';
 import {
   createJob,
@@ -8,8 +9,112 @@ import {
 } from '../controllers/jobController.js';
 import { authenticateToken, isContractor } from '../middleware/auth.js';
 import { upload } from '../middleware/upload.js';
-import { NotificationService } from './notifications.js';
 import { adminDb } from '../config/firebase.js';
+
+// TEMPORARY NOTIFICATION SERVICE - Use this until you create the full NotificationService
+class TempNotificationService {
+  static async notifyJobCreated(jobData) {
+    try {
+      console.log('📬 Creating job creation notifications...');
+      
+      // Get all designers to notify them about the new job
+      const designersSnapshot = await adminDb.collection('users')
+        .where('type', '==', 'designer')
+        .where('profileStatus', '==', 'approved')
+        .get();
+
+      const notifications = [];
+
+      designersSnapshot.docs.forEach(doc => {
+        notifications.push({
+          userId: doc.id,
+          title: 'New Project Available',
+          message: `A new project "${jobData.title}" with budget ${jobData.budget} is now available for quotes`,
+          type: 'job',
+          metadata: {
+            action: 'job_created',
+            jobId: jobData.id,
+            contractorId: jobData.posterId,
+            contractorName: jobData.posterName,
+            jobTitle: jobData.title,
+            budget: jobData.budget,
+            deadline: jobData.deadline
+          },
+          isRead: false,
+          seen: false,
+          deleted: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      });
+
+      // Add confirmation to job poster
+      notifications.push({
+        userId: jobData.posterId,
+        title: 'Project Posted Successfully',
+        message: `Your project "${jobData.title}" has been posted and is now visible to all qualified designers`,
+        type: 'job',
+        metadata: {
+          action: 'job_posted_confirmation',
+          jobId: jobData.id,
+          jobTitle: jobData.title
+        },
+        isRead: false,
+        seen: false,
+        deleted: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+
+      // Save all notifications to database
+      const batch = adminDb.batch();
+      notifications.forEach(notification => {
+        const notificationRef = adminDb.collection('notifications').doc();
+        batch.set(notificationRef, notification);
+      });
+      await batch.commit();
+
+      console.log(`✅ Job creation notifications sent to ${designersSnapshot.size} designers`);
+    } catch (error) {
+      console.error('❌ Error in job creation notifications:', error);
+    }
+  }
+
+  static async notifyJobStatusChanged(jobData, oldStatus, newStatus) {
+    try {
+      console.log(`📬 Creating job status change notification: ${oldStatus} -> ${newStatus}`);
+      
+      if (newStatus === 'completed') {
+        // Notify the assigned designer
+        if (jobData.assignedTo) {
+          const notification = {
+            userId: jobData.assignedTo,
+            title: 'Project Completed',
+            message: `The project "${jobData.title}" has been marked as completed by the client`,
+            type: 'job',
+            metadata: {
+              action: 'job_completed',
+              jobId: jobData.id,
+              jobTitle: jobData.title,
+              contractorId: jobData.posterId
+            },
+            isRead: false,
+            seen: false,
+            deleted: false,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+
+          await adminDb.collection('notifications').add(notification);
+        }
+      }
+
+      console.log('✅ Job status change notifications sent');
+    } catch (error) {
+      console.error('❌ Error in job status change notifications:', error);
+    }
+  }
+}
 
 const router = express.Router();
 
@@ -28,28 +133,40 @@ router.post(
   upload.single('attachment'),
   async (req, res, next) => {
     try {
+      // Store original response function
+      const originalSend = res.send;
+      const originalJson = res.json;
+      
+      // Override response functions to catch successful job creation
+      res.json = function(data) {
+        // If job creation was successful (status 201), send notifications
+        if (this.statusCode === 201 && data.success) {
+          // Extract job data from response
+          const jobData = {
+            id: data.data?.id || res.locals?.jobId,
+            ...data.data,
+            posterId: req.user.userId,
+            posterName: req.user.name
+          };
+          
+          // Send notifications asynchronously
+          setImmediate(async () => {
+            try {
+              await TempNotificationService.notifyJobCreated(jobData);
+              console.log('✅ Job creation notifications sent successfully');
+            } catch (notificationError) {
+              console.error('❌ Failed to send job creation notifications:', notificationError);
+            }
+          });
+        }
+        
+        // Call original response
+        originalJson.call(this, data);
+      };
+      
       // Call the original createJob controller
       await createJob(req, res, next);
       
-      // If job creation was successful (status 201), send notifications
-      if (res.statusCode === 201) {
-        try {
-          // Extract job data from the response
-          const jobData = res.locals.jobData || req.body;
-          
-          // Add the job ID if it was set by the controller
-          if (res.locals.jobId) {
-            jobData.id = res.locals.jobId;
-          }
-          
-          // Send notifications to all designers
-          await NotificationService.notifyJobCreated(jobData);
-          console.log('✅ Job creation notifications sent successfully');
-        } catch (notificationError) {
-          console.error('❌ Failed to send job creation notifications:', notificationError);
-          // Don't fail the job creation if notifications fail
-        }
-      }
     } catch (error) {
       next(error);
     }
@@ -90,7 +207,7 @@ router.put('/:id', authenticateToken, isContractor, async (req, res) => {
 
     // Send status change notifications
     try {
-      await NotificationService.notifyJobStatusChanged(updatedJob, oldStatus, status);
+      await TempNotificationService.notifyJobStatusChanged(updatedJob, oldStatus, status);
       console.log('✅ Job status change notifications sent successfully');
     } catch (notificationError) {
       console.error('❌ Failed to send job status change notifications:', notificationError);

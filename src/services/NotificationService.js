@@ -1,15 +1,9 @@
-// src/services/NotificationService.js - Complete Notification System
+// src/services/NotificationService.js - Complete Implementation
 import { adminDb } from '../config/firebase.js';
 
 export class NotificationService {
     /**
      * Create a new notification in the database
-     * @param {string} userId - User ID to send notification to
-     * @param {string} title - Notification title
-     * @param {string} message - Notification message
-     * @param {string} type - Notification type (quote, job, message, estimation, etc.)
-     * @param {object} metadata - Additional data for the notification
-     * @returns {Promise<string>} - Created notification ID
      */
     static async createNotification(userId, title, message, type, metadata = {}) {
         try {
@@ -20,6 +14,7 @@ export class NotificationService {
                 type,
                 metadata,
                 isRead: false,
+                read: false, // For compatibility
                 seen: false,
                 deleted: false,
                 createdAt: new Date().toISOString(),
@@ -59,9 +54,6 @@ export class NotificationService {
     }
 
     // QUOTE NOTIFICATIONS
-    /**
-     * Notify when a quote is submitted
-     */
     static async notifyQuoteSubmitted(quoteData, jobData) {
         try {
             console.log('📬 Creating quote submission notification...');
@@ -113,9 +105,6 @@ export class NotificationService {
         }
     }
 
-    /**
-     * Notify when quote status changes (approved/rejected)
-     */
     static async notifyQuoteStatusChanged(quoteData, jobData, newStatus) {
         try {
             console.log(`📬 Creating quote ${newStatus} notification...`);
@@ -170,9 +159,6 @@ export class NotificationService {
     }
 
     // JOB NOTIFICATIONS
-    /**
-     * Notify when a new job is created
-     */
     static async notifyJobCreated(jobData) {
         try {
             console.log('📬 Creating job creation notifications...');
@@ -228,9 +214,6 @@ export class NotificationService {
         }
     }
 
-    /**
-     * Notify when job status changes
-     */
     static async notifyJobStatusChanged(jobData, oldStatus, newStatus) {
         try {
             console.log(`📬 Creating job status change notification: ${oldStatus} -> ${newStatus}`);
@@ -261,9 +244,6 @@ export class NotificationService {
     }
 
     // MESSAGE NOTIFICATIONS
-    /**
-     * Notify about new messages
-     */
     static async notifyNewMessage(messageData, conversationData) {
         try {
             console.log('📬 Creating message notification...');
@@ -328,9 +308,6 @@ export class NotificationService {
     }
 
     // ESTIMATION NOTIFICATIONS
-    /**
-     * Notify when estimation request is submitted
-     */
     static async notifyEstimationSubmitted(estimationData) {
         try {
             console.log('📬 Creating estimation submission notifications...');
@@ -379,9 +356,6 @@ export class NotificationService {
         }
     }
 
-    /**
-     * Notify when estimation result is ready
-     */
     static async notifyEstimationCompleted(estimationData) {
         try {
             console.log('📬 Creating estimation completion notification...');
@@ -408,9 +382,6 @@ export class NotificationService {
     }
 
     // PROFILE NOTIFICATIONS
-    /**
-     * Notify when profile status changes
-     */
     static async notifyProfileStatusChanged(userId, newStatus, rejectionReason = null) {
         try {
             console.log(`📬 Creating profile status notification: ${newStatus}`);
@@ -454,9 +425,6 @@ export class NotificationService {
     }
 
     // UTILITY METHODS
-    /**
-     * Mark notification as read
-     */
     static async markAsRead(notificationId, userId) {
         try {
             const notificationRef = adminDb.collection('notifications').doc(notificationId);
@@ -473,6 +441,7 @@ export class NotificationService {
             
             await notificationRef.update({
                 isRead: true,
+                read: true, // For compatibility
                 readAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString()
             });
@@ -484,41 +453,47 @@ export class NotificationService {
         }
     }
 
-    /**
-     * Get user notifications with pagination
-     */
-    static async getUserNotifications(userId, limit = 50, lastVisible = null) {
+    static async markAllAsRead(userId) {
         try {
-            let query = adminDb.collection('notifications')
+            const snapshot = await adminDb.collection('notifications')
                 .where('userId', '==', userId)
+                .where('isRead', '==', false)
                 .where('deleted', '!=', true)
-                .orderBy('createdAt', 'desc')
-                .limit(limit);
+                .get();
             
-            if (lastVisible) {
-                query = query.startAfter(lastVisible);
+            if (snapshot.empty) {
+                return {
+                    success: true,
+                    message: 'No unread notifications',
+                    updated: 0
+                };
             }
             
-            const snapshot = await query.get();
-            const notifications = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
+            const batch = adminDb.batch();
+            const timestamp = new Date().toISOString();
+            
+            snapshot.docs.forEach(doc => {
+                batch.update(doc.ref, {
+                    isRead: true,
+                    read: true, // For compatibility
+                    readAt: timestamp,
+                    updatedAt: timestamp
+                });
+            });
+            
+            await batch.commit();
             
             return {
-                notifications,
-                lastVisible: snapshot.docs[snapshot.docs.length - 1] || null,
-                hasMore: snapshot.docs.length === limit
+                success: true,
+                message: 'All notifications marked as read',
+                updated: snapshot.size
             };
         } catch (error) {
-            console.error('Error fetching user notifications:', error);
+            console.error('Error marking all notifications as read:', error);
             throw error;
         }
     }
 
-    /**
-     * Get notification counts
-     */
     static async getNotificationCounts(userId) {
         try {
             const snapshot = await adminDb.collection('notifications')
@@ -531,7 +506,7 @@ export class NotificationService {
             
             snapshot.docs.forEach(doc => {
                 const data = doc.data();
-                if (!data.isRead) unreadCount++;
+                if (!data.isRead && !data.read) unreadCount++;
                 if (!data.seen) unseenCount++;
             });
             
@@ -542,33 +517,40 @@ export class NotificationService {
             };
         } catch (error) {
             console.error('Error getting notification counts:', error);
-            throw error;
+            return {
+                total: 0,
+                unread: 0,
+                unseen: 0
+            };
         }
     }
 
-    /**
-     * Clean up old notifications (run periodically)
-     */
-    static async cleanupOldNotifications(daysToKeep = 90) {
+    static async deleteNotification(notificationId, userId) {
         try {
-            const cutoffDate = new Date();
-            cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
+            const notificationRef = adminDb.collection('notifications').doc(notificationId);
+            const notificationDoc = await notificationRef.get();
             
-            const oldNotificationsSnapshot = await adminDb.collection('notifications')
-                .where('createdAt', '<', cutoffDate.toISOString())
-                .get();
+            if (!notificationDoc.exists) {
+                throw new Error('Notification not found');
+            }
             
-            const batch = adminDb.batch();
-            oldNotificationsSnapshot.docs.forEach(doc => {
-                batch.delete(doc.ref);
+            const notification = notificationDoc.data();
+            if (notification.userId !== userId) {
+                throw new Error('Access denied');
+            }
+            
+            await notificationRef.update({
+                deleted: true,
+                deletedAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
             });
             
-            await batch.commit();
-            
-            console.log(`Cleaned up ${oldNotificationsSnapshot.size} old notifications`);
-            return oldNotificationsSnapshot.size;
+            return {
+                success: true,
+                message: 'Notification deleted'
+            };
         } catch (error) {
-            console.error('Error cleaning up old notifications:', error);
+            console.error('Error deleting notification:', error);
             throw error;
         }
     }

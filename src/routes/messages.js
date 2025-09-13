@@ -1,4 +1,4 @@
-// src/routes/messages.js - COMPLETE FINAL WORKING VERSION with blocking functionality
+// src/routes/messages.js - FIXED VERSION with temporary notification service
 import express from 'express';
 import {
   getConversations,
@@ -6,10 +6,94 @@ import {
   getMessages
 } from '../controllers/messageController.js';
 import { authenticateToken } from '../middleware/auth.js';
-import { NotificationService } from './notifications.js'; // Import from your working notifications file
 import { adminDb } from '../config/firebase.js';
 
 const router = express.Router();
+
+// TEMPORARY NOTIFICATION SERVICE - Remove the incorrect import and use this instead
+class TempNotificationService {
+  static async notifyNewMessage(messageData, conversationData) {
+    try {
+      console.log('📬 Creating message notification...');
+      
+      if (!conversationData.participants || conversationData.participants.length === 0) {
+        console.warn('No participants found for message notification');
+        return;
+      }
+
+      // Find recipients (everyone except the sender)
+      const recipients = conversationData.participants.filter(p => p.id !== messageData.senderId);
+      
+      if (recipients.length === 0) {
+        console.warn('No recipients found for message notification');
+        return;
+      }
+
+      const notifications = [];
+
+      // Create notifications for each recipient
+      recipients.forEach(recipient => {
+        const preview = messageData.text.length > 50 
+          ? messageData.text.substring(0, 50) + '...'
+          : messageData.text;
+
+        notifications.push({
+          userId: recipient.id,
+          title: `New message from ${messageData.senderName}`,
+          message: preview,
+          type: 'message',
+          metadata: {
+            action: 'message_received',
+            messageId: messageData.id,
+            conversationId: conversationData.id,
+            senderId: messageData.senderId,
+            senderName: messageData.senderName,
+            jobTitle: conversationData.jobTitle || 'Project Discussion',
+            preview: preview
+          },
+          isRead: false,
+          seen: false,
+          deleted: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      });
+
+      // Delivery confirmation to sender
+      notifications.push({
+        userId: messageData.senderId,
+        title: 'Message Delivered',
+        message: `Your message has been delivered to ${recipients.map(r => r.name).join(', ')}`,
+        type: 'message',
+        metadata: {
+          action: 'message_delivered',
+          messageId: messageData.id,
+          conversationId: conversationData.id,
+          recipientCount: recipients.length,
+          recipients: recipients.map(r => ({ id: r.id, name: r.name }))
+        },
+        isRead: false,
+        seen: false,
+        deleted: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+
+      // Save all notifications to database
+      const batch = adminDb.batch();
+      notifications.forEach(notification => {
+        const notificationRef = adminDb.collection('notifications').doc();
+        batch.set(notificationRef, notification);
+      });
+      await batch.commit();
+
+      console.log(`✅ Message notifications sent to ${recipients.length} recipients`);
+    } catch (error) {
+      console.error('❌ Error in message notifications:', error);
+      throw error;
+    }
+  }
+}
 
 // Helper function to get participant details (replicated from controller)
 const getParticipantDetails = async (participantIds) => {
@@ -28,7 +112,7 @@ const getParticipantDetails = async (participantIds) => {
     }
 };
 
-// NEW: Middleware to check if user is blocked from sending messages
+// Middleware to check if user is blocked from sending messages
 const checkUserBlocked = async (req, res, next) => {
     try {
         const senderId = req.user.userId || req.user.id;
@@ -77,12 +161,12 @@ router.get('/', getConversations);
 router.post('/find', findOrCreateConversation);
 router.get('/:conversationId/messages', getMessages);
 
-// ENHANCED MESSAGE SENDING - Complete working version with blocking check
+// ENHANCED MESSAGE SENDING with working notification system
 router.post('/:conversationId/messages', checkUserBlocked, async (req, res, next) => {
     try {
         const { conversationId } = req.params;
         const { text } = req.body;
-        const senderId = req.user.userId || req.user.id; // Handle both auth formats
+        const senderId = req.user.userId || req.user.id;
 
         console.log(`[MESSAGE-ROUTE] Sending message: User ${senderId} (${req.user.name}) in conversation ${conversationId}`);
 
@@ -122,7 +206,7 @@ router.post('/:conversationId/messages', checkUserBlocked, async (req, res, next
         
         console.log(`[MESSAGE-ROUTE] Saving message to subcollection...`);
         
-        // Save message to subcollection (CRITICAL: This must match where getMessages reads from)
+        // Save message to subcollection
         const messagesCollectionRef = convoRef.collection('messages');
         const messageRef = await messagesCollectionRef.add(newMessage);
 
@@ -182,29 +266,18 @@ router.post('/:conversationId/messages', checkUserBlocked, async (req, res, next
                     ...conversationData
                 };
 
-                console.log(`[NOTIFICATION] Calling NotificationService.notifyNewMessage...`);
-                console.log(`[NOTIFICATION] Notification data:`, {
-                    messageId: messageResponse.id,
-                    senderName: messageResponse.senderName,
-                    text: messageResponse.text.substring(0, 30) + '...',
-                    participantCount: participants.length,
-                    recipientIds: participants.filter(p => p.id !== senderId).map(p => ({ id: p.id, name: p.name }))
-                });
+                console.log(`[NOTIFICATION] Calling TempNotificationService.notifyNewMessage...`);
                 
-                // Create notification using your existing working service
-                if (NotificationService && typeof NotificationService.notifyNewMessage === 'function') {
-                    await NotificationService.notifyNewMessage(messageResponse, enrichedConversationData);
-                    console.log(`[NOTIFICATION] Message notifications created successfully`);
-                } else {
-                    console.warn(`[NOTIFICATION] NotificationService not available or method missing`);
-                }
+                // Create notification using temporary service
+                await TempNotificationService.notifyNewMessage(messageResponse, enrichedConversationData);
+                console.log(`[NOTIFICATION] Message notifications created successfully`);
                 
             } catch (notificationError) {
                 console.error(`[NOTIFICATION] Failed to create message notifications:`, notificationError);
                 console.error(`[NOTIFICATION] Error details:`, {
                     name: notificationError.name,
                     message: notificationError.message,
-                    stack: notificationError.stack?.split('\n').slice(0, 3) // First 3 lines of stack
+                    stack: notificationError.stack?.split('\n').slice(0, 3)
                 });
                 // Don't fail the message send if notifications fail - just log the error
             }
@@ -220,7 +293,7 @@ router.post('/:conversationId/messages', checkUserBlocked, async (req, res, next
     }
 });
 
-// NEW: Get user's blocking status
+// Get user's blocking status
 router.get('/user/status', async (req, res) => {
     try {
         const userId = req.user.userId || req.user.id;
@@ -255,7 +328,7 @@ router.get('/user/status', async (req, res) => {
     }
 });
 
-// NEW: Check if user can send messages (quick endpoint for frontend)
+// Check if user can send messages (quick endpoint for frontend)
 router.get('/can-send', async (req, res) => {
     try {
         const userId = req.user.userId || req.user.id;
@@ -284,161 +357,6 @@ router.get('/can-send', async (req, res) => {
             success: true,
             canSend: true, // Default to allowing if there's an error
             reason: null
-        });
-    }
-});
-
-// NEW: Get blocked users list (for admin or debugging)
-router.get('/blocked-users', async (req, res) => {
-    try {
-        // Only allow admins to access this endpoint
-        if (req.user.type !== 'admin') {
-            return res.status(403).json({
-                success: false,
-                message: 'Access denied. Admin privileges required.'
-            });
-        }
-        
-        const blockedUsersSnapshot = await adminDb.collection('users')
-            .where('isBlocked', '==', true)
-            .get();
-        
-        const blockedUsers = blockedUsersSnapshot.docs.map(doc => {
-            const userData = doc.data();
-            return {
-                id: doc.id,
-                name: userData.name,
-                email: userData.email,
-                blockedAt: userData.blockedAt,
-                blockedBy: userData.blockedBy,
-                blockedReason: userData.blockedReason
-            };
-        });
-        
-        res.json({
-            success: true,
-            blockedUsers: blockedUsers,
-            count: blockedUsers.length
-        });
-        
-    } catch (error) {
-        console.error('Error fetching blocked users:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error fetching blocked users'
-        });
-    }
-});
-
-// NEW: Mark message as read
-router.patch('/:conversationId/messages/:messageId/read', async (req, res) => {
-    try {
-        const { conversationId, messageId } = req.params;
-        const userId = req.user.userId || req.user.id;
-        
-        // Verify user has access to this conversation
-        const convoRef = adminDb.collection('conversations').doc(conversationId);
-        const convoDoc = await convoRef.get();
-        
-        if (!convoDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'Conversation not found'
-            });
-        }
-        
-        const conversationData = convoDoc.data();
-        if (!conversationData.participantIds || !conversationData.participantIds.includes(userId)) {
-            return res.status(403).json({
-                success: false,
-                message: 'Access denied'
-            });
-        }
-        
-        // Mark message as read
-        const messageRef = convoRef.collection('messages').doc(messageId);
-        const messageDoc = await messageRef.get();
-        
-        if (!messageDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'Message not found'
-            });
-        }
-        
-        // Update read status
-        const readByField = `readBy.${userId}`;
-        await messageRef.update({
-            [readByField]: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-        });
-        
-        res.json({
-            success: true,
-            message: 'Message marked as read'
-        });
-        
-    } catch (error) {
-        console.error('Error marking message as read:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error marking message as read'
-        });
-    }
-});
-
-// NEW: Get conversation statistics
-router.get('/:conversationId/stats', async (req, res) => {
-    try {
-        const { conversationId } = req.params;
-        const userId = req.user.userId || req.user.id;
-        
-        // Verify user has access to this conversation
-        const convoRef = adminDb.collection('conversations').doc(conversationId);
-        const convoDoc = await convoRef.get();
-        
-        if (!convoDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'Conversation not found'
-            });
-        }
-        
-        const conversationData = convoDoc.data();
-        if (!conversationData.participantIds || !conversationData.participantIds.includes(userId)) {
-            return res.status(403).json({
-                success: false,
-                message: 'Access denied'
-            });
-        }
-        
-        // Get message statistics
-        const messagesSnapshot = await convoRef.collection('messages').get();
-        const totalMessages = messagesSnapshot.size;
-        
-        let messagesBySender = {};
-        messagesSnapshot.docs.forEach(doc => {
-            const messageData = doc.data();
-            const senderId = messageData.senderId;
-            messagesBySender[senderId] = (messagesBySender[senderId] || 0) + 1;
-        });
-        
-        res.json({
-            success: true,
-            stats: {
-                totalMessages: totalMessages,
-                messagesBySender: messagesBySender,
-                participantCount: conversationData.participantIds.length,
-                lastActivity: conversationData.updatedAt,
-                createdAt: conversationData.createdAt
-            }
-        });
-        
-    } catch (error) {
-        console.error('Error getting conversation stats:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error getting conversation statistics'
         });
     }
 });

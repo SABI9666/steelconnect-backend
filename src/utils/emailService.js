@@ -601,7 +601,7 @@ export async function sendPasswordResetEmail(email, resetToken) {
         `;
 
         const emailData = {
-            from: FROM_EMAIL,
+            from: getFromField(),
             to: [email],
             subject: `Password Reset - ${COMPANY_NAME}`,
             html: emailHTML,

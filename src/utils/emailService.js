@@ -1,10 +1,10 @@
-// src/utils/emailService.js - Simple working version
+// src/utils/emailService.js - Use your verified domain
 import { Resend } from 'resend';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-// Try the most basic approach first - use resend.dev until custom domain works
-const FROM_EMAIL = 'onboarding@resend.dev'; // This always works
+// Use your verified steelconnectapp.com domain
+const FROM_EMAIL = 'noreply@steelconnectapp.com'; // Your verified domain
 const COMPANY_NAME = 'SteelConnect';
 
 // Send login notification email

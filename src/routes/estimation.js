@@ -1,4 +1,4 @@
-// src/routes/estimation.js - Estimation routes with email notifications
+// src/routes/estimation.js - Fixed estimation routes with better error handling
 import express from 'express';
 import multer from 'multer';
 import { authenticateToken } from '../middleware/authMiddleware.js';
@@ -36,6 +36,59 @@ const upload = multer({
         } else {
             cb(new Error(`Invalid file type: ${file.mimetype}`), false);
         }
+    }
+});
+
+// Get contractor's estimation requests - MOVED TO TOP to prevent conflicts
+router.get('/contractor/:contractorEmail', async (req, res) => {
+    try {
+        const { contractorEmail } = req.params;
+        const userId = req.user.userId;
+
+        console.log(`Fetching estimations for contractor: ${contractorEmail}`);
+        console.log(`Authenticated user: ${req.user.email} (${req.user.type})`);
+
+        // Decode the email parameter in case it's URL encoded
+        const decodedEmail = decodeURIComponent(contractorEmail);
+        
+        // Check if user can access this data (must be the same contractor or admin)
+        if (req.user.email !== decodedEmail && req.user.type !== 'admin') {
+            console.log(`Access denied: ${req.user.email} trying to access ${decodedEmail}`);
+            return res.status(403).json({
+                success: false,
+                message: 'Access denied - you can only view your own estimation requests'
+            });
+        }
+
+        const estimationsQuery = await adminDb.collection('estimations')
+            .where('contractorEmail', '==', decodedEmail)
+            .orderBy('createdAt', 'desc')
+            .get();
+
+        const estimations = [];
+        estimationsQuery.forEach(doc => {
+            estimations.push({
+                _id: doc.id,
+                id: doc.id,
+                ...doc.data()
+            });
+        });
+
+        console.log(`Found ${estimations.length} estimations for ${decodedEmail}`);
+
+        res.json({
+            success: true,
+            estimations: estimations,
+            total: estimations.length
+        });
+
+    } catch (error) {
+        console.error('Error fetching contractor estimations:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching estimation requests',
+            error: error.message
+        });
     }
 });
 
@@ -133,49 +186,6 @@ router.post('/contractor/submit', upload.array('files', 10), async (req, res) =>
             success: false,
             message: 'Error submitting estimation request',
             error: error.message
-        });
-    }
-});
-
-// Get contractor's estimation requests
-router.get('/contractor/:contractorEmail', async (req, res) => {
-    try {
-        const { contractorEmail } = req.params;
-        const userId = req.user.userId;
-
-        // Check if user can access this data (must be the same contractor or admin)
-        if (req.user.email !== contractorEmail && req.user.type !== 'admin') {
-            return res.status(403).json({
-                success: false,
-                message: 'Access denied'
-            });
-        }
-
-        const estimationsQuery = await adminDb.collection('estimations')
-            .where('contractorEmail', '==', contractorEmail)
-            .orderBy('createdAt', 'desc')
-            .get();
-
-        const estimations = [];
-        estimationsQuery.forEach(doc => {
-            estimations.push({
-                _id: doc.id,
-                id: doc.id,
-                ...doc.data()
-            });
-        });
-
-        res.json({
-            success: true,
-            estimations: estimations,
-            total: estimations.length
-        });
-
-    } catch (error) {
-        console.error('Error fetching contractor estimations:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error fetching estimation requests'
         });
     }
 });

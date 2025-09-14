@@ -171,6 +171,83 @@ export async function sendLoginNotification(user, loginTime, clientIP, userAgent
     }
 }
 
+// *** NEW FUNCTION ***
+// Send estimation result notification
+export async function sendEstimationResultNotification(contractor, estimation) {
+    try {
+        console.log(`Attempting to send estimation result email to: ${contractor.email}`);
+
+        const emailHTML = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Estimation Result Ready - ${COMPANY_NAME}</title>
+            <style>
+                body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f4f4f4; }
+                .container { max-width: 600px; margin: 20px auto; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+                .header { text-align: center; border-bottom: 2px solid #2563eb; padding-bottom: 20px; margin-bottom: 30px; }
+                .logo { font-size: 28px; font-weight: bold; color: #2563eb; }
+                .content { padding: 10px 0; }
+                .footer { text-align: center; color: #666; font-size: 14px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; }
+                .info-box { background: #f8f9fa; padding: 20px; border-radius: 6px; margin: 20px 0; }
+                .info-label { font-weight: bold; color: #555; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <div class="logo">${COMPANY_NAME}</div>
+                </div>
+
+                <div class="content">
+                    <h2 style="color: #333;">Estimation Result Ready</h2>
+                    <p>Hello <strong>${contractor.name}</strong>,</p>
+                    <p>The estimation result for your project is now available. You can view and download the result from your dashboard.</p>
+                    
+                    <div class="info-box">
+                        <p><span class="info-label">Project Title:</span> ${estimation.title}</p>
+                        <p><span class="info-label">Estimation ID:</span> ${estimation.id}</p>
+                        ${estimation.amount ? `<p><span class="info-label">Estimated Amount:</span> $${estimation.amount.toFixed(2)}</p>` : ''}
+                    </div>
+
+                    <p>Thank you for using ${COMPANY_NAME}.</p>
+                </div>
+
+                <div class="footer">
+                    <p>This is an automated notification from ${COMPANY_NAME}.</p>
+                    <p>© ${new Date().getFullYear()} ${COMPANY_NAME} - All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        `;
+
+        const emailData = {
+            from: FROM_EMAIL,
+            to: contractor.email,
+            subject: `Your Estimation Result is Ready: "${estimation.title}"`,
+            html: emailHTML
+        };
+
+        const response = await resend.emails.send(emailData);
+
+        if (response.error) {
+            console.error('Resend API error:', response.error);
+            throw new Error(response.error.message);
+        }
+
+        console.log(`✅ Estimation result email sent successfully to ${contractor.email}. Message ID: ${response.data?.id}`);
+        return { success: true, messageId: response.data?.id };
+
+    } catch (error) {
+        console.error('Error sending estimation result email:', error);
+        throw error;
+    }
+}
+
 export default {
-    sendLoginNotification
+    sendLoginNotification,
+    sendEstimationResultNotification // Export the new function
 };

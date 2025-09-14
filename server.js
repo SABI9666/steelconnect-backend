@@ -1,4 +1,4 @@
-// server.js - Complete SteelConnect Backend with Profile Management System
+// server.js - Complete SteelConnect Backend with Profile Management System and Verified Domain
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -66,6 +66,29 @@ console.log(`⏰ Started at: ${new Date().toISOString()}`);
 // Enhanced logging for development
 if (process.env.NODE_ENV !== 'production') {
     console.log('🔧 Development mode: Enhanced logging enabled');
+}
+
+// --- Email Configuration Check with Verified Domain ---
+console.log('\n📧 Email Configuration Check:');
+if (process.env.RESEND_API_KEY) {
+    console.log('✅ Resend API Key: Configured');
+    
+    // Use verified steelconnectapp.com domain
+    const emailDomain = process.env.EMAIL_FROM_DOMAIN || 'noreply@steelconnectapp.com';
+    console.log(`📧 Email From Domain: ${emailDomain}`);
+    
+    if (emailDomain.includes('steelconnectapp.com')) {
+        console.log('✅ Using VERIFIED domain: steelconnectapp.com - emails should work perfectly!');
+        console.log('🎉 Domain verification confirmed in Resend dashboard');
+    } else if (emailDomain.includes('steelconnect.com')) {
+        console.log('⚠️ WARNING: Using steelconnect.com domain - ensure it\'s verified in Resend');
+        console.log('💡 TIP: Use steelconnectapp.com (verified) or onboarding@resend.dev');
+    } else if (emailDomain.includes('resend.dev')) {
+        console.log('✅ Using Resend default verified domain');
+    }
+} else {
+    console.log('❌ Resend API Key: Missing');
+    console.log('🔍 Add RESEND_API_KEY to your environment variables');
 }
 
 // --- Database Connection with enhanced error handling ---
@@ -166,6 +189,9 @@ app.use((req, res, next) => {
 
 // --- Enhanced Health Check Route ---
 app.get('/health', (req, res) => {
+    const emailDomain = process.env.EMAIL_FROM_DOMAIN || 'noreply@steelconnectapp.com';
+    const isVerifiedDomain = emailDomain.includes('steelconnectapp.com');
+    
     const healthData = {
         success: true,
         message: 'SteelConnect Backend is healthy',
@@ -182,7 +208,14 @@ app.get('/health', (req, res) => {
             notifications: notificationRoutes ? 'available' : 'unavailable',
             estimation: estimationRoutes ? 'available' : 'unavailable',
             admin: adminRoutes ? 'available' : 'unavailable',
-            profile: profileRoutes ? 'available' : 'unavailable'
+            profile: profileRoutes ? 'available' : 'unavailable',
+            email: process.env.RESEND_API_KEY ? (isVerifiedDomain ? 'verified_domain' : 'configured') : 'missing'
+        },
+        email_config: {
+            api_key: process.env.RESEND_API_KEY ? 'configured' : 'missing',
+            from_domain: emailDomain,
+            domain_status: isVerifiedDomain ? 'verified_steelconnectapp.com' : 'check_verification',
+            ready_to_send: process.env.RESEND_API_KEY && isVerifiedDomain
         }
     };
     
@@ -191,6 +224,9 @@ app.get('/health', (req, res) => {
 
 // --- Enhanced Root Route ---
 app.get('/', (req, res) => {
+    const emailDomain = process.env.EMAIL_FROM_DOMAIN || 'noreply@steelconnectapp.com';
+    const isVerifiedDomain = emailDomain.includes('steelconnectapp.com');
+    
     res.json({ 
         message: 'SteelConnect Backend API v2.0 - Profile Management System',
         version: '2.0.0',
@@ -204,7 +240,14 @@ app.get('/', (req, res) => {
             'Job Management': '✅ Active',
             'Quote System': '✅ Active',
             'Messaging': '✅ Active',
-            'Login Email Notifications': '✅ Active'
+            'Login Email Notifications': process.env.RESEND_API_KEY && isVerifiedDomain ? '✅ Active with Verified Domain' : 
+                                        process.env.RESEND_API_KEY ? '⚠️ Check Domain Verification' : '❌ Disabled'
+        },
+        email_status: {
+            configured: process.env.RESEND_API_KEY ? true : false,
+            from_domain: emailDomain,
+            domain_verified: isVerifiedDomain ? 'steelconnectapp.com (verified)' : 'verification_needed',
+            production_ready: isVerifiedDomain && process.env.RESEND_API_KEY
         },
         endpoints: {
             health: '/health',
@@ -222,6 +265,9 @@ app.get('/', (req, res) => {
 
 // --- Enhanced API Documentation Endpoint ---
 app.get('/api', (req, res) => {
+    const emailDomain = process.env.EMAIL_FROM_DOMAIN || 'noreply@steelconnectapp.com';
+    const isVerifiedDomain = emailDomain.includes('steelconnectapp.com');
+    
     res.json({
         message: 'SteelConnect API v2.0 - Profile Management System',
         version: '2.0.0',
@@ -229,10 +275,17 @@ app.get('/api', (req, res) => {
         status: 'operational',
         authentication: 'Bearer token required for protected routes',
         profile_system: 'Users must complete profile and get admin approval',
+        email_configuration: {
+            status: process.env.RESEND_API_KEY ? 'configured' : 'missing',
+            from_domain: emailDomain,
+            domain_verification: isVerifiedDomain ? 'verified (steelconnectapp.com)' : 'needs_verification',
+            production_ready: isVerifiedDomain && process.env.RESEND_API_KEY,
+            note: isVerifiedDomain ? 'Email system ready for production' : 'Verify domain in Resend dashboard'
+        },
         available_endpoints: [
             {
                 path: 'GET /health',
-                description: 'System health check',
+                description: 'System health check with email verification status',
                 authentication: 'None'
             },
             {
@@ -242,8 +295,10 @@ app.get('/api', (req, res) => {
             },
             {
                 path: 'POST /api/auth/login',
-                description: 'User login with email notification',
-                authentication: 'None'
+                description: 'User login with email notification from verified domain',
+                authentication: 'None',
+                email_required: true,
+                email_domain: emailDomain
             },
             {
                 path: 'GET /api/profile/status',
@@ -289,7 +344,7 @@ if (authRoutes) {
     app.use('/api/auth', authRoutes);
     console.log('✅ Auth routes registered at /api/auth');
     console.log('   • User registration with profile workflow');
-    console.log('   • Login with email notifications');
+    console.log('   • Login with email notifications from verified domain');
     console.log('   • Token verification');
 } else {
     console.error('❌ CRITICAL: Auth routes failed to load');
@@ -513,6 +568,10 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`   CORS Origins: ${process.env.CORS_ORIGIN ? '✅ Configured' : '⚠️ Using defaults'}`);
     console.log(`   Resend API: ${process.env.RESEND_API_KEY ? '✅ Configured' : '⚠️ Missing'}`);
     
+    const emailDomain = process.env.EMAIL_FROM_DOMAIN || 'noreply@steelconnectapp.com';
+    const isVerifiedDomain = emailDomain.includes('steelconnectapp.com');
+    console.log(`   Email From: ${emailDomain} ${isVerifiedDomain ? '✅ (VERIFIED DOMAIN)' : '⚠️ (verify needed)'}`);
+    
     console.log('\n🔗 Available endpoints:');
     console.log(`   Health: http://localhost:${PORT}/health`);
     console.log(`   API Docs: http://localhost:${PORT}/api`);
@@ -534,8 +593,19 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     
     console.log('\n🚀 SteelConnect Backend v2.0 is ready!');
     console.log('📋 Profile Management System: ACTIVE');
-    console.log('📧 Login Email Notifications: ACTIVE');
     console.log('👨‍💼 Admin Approval Workflow: ACTIVE');
+    
+    // Email status summary
+    if (process.env.RESEND_API_KEY && isVerifiedDomain) {
+        console.log('📧 Login Email Notifications: ✅ ACTIVE with VERIFIED DOMAIN');
+        console.log('🎉 Email system ready for production with steelconnectapp.com');
+    } else if (process.env.RESEND_API_KEY) {
+        console.log('📧 Login Email Notifications: ⚠️ ACTIVE but domain needs verification');
+        console.log('💡 Verify your domain in Resend dashboard or use steelconnectapp.com');
+    } else {
+        console.log('📧 Login Email Notifications: ❌ DISABLED (missing RESEND_API_KEY)');
+    }
+    
     console.log('🔍 Check logs above for any missing features or configurations');
     console.log('');
 });

@@ -1,8 +1,9 @@
-// src/routes/auth.js - Fixed version without external email service import
+// src/routes/auth.js - Updated with Resend email integration
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { adminDb } from '../config/firebase.js';
+import { sendLoginNotification } from '../utils/emailService.js';
 
 const router = express.Router();
 
@@ -14,19 +15,6 @@ function getClientIP(req) {
            req.socket.remoteAddress ||
            (req.connection.socket ? req.connection.socket.remoteAddress : null) ||
            'Unknown';
-}
-
-// Simple email notification function (without external dependencies)
-async function sendLoginNotification(user, loginTime, clientIP, userAgent) {
-    try {
-        console.log(`Login notification for: ${user.email} from IP: ${clientIP}`);
-        // For now, just log the notification - implement email service later
-        console.log('Email notification would be sent here');
-        return { success: true };
-    } catch (error) {
-        console.error('Email notification error:', error);
-        return { success: false, error: error.message };
-    }
 }
 
 // Register user
@@ -190,6 +178,13 @@ router.post('/login', async (req, res) => {
 
         // Send login notification email asynchronously (don't wait for it)
         sendLoginNotification(responseUser, new Date().toISOString(), clientIP, userAgent)
+            .then((result) => {
+                if (result.success) {
+                    console.log(`Login notification email sent successfully to ${email}`);
+                } else {
+                    console.error(`Failed to send login notification email to ${email}:`, result.error);
+                }
+            })
             .catch(error => {
                 console.error('Failed to send login notification email:', error);
                 // Don't fail the login if email fails
@@ -293,12 +288,18 @@ router.post('/login/admin', async (req, res) => {
 
         console.log(`Admin login successful for: ${email}`);
 
-        // Send admin login notification (optional)
-        try {
-            await sendLoginNotification(responseAdmin, new Date().toISOString(), clientIP, userAgent);
-        } catch (emailError) {
-            console.error('Failed to send admin login notification:', emailError);
-        }
+        // Send admin login notification (optional but good for security)
+        sendLoginNotification(responseAdmin, new Date().toISOString(), clientIP, userAgent)
+            .then((result) => {
+                if (result.success) {
+                    console.log(`Admin login notification email sent successfully to ${email}`);
+                } else {
+                    console.error(`Failed to send admin login notification email to ${email}:`, result.error);
+                }
+            })
+            .catch(error => {
+                console.error('Failed to send admin login notification email:', error);
+            });
 
         res.json({
             success: true,

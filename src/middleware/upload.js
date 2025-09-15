@@ -1,6 +1,6 @@
 // middleware/upload.js - Enhanced upload middleware for multiple PDF files
 import multer from 'multer';
-import { FILE_UPLOAD_CONFIG } from '../config/firebase.js';
+import { FILE_UPLOAD_CONFIG, uploadMultipleFilesToFirebase, validateFileUpload, deleteFileFromFirebase } from '../config/firebase.js';
 
 // Enhanced multer configuration for multiple PDF uploads
 export const upload = multer({
@@ -32,6 +32,23 @@ export const upload = multer({
     cb(null, true);
   }
 });
+
+// Single file upload function (wrapper around multiple file upload)
+export async function uploadToFirebase(file, folder, userId = null) {
+  try {
+    // Convert single file to array format for the multiple upload function
+    const files = [file];
+    const uploadedFiles = await uploadMultipleFilesToFirebase(files, folder, userId);
+    
+    // Return just the single file result
+    return uploadedFiles[0];
+  } catch (error) {
+    throw new Error(`Single file upload failed: ${error.message}`);
+  }
+}
+
+// Re-export Firebase utilities for convenience
+export { uploadMultipleFilesToFirebase, validateFileUpload, deleteFileFromFirebase, FILE_UPLOAD_CONFIG };
 
 // Enhanced error handling middleware
 export const handleUploadError = (error, req, res, next) => {
@@ -171,4 +188,55 @@ export const logUploadDetails = (req, res, next) => {
   next();
 };
 
-export default { upload, handleUploadError, validateFileRequirements, logUploadDetails };
+// Enhanced file validation middleware with detailed logging
+export const validatePDFFiles = (req, res, next) => {
+  const files = req.files;
+  
+  if (!files || files.length === 0) {
+    console.log('No files provided in request');
+    return next();
+  }
+  
+  console.log(`Validating ${files.length} files...`);
+  
+  for (const file of files) {
+    // Check MIME type
+    if (!FILE_UPLOAD_CONFIG.allowedMimeTypes.includes(file.mimetype)) {
+      console.log(`File validation failed: ${file.originalname} has invalid MIME type: ${file.mimetype}`);
+      return res.status(400).json({
+        success: false,
+        message: `File "${file.originalname}" is not a PDF. Only PDF files are allowed.`,
+        errorCode: 'INVALID_FILE_TYPE'
+      });
+    }
+    
+    // Check file size
+    if (file.size > FILE_UPLOAD_CONFIG.maxFileSize) {
+      const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+      const maxMB = (FILE_UPLOAD_CONFIG.maxFileSize / (1024 * 1024)).toFixed(0);
+      console.log(`File validation failed: ${file.originalname} size (${sizeMB}MB) exceeds limit (${maxMB}MB)`);
+      return res.status(400).json({
+        success: false,
+        message: `File "${file.originalname}" (${sizeMB}MB) exceeds the ${maxMB}MB size limit.`,
+        errorCode: 'FILE_TOO_LARGE'
+      });
+    }
+    
+    console.log(`File validated: ${file.originalname} (${(file.size / (1024 * 1024)).toFixed(2)}MB)`);
+  }
+  
+  console.log('All files passed validation');
+  next();
+};
+
+export default { 
+  upload, 
+  handleUploadError, 
+  validateFileRequirements, 
+  logUploadDetails, 
+  validatePDFFiles,
+  uploadToFirebase,
+  uploadMultipleFilesToFirebase,
+  validateFileUpload,
+  deleteFileFromFirebase
+};

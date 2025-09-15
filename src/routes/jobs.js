@@ -1,4 +1,4 @@
-/ src/routes/jobs.js - Complete working version for 10 PDF files, viewable by designers
+// src/routes/jobs.js - Complete working version for 10 PDF files, viewable by designers
 import express from 'express';
 import multer from 'multer';
 import { authenticateToken, isContractor } from '../middleware/auth.js';

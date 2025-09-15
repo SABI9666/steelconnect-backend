@@ -1,56 +1,174 @@
+// middleware/upload.js - Enhanced upload middleware for multiple PDF files
 import multer from 'multer';
-import { adminStorage } from '../config/firebase.js';
-import { v4 as uuidv4 } from 'uuid';
-import path from 'path';
+import { FILE_UPLOAD_CONFIG } from '../config/firebase.js';
 
-const multerStorage = multer.memoryStorage();
-
+// Enhanced multer configuration for multiple PDF uploads
 export const upload = multer({
-  storage: multerStorage,
-  limits: { fileSize: 15 * 1024 * 1024 }, // 15MB
-  fileFilter: (req, file, cb) => {
-    const allowedMimeTypes = [
-      'application/pdf',
-      'application/msword',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'image/jpeg',
-      'image/png',
-      'image/gif'
-    ];
-    if (allowedMimeTypes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Invalid file type.'), false);
-    }
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: FILE_UPLOAD_CONFIG.maxFileSize, // 15MB per file
+    files: FILE_UPLOAD_CONFIG.maxFiles, // Maximum 10 files
+    fieldSize: 1024 * 1024, // 1MB for form fields
+    fieldNameSize: 100, // Field name size limit
+    fields: 20 // Maximum number of non-file fields
   },
+  fileFilter: (req, file, cb) => {
+    console.log(`Processing file: ${file.originalname}, MIME: ${file.mimetype}`);
+    
+    // Only allow PDF files
+    if (!FILE_UPLOAD_CONFIG.allowedMimeTypes.includes(file.mimetype)) {
+      console.log(`Rejected file ${file.originalname}: Invalid MIME type ${file.mimetype}`);
+      return cb(new Error(`Only PDF files are allowed. Received: ${file.mimetype}`), false);
+    }
+    
+    // Check file extension as additional validation
+    const ext = file.originalname.toLowerCase().split('.').pop();
+    if (!FILE_UPLOAD_CONFIG.allowedExtensions.map(e => e.replace('.', '')).includes(ext)) {
+      console.log(`Rejected file ${file.originalname}: Invalid extension .${ext}`);
+      return cb(new Error(`Only PDF files are allowed. File extension: .${ext}`), false);
+    }
+    
+    console.log(`Accepted file: ${file.originalname}`);
+    cb(null, true);
+  }
 });
 
-export const uploadToFirebase = (file, destinationFolder) => {
-  const bucket = adminStorage.bucket();
-  const uniqueSuffix = `${uuidv4()}${path.extname(file.originalname)}`;
-  const blob = bucket.file(`${destinationFolder}/${uniqueSuffix}`);
-  const blobStream = blob.createWriteStream({
-    resumable: false,
-    metadata: { contentType: file.mimetype }
-  });
-
-  return new Promise((resolve, reject) => {
-    blobStream.on('error', (err) => {
-      console.error('Firebase upload stream error:', err);
-      reject(new Error('File upload failed: ' + err.message));
+// Enhanced error handling middleware
+export const handleUploadError = (error, req, res, next) => {
+  console.error('Upload error:', error);
+  
+  if (error instanceof multer.MulterError) {
+    switch (error.code) {
+      case 'LIMIT_FILE_SIZE':
+        return res.status(400).json({
+          success: false,
+          message: `File size too large. Maximum ${FILE_UPLOAD_CONFIG.maxFileSize / (1024 * 1024)}MB per file allowed.`,
+          errorCode: 'FILE_SIZE_LIMIT'
+        });
+        
+      case 'LIMIT_FILE_COUNT':
+        return res.status(400).json({
+          success: false,
+          message: `Too many files. Maximum ${FILE_UPLOAD_CONFIG.maxFiles} files allowed.`,
+          errorCode: 'FILE_COUNT_LIMIT'
+        });
+        
+      case 'LIMIT_UNEXPECTED_FILE':
+        return res.status(400).json({
+          success: false,
+          message: 'Unexpected file field in upload.',
+          errorCode: 'UNEXPECTED_FILE'
+        });
+        
+      case 'LIMIT_PART_COUNT':
+        return res.status(400).json({
+          success: false,
+          message: 'Too many parts in multipart upload.',
+          errorCode: 'PART_COUNT_LIMIT'
+        });
+        
+      case 'LIMIT_FIELD_KEY':
+        return res.status(400).json({
+          success: false,
+          message: 'Field name too long.',
+          errorCode: 'FIELD_KEY_LIMIT'
+        });
+        
+      case 'LIMIT_FIELD_VALUE':
+        return res.status(400).json({
+          success: false,
+          message: 'Field value too long.',
+          errorCode: 'FIELD_VALUE_LIMIT'
+        });
+        
+      case 'LIMIT_FIELD_COUNT':
+        return res.status(400).json({
+          success: false,
+          message: 'Too many fields in form.',
+          errorCode: 'FIELD_COUNT_LIMIT'
+        });
+        
+      default:
+        return res.status(400).json({
+          success: false,
+          message: `Upload error: ${error.message}`,
+          errorCode: 'UPLOAD_ERROR'
+        });
+    }
+  }
+  
+  // Handle custom file validation errors
+  if (error.message.includes('Only PDF files are allowed')) {
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+      errorCode: 'INVALID_FILE_TYPE'
     });
-
-    blobStream.on('finish', async () => {
-      try {
-        await blob.makePublic();
-        const publicUrl = `https://storage.googleapis.com/${bucket.name}/${blob.name}`;
-        resolve(publicUrl);
-      } catch (error) {
-        // FIX: Changed 'err' to 'error' to match the catch block variable
-        console.error('Failed to make file public:', error);
-        reject(new Error('Failed to get public URL: ' + error.message));
-      }
+  }
+  
+  // Handle Firebase upload errors
+  if (error.message.includes('Firebase upload failed') || error.message.includes('Failed to upload')) {
+    return res.status(500).json({
+      success: false,
+      message: 'File upload to cloud storage failed. Please try again.',
+      errorCode: 'STORAGE_ERROR'
     });
-    blobStream.end(file.buffer);
-  });
+  }
+  
+  // Generic error
+  next(error);
 };
+
+// Validation middleware to check file requirements before processing
+export const validateFileRequirements = (req, res, next) => {
+  const files = req.files;
+  
+  if (!files || files.length === 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'At least one PDF file is required.',
+      errorCode: 'NO_FILES'
+    });
+  }
+  
+  if (files.length > FILE_UPLOAD_CONFIG.maxFiles) {
+    return res.status(400).json({
+      success: false,
+      message: `Maximum ${FILE_UPLOAD_CONFIG.maxFiles} files allowed. You uploaded ${files.length} files.`,
+      errorCode: 'TOO_MANY_FILES'
+    });
+  }
+  
+  // Check total upload size (optional additional validation)
+  const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+  const maxTotalSize = FILE_UPLOAD_CONFIG.maxFileSize * FILE_UPLOAD_CONFIG.maxFiles;
+  
+  if (totalSize > maxTotalSize) {
+    const totalMB = (totalSize / (1024 * 1024)).toFixed(2);
+    const maxMB = (maxTotalSize / (1024 * 1024)).toFixed(2);
+    return res.status(400).json({
+      success: false,
+      message: `Total upload size (${totalMB}MB) exceeds maximum allowed (${maxMB}MB).`,
+      errorCode: 'TOTAL_SIZE_LIMIT'
+    });
+  }
+  
+  console.log(`File validation passed: ${files.length} files, total size: ${(totalSize / (1024 * 1024)).toFixed(2)}MB`);
+  next();
+};
+
+// Middleware to log upload details
+export const logUploadDetails = (req, res, next) => {
+  if (req.files && req.files.length > 0) {
+    console.log('=== UPLOAD DETAILS ===');
+    console.log(`User: ${req.user?.email || 'Unknown'}`);
+    console.log(`Files: ${req.files.length}`);
+    req.files.forEach((file, index) => {
+      console.log(`  ${index + 1}. ${file.originalname} (${(file.size / (1024 * 1024)).toFixed(2)}MB)`);
+    });
+    console.log('=====================');
+  }
+  next();
+};
+
+export default { upload, handleUploadError, validateFileRequirements, logUploadDetails };

@@ -1,10 +1,10 @@
-// src/routes/estimation.js - Fixed imports and functionality
+// estimation.js - Updated for multiple PDF uploads (up to 10 files, 15MB each)
 import express from 'express';
 import multer from 'multer';
-import { authenticateToken, isContractor, isAdmin } from '../middleware/auth.js'; // FIXED: Changed from authMiddleware.js to auth.js
+import { authenticateToken, isContractor, isAdmin } from '../middleware/authMiddleware.js';
 import { 
   adminDb, 
-  storage,
+  adminStorage, 
   uploadMultipleFilesToFirebase, 
   validateFileUpload, 
   deleteFileFromFirebase,
@@ -23,9 +23,7 @@ const upload = multer({
     fieldSize: 1024 * 1024 // 1MB for form fields
   },
   fileFilter: (req, file, cb) => {
-    console.log(`Checking file: ${file.originalname}, MIME: ${file.mimetype}`);
-    
-    // Only allow PDF files for estimations
+    // Only allow PDF files
     if (!FILE_UPLOAD_CONFIG.allowedMimeTypes.includes(file.mimetype)) {
       return cb(new Error(`Only PDF files are allowed. Received: ${file.mimetype}`), false);
     }
@@ -36,7 +34,6 @@ const upload = multer({
       return cb(new Error(`Only PDF files are allowed. File extension: .${ext}`), false);
     }
     
-    console.log(`File accepted: ${file.originalname}`);
     cb(null, true);
   }
 });
@@ -56,6 +53,7 @@ router.get('/', authenticateToken, isAdmin, async (req, res) => {
         _id: doc.id,
         id: doc.id,
         ...data,
+        // Add file statistics
         fileCount: data.uploadedFiles ? data.uploadedFiles.length : 0,
         totalFileSize: data.uploadedFiles ? 
           data.uploadedFiles.reduce((sum, file) => sum + (file.size || 0), 0) : 0
@@ -81,10 +79,8 @@ router.get('/', authenticateToken, isAdmin, async (req, res) => {
 // Enhanced estimation submission with multiple PDF support
 router.post('/contractor/submit', authenticateToken, isContractor, upload.array('files', 10), async (req, res) => {
   try {
-    console.log('=== ESTIMATION SUBMISSION ===');
-    console.log('Contractor:', req.user?.email);
+    console.log('Estimation submission by contractor:', req.user?.email);
     console.log('Files received:', req.files?.length || 0);
-    console.log('Body:', req.body);
     
     const { projectTitle, description, contractorName, contractorEmail } = req.body;
     const files = req.files;
@@ -97,11 +93,13 @@ router.post('/contractor/submit', authenticateToken, isContractor, upload.array(
       });
     }
 
-    // Validate files
-    if (!files || files.length === 0) {
+    // Validate files using our enhanced validation
+    try {
+      validateFileUpload(files, FILE_UPLOAD_CONFIG.maxFiles);
+    } catch (validationError) {
       return res.status(400).json({
         success: false,
-        message: 'At least one PDF file is required'
+        message: validationError.message
       });
     }
     
@@ -112,18 +110,18 @@ router.post('/contractor/submit', authenticateToken, isContractor, upload.array(
       type: f.mimetype
     })));
 
-    // Upload files to Firebase Storage
+    // Upload files to Firebase Storage with enhanced error handling
     let uploadedFiles = [];
     try {
       uploadedFiles = await uploadMultipleFilesToFirebase(
         files, 
-        'estimation-files',
+        FILE_UPLOAD_CONFIG.uploadPaths.estimations, 
         req.user.userId
       );
       
-      console.log(`Successfully uploaded ${uploadedFiles.length} files to Firebase`);
+      console.log(`✅ Successfully uploaded ${uploadedFiles.length} files`);
     } catch (uploadError) {
-      console.error('File upload failed:', uploadError);
+      console.error('❌ File upload failed:', uploadError);
       return res.status(500).json({
         success: false,
         message: 'File upload failed',
@@ -143,14 +141,19 @@ router.post('/contractor/submit', authenticateToken, isContractor, upload.array(
       totalFileSize: uploadedFiles.reduce((sum, file) => sum + file.size, 0),
       status: 'pending',
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      submissionMetadata: {
+        userAgent: req.get('User-Agent'),
+        ipAddress: req.ip,
+        timestamp: new Date().toISOString()
+      }
     };
 
     const estimationRef = await adminDb.collection('estimations').add(estimationData);
     
-    console.log(`Estimation created with ID: ${estimationRef.id}`);
+    console.log(`✅ Estimation created with ID: ${estimationRef.id}`);
     
-    // Prepare response
+    // Prepare response (don't expose file URLs for security)
     const responseData = {
       id: estimationRef.id,
       projectTitle,
@@ -160,8 +163,9 @@ router.post('/contractor/submit', authenticateToken, isContractor, upload.array(
       fileCount: uploadedFiles.length,
       totalFileSize: estimationData.totalFileSize,
       uploadedFiles: uploadedFiles.map(f => ({
-        name: f.name || f.originalname,
+        name: f.originalname,
         size: f.size,
+        type: f.mimetype,
         uploadedAt: f.uploadedAt
       })),
       status: 'pending',
@@ -176,7 +180,7 @@ router.post('/contractor/submit', authenticateToken, isContractor, upload.array(
     });
 
   } catch (error) {
-    console.error('Error submitting estimation:', error);
+    console.error('❌ Error submitting estimation:', error);
     res.status(500).json({
       success: false,
       message: 'Error submitting estimation request',
@@ -211,6 +215,7 @@ router.get('/contractor/:contractorEmail', authenticateToken, async (req, res) =
         _id: doc.id,
         id: doc.id,
         ...data,
+        // Add file statistics for frontend display
         fileCount: data.uploadedFiles ? data.uploadedFiles.length : 0,
         totalFileSize: data.uploadedFiles ? 
           data.uploadedFiles.reduce((sum, file) => sum + (file.size || 0), 0) : 0
@@ -221,8 +226,7 @@ router.get('/contractor/:contractorEmail', authenticateToken, async (req, res) =
 
     res.json({
       success: true,
-      estimations: estimations,
-      data: estimations
+      estimations: estimations
     });
 
   } catch (error) {
@@ -259,6 +263,15 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
       });
     }
     
+    // Check file size
+    if (file.size > FILE_UPLOAD_CONFIG.maxFileSize) {
+      const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+      return res.status(400).json({
+        success: false,
+        message: `Result file size (${sizeMB}MB) exceeds 15MB limit`
+      });
+    }
+    
     // Check if estimation exists
     const estimationDoc = await adminDb.collection('estimations').doc(estimationId).get();
     if (!estimationDoc.exists) {
@@ -271,7 +284,7 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
     // Upload result file
     const uploadedFiles = await uploadMultipleFilesToFirebase(
       [file], 
-      'estimation-results',
+      FILE_UPLOAD_CONFIG.uploadPaths.results, 
       estimationId
     );
     
@@ -293,7 +306,7 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
     
     await adminDb.collection('estimations').doc(estimationId).update(updateData);
     
-    console.log(`Result uploaded for estimation ${estimationId}`);
+    console.log(`✅ Result uploaded for estimation ${estimationId}`);
 
     // Send email notification to contractor
     try {
@@ -302,9 +315,9 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
         { name: estimationData.contractorName, email: estimationData.contractorEmail },
         { id: estimationId, title: estimationData.projectTitle, amount: updateData.estimatedAmount }
       );
-      console.log(`Email notification sent successfully to ${estimationData.contractorEmail}`);
+      console.log(`📧 Email notification sent successfully to ${estimationData.contractorEmail}`);
     } catch (emailError) {
-      console.error(`Failed to send estimation result email:`, emailError.message);
+      console.error(`❌ Failed to send estimation result email for ${estimationId}:`, emailError.message);
     }
     
     res.json({
@@ -312,8 +325,9 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
       message: 'Estimation result uploaded successfully',
       data: {
         resultFile: {
-          name: resultFile.name || resultFile.originalname,
+          name: resultFile.originalname,
           size: resultFile.size,
+          type: resultFile.mimetype,
           uploadedAt: resultFile.uploadedAt
         },
         estimatedAmount: updateData.estimatedAmount
@@ -321,7 +335,7 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
     });
 
   } catch (error) {
-    console.error('Error uploading estimation result:', error);
+    console.error('❌ Error uploading estimation result:', error);
     res.status(500).json({
       success: false,
       message: 'Error uploading estimation result',
@@ -334,8 +348,6 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
 router.get('/:estimationId/files', authenticateToken, async (req, res) => {
   try {
     const { estimationId } = req.params;
-    
-    console.log(`Files requested for estimation ${estimationId} by ${req.user?.email}`);
     
     const estimationDoc = await adminDb.collection('estimations').doc(estimationId).get();
     if (!estimationDoc.exists) {
@@ -360,13 +372,7 @@ router.get('/:estimationId/files', authenticateToken, async (req, res) => {
 
     res.json({
       success: true,
-      files: files.map(file => ({
-        name: file.name || file.originalname || 'Unknown File',
-        url: file.url || file.downloadURL,
-        size: file.size || 0,
-        uploadedAt: file.uploadedAt,
-        downloadUrl: file.url || file.downloadURL
-      })),
+      files: files,
       fileCount: files.length,
       totalSize: totalSize,
       totalSizeMB: (totalSize / (1024 * 1024)).toFixed(2)
@@ -382,7 +388,7 @@ router.get('/:estimationId/files', authenticateToken, async (req, res) => {
   }
 });
 
-// File download with proper authorization
+// Enhanced file download with proper authorization
 router.get('/:estimationId/files/:fileName/download', authenticateToken, async (req, res) => {
   try {
     const { estimationId, fileName } = req.params;
@@ -390,6 +396,58 @@ router.get('/:estimationId/files/:fileName/download', authenticateToken, async (
     console.log(`File download requested: ${fileName} from estimation ${estimationId} by ${req.user.email}`);
     
     // Get estimation to check authorization
+    const estimationDoc = await adminDb.collection('estimations').doc(estimationId).get();
+    if (!estimationDoc.exists) {
+      return res.status(404).json({
+        success: false,
+        message: 'Estimation not found'
+      });
+    }
+    const estimationData = estimationDoc.data();
+    
+    // Check authorization
+    if (req.user.type !== 'admin' && req.user.email !== estimationData.contractorEmail) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+    
+    // Find the file in uploadedFiles
+    const file = estimationData.uploadedFiles?.find(f => f.originalname === fileName);
+    if (!file) {
+      return res.status(404).json({
+        success: false,
+        message: 'File not found'
+      });
+    }
+    
+    console.log(`✅ Redirecting to file URL for download: ${fileName}`);
+    
+    // Set headers for file download
+    res.setHeader('Content-Disposition', `attachment; filename="${file.originalname}"`);
+    res.setHeader('Content-Type', file.mimetype || 'application/pdf');
+    
+    // Redirect to the file URL
+    res.redirect(file.url);
+
+  } catch (error) {
+    console.error('❌ Error downloading file:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error downloading file',
+      error: error.message
+    });
+  }
+});
+
+// Bulk download all files for an estimation
+router.get('/:estimationId/files/download-all', authenticateToken, async (req, res) => {
+  try {
+    const { estimationId } = req.params;
+    
+    console.log(`Bulk download requested for estimation ${estimationId} by ${req.user.email}`);
+    
     const estimationDoc = await adminDb.collection('estimations').doc(estimationId).get();
     if (!estimationDoc.exists) {
       return res.status(404).json({
@@ -408,43 +466,38 @@ router.get('/:estimationId/files/:fileName/download', authenticateToken, async (
       });
     }
     
-    // Find the file in uploadedFiles
-    const file = estimationData.uploadedFiles?.find(f => 
-      (f.originalname === fileName) || (f.name === fileName)
-    );
-    
-    if (!file) {
+    const files = estimationData.uploadedFiles || [];
+    if (files.length === 0) {
       return res.status(404).json({
         success: false,
-        message: 'File not found'
+        message: 'No files found for this estimation'
       });
     }
     
-    console.log(`Providing download URL for file: ${fileName}`);
-    
-    // Return the download URL
+    // For now, return the list of file URLs for frontend to handle bulk download
+    // In production, you might want to create a ZIP file
     res.json({
       success: true,
-      file: {
-        name: file.name || file.originalname,
-        url: file.url || file.downloadURL,
-        downloadUrl: file.url || file.downloadURL,
-        size: file.size || 0,
-        type: file.mimetype || 'application/pdf'
-      }
+      message: `${files.length} files available for download`,
+      files: files.map(file => ({
+        name: file.originalname,
+        url: file.url,
+        size: file.size,
+        type: file.mimetype
+      }))
     });
 
   } catch (error) {
-    console.error('Error providing file download:', error);
+    console.error('❌ Error in bulk download:', error);
     res.status(500).json({
       success: false,
-      message: 'Error providing file download',
+      message: 'Error preparing bulk download',
       error: error.message
     });
   }
 });
 
-// Delete estimation with file cleanup
+// Delete estimation (enhanced with file cleanup)
 router.delete('/:estimationId', authenticateToken, async (req, res) => {
   try {
     const { estimationId } = req.params;
@@ -481,13 +534,10 @@ router.delete('/:estimationId', authenticateToken, async (req, res) => {
       
       for (const file of estimationData.uploadedFiles) {
         try {
-          // Extract path from URL if needed
-          const filePath = file.path || file.url?.split('/').slice(-2).join('/');
-          if (filePath) {
-            await deleteFileFromFirebase(filePath);
-          }
+          await deleteFileFromFirebase(file.path || file.filename);
         } catch (fileDeleteError) {
-          console.error(`Failed to delete file:`, fileDeleteError);
+          console.error(`Failed to delete file ${file.originalname}:`, fileDeleteError);
+          // Continue with other files even if one fails
         }
       }
     }
@@ -495,11 +545,11 @@ router.delete('/:estimationId', authenticateToken, async (req, res) => {
     // Delete the estimation document
     await adminDb.collection('estimations').doc(estimationId).delete();
 
-    console.log(`Estimation ${estimationId} deleted by ${req.user?.email}`);
+    console.log(`Estimation ${estimationId} and associated files deleted by ${req.user?.email}`);
 
     res.json({
       success: true,
-      message: 'Estimation deleted successfully'
+      message: 'Estimation and associated files deleted successfully'
     });
 
   } catch (error) {
@@ -525,6 +575,12 @@ router.use((error, req, res, next) => {
       return res.status(400).json({
         success: false,
         message: `Too many files. Maximum ${FILE_UPLOAD_CONFIG.maxFiles} files allowed.`
+      });
+    }
+    if (error.code === 'LIMIT_UNEXPECTED_FILE') {
+      return res.status(400).json({
+        success: false,
+        message: 'Unexpected file field.'
       });
     }
   }

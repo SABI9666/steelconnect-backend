@@ -1,4 +1,4 @@
-// src/routes/quotes.js - Final Complete Implementation
+// src/routes/quotes.js - Updated with multiple file upload support
 import express from 'express';
 import { adminDb } from '../config/firebase.js';
 import { 
@@ -7,23 +7,40 @@ import {
   getQuotesByUser, 
   getQuoteById, 
   approveQuote, 
-  deleteQuote 
+  deleteQuote,
+  updateQuote
 } from '../controllers/quotecontroller.js';
 import { authenticateToken, isDesigner } from '../middleware/auth.js';
-import { upload } from '../middleware/upload.js';
+import { 
+  upload, 
+  handleUploadError, 
+  validateFileRequirements, 
+  logUploadDetails, 
+  validatePDFFiles 
+} from '../middleware/upload.js';
 import { NotificationService } from '../services/NotificationService.js';
 
 const router = express.Router();
 
-// Enhanced quote creation with notifications
+// Enhanced quote creation with multiple file support
 router.post(
   '/',
   authenticateToken,
   isDesigner,
-  upload.array('attachments', 5),
+  upload.array('attachments', 5), // Support up to 5 files with field name 'attachments'
+  handleUploadError,
+  validateFileRequirements,
+  logUploadDetails,
+  validatePDFFiles,
   async (req, res, next) => {
     try {
-      // Store original res.json to intercept the response
+      console.log('=== QUOTE CREATION REQUEST ===');
+      console.log('User:', req.user.email);
+      console.log('Body:', req.body);
+      console.log('Files:', req.files?.length || 0);
+      console.log('==============================');
+
+      // Store original response function
       const originalJson = res.json;
       
       res.json = function(data) {
@@ -57,6 +74,7 @@ router.post(
       await createQuote(req, res, next);
       
     } catch (error) {
+      console.error('Error in quote creation route:', error);
       next(error);
     }
   }
@@ -70,6 +88,18 @@ router.get('/user/:userId', authenticateToken, getQuotesByUser);
 
 // GET a single quote by its ID
 router.get('/:id', authenticateToken, getQuoteById);
+
+// Enhanced quote update with file support
+router.put(
+  '/:id', 
+  authenticateToken, 
+  isDesigner,
+  upload.array('attachments', 5), // Allow file uploads in updates too
+  handleUploadError,
+  validatePDFFiles,
+  logUploadDetails,
+  updateQuote
+);
 
 // Enhanced quote approval with notifications
 router.put('/:id/approve', authenticateToken, async (req, res) => {

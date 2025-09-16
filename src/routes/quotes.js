@@ -1,14 +1,15 @@
-// src/routes/quotes.js - FIXED with proper file handling for contractors
+// src/routes/quotes.js - Fixed with proper file access for contractors and designers
 import express from 'express';
-import { adminDb } from '../config/firebase.js';
+import { adminDb, uploadMultipleFilesToFirebase } from '../config/firebase.js';
 import { 
   createQuote, 
   getQuotesForJob, 
   getQuotesByUser, 
   getQuoteById, 
   approveQuote, 
-  deleteQuote
-} from '../controllers/quoteController.js';
+  deleteQuote,
+  updateQuote
+} from '../controllers/quotecontroller.js';
 import { authenticateToken, isDesigner } from '../middleware/auth.js';
 import { 
   upload, 
@@ -17,10 +18,31 @@ import {
   logUploadDetails, 
   validatePDFFiles 
 } from '../middleware/upload.js';
+import { NotificationService } from '../services/NotificationService.js';
 
 const router = express.Router();
 
-// FIXED: Enhanced quote creation with multiple file support
+// Helper function to determine file type from filename
+function getFileTypeFromName(filename) {
+  if (!filename) return 'application/octet-stream';
+  
+  const ext = filename.toLowerCase().split('.').pop();
+  const typeMap = {
+    'pdf': 'application/pdf',
+    'doc': 'application/msword',
+    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'xls': 'application/vnd.ms-excel',
+    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'txt': 'text/plain',
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'png': 'image/png'
+  };
+  
+  return typeMap[ext] || 'application/octet-stream';
+}
+
+// Enhanced quote creation with multiple file support
 router.post(
   '/',
   authenticateToken,
@@ -30,7 +52,71 @@ router.post(
   validateFileRequirements,
   logUploadDetails,
   validatePDFFiles,
-  createQuote
+  async (req, res, next) => {
+    try {
+      console.log('=== QUOTE CREATION REQUEST ===');
+      console.log('User:', req.user.email);
+      console.log('Body:', req.body);
+      console.log('Files:', req.files?.length || 0);
+      
+      // Process files if provided
+      if (req.files && req.files.length > 0) {
+        try {
+          const uploadedFiles = await uploadMultipleFilesToFirebase(
+            req.files,
+            'quote-attachments',
+            req.user.userId
+          );
+          
+          // Add uploaded files to request body for controller
+          req.body.attachments = uploadedFiles;
+          console.log(`Uploaded ${uploadedFiles.length} files for quote`);
+        } catch (uploadError) {
+          console.error('File upload error:', uploadError);
+          return res.status(500).json({
+            success: false,
+            message: 'Failed to upload attachments',
+            error: uploadError.message
+          });
+        }
+      }
+
+      // Store original response function
+      const originalJson = res.json;
+      
+      res.json = function(data) {
+        // Call original response first
+        originalJson.call(this, data);
+        
+        // If quote creation was successful, send notifications
+        if (data.success && this.statusCode === 201) {
+          (async () => {
+            try {
+              const quoteData = data.data;
+              const { jobId } = req.body;
+              
+              // Get job data for notification
+              const jobDoc = await adminDb.collection('jobs').doc(jobId).get();
+              if (jobDoc.exists) {
+                const jobData = { id: jobId, ...jobDoc.data() };
+                await NotificationService.notifyQuoteSubmitted(quoteData, jobData);
+                console.log('Quote submission notification sent');
+              }
+            } catch (notificationError) {
+              console.error('Failed to send quote notification:', notificationError);
+            }
+          })();
+        }
+      };
+      
+      // Call the original createQuote controller
+      await createQuote(req, res, next);
+      
+    } catch (error) {
+      console.error('Error in quote creation route:', error);
+      next(error);
+    }
+  }
 );
 
 // GET all quotes for a specific job (for the contractor who posted it)
@@ -68,16 +154,12 @@ router.get('/job/:jobId', authenticateToken, async (req, res) => {
       .orderBy('createdAt', 'desc')
       .get();
     
-    const quotes = quotesSnapshot.docs.map(doc => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        ...data,
-        fileCount: data.attachments?.length || 0,
-        hasAttachments: (data.attachments?.length || 0) > 0,
-        attachmentCount: data.attachments?.length || 0
-      };
-    });
+    const quotes = quotesSnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+      fileCount: doc.data().attachments?.length || 0,
+      hasAttachments: (doc.data().attachments?.length || 0) > 0
+    }));
     
     console.log(`Found ${quotes.length} quotes for job ${jobId}`);
     
@@ -106,7 +188,7 @@ router.get('/job/:jobId', authenticateToken, async (req, res) => {
 // GET all quotes submitted by a specific user (designer)
 router.get('/user/:userId', authenticateToken, getQuotesByUser);
 
-// GET a single quote by its ID with file access
+// FIXED: GET a single quote by its ID with file access
 router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -128,12 +210,13 @@ router.get('/:id', authenticateToken, async (req, res) => {
     const jobDoc = await adminDb.collection('jobs').doc(quoteData.jobId).get();
     const jobData = jobDoc.exists ? jobDoc.data() : null;
     
-    // Check authorization - quote creator, job poster, or admin can access
-    const isAuthorized = userId === quoteData.designerId || 
-                        userId === jobData?.posterId ||
-                        req.user.type === 'admin';
+    // FIXED: Check authorization - quote creator, job poster, or admin can access
+    const isDesigner = userId === quoteData.designerId;
+    const isContractor = jobData && (userId === jobData.posterId);
+    const isAdmin = req.user.type === 'admin';
     
-    if (!isAuthorized) {
+    if (!isDesigner && !isContractor && !isAdmin) {
+      console.log(`Access denied for user ${req.user.email}. Designer ID: ${quoteData.designerId}, Contractor ID: ${jobData?.posterId}, User ID: ${userId}`);
       return res.status(403).json({
         success: false,
         message: 'Access denied'
@@ -146,8 +229,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
         id: id,
         ...quoteData,
         fileCount: quoteData.attachments?.length || 0,
-        hasAttachments: (quoteData.attachments?.length || 0) > 0,
-        attachmentCount: quoteData.attachments?.length || 0
+        hasAttachments: (quoteData.attachments?.length || 0) > 0
       }
     });
     
@@ -161,7 +243,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// FIXED: Get files for a specific quote (accessible by both designer and contractor)
+// FIXED: Get files for a specific quote with proper authorization for both designers and contractors
 router.get('/:quoteId/files', authenticateToken, async (req, res) => {
   try {
     const { quoteId } = req.params;
@@ -184,39 +266,40 @@ router.get('/:quoteId/files', authenticateToken, async (req, res) => {
     const jobDoc = await adminDb.collection('jobs').doc(quoteData.jobId).get();
     const jobData = jobDoc.exists ? jobDoc.data() : null;
     
-    // FIXED: Check authorization - designer, contractor, or admin can access
-    const isAuthorized = userId === quoteData.designerId || 
-                        userId === jobData?.posterId ||
-                        req.user.type === 'admin';
+    // FIXED: Check authorization properly - designer, contractor, or admin can access
+    const isDesigner = userId === quoteData.designerId;
+    const isContractor = jobData && (userId === jobData.posterId);
+    const isAdmin = req.user.type === 'admin';
     
-    if (!isAuthorized) {
-      console.log(`Access denied for user ${req.user.email} (${userId}). Job poster: ${jobData?.posterId}, Designer: ${quoteData.designerId}`);
+    if (!isDesigner && !isContractor && !isAdmin) {
+      console.log(`Access denied for user ${req.user.email}. Designer ID: ${quoteData.designerId}, Contractor ID: ${jobData?.posterId}, User ID: ${userId}`);
       return res.status(403).json({
         success: false,
-        message: 'Access denied'
+        message: 'Access denied. Only the quote creator or job poster can view files.'
       });
     }
 
     const files = quoteData.attachments || [];
-    const totalSize = files.reduce((sum, file) => sum + (file.size || 0), 0);
+    
+    // FIXED: Ensure consistent file structure
+    const formattedFiles = files.map((file, index) => ({
+      index: index,
+      name: file.name || file.originalname || `Attachment ${index + 1}`,
+      url: file.url || file.downloadURL,
+      downloadUrl: file.url || file.downloadURL,
+      size: file.size || 0,
+      type: file.type || file.mimetype || getFileTypeFromName(file.name || file.originalname || ''),
+      uploadedAt: file.uploadedAt || quoteData.createdAt
+    }));
 
-    console.log(`Returning ${files.length} files for quote ${quoteId}`);
+    console.log(`Returning ${formattedFiles.length} files for quote ${quoteId}`);
 
     res.json({
       success: true,
-      files: files.map(file => ({
-        name: file.name || file.originalname || 'Unknown File',
-        originalname: file.originalname || file.name || 'Unknown File',
-        url: file.url || file.downloadURL,
-        downloadUrl: file.url || file.downloadURL,
-        size: file.size || 0,
-        type: file.type || file.mimetype || 'application/octet-stream',
-        mimetype: file.mimetype || file.type || 'application/octet-stream',
-        uploadedAt: file.uploadedAt || quoteData.createdAt
-      })),
-      fileCount: files.length,
-      totalSize: totalSize,
-      totalSizeMB: (totalSize / (1024 * 1024)).toFixed(2),
+      files: formattedFiles,
+      fileCount: formattedFiles.length,
+      totalSize: formattedFiles.reduce((sum, file) => sum + (file.size || 0), 0),
+      totalSizeMB: (formattedFiles.reduce((sum, file) => sum + (file.size || 0), 0) / (1024 * 1024)).toFixed(2),
       quoteInfo: {
         id: quoteId,
         jobTitle: quoteData.jobTitle,
@@ -236,7 +319,7 @@ router.get('/:quoteId/files', authenticateToken, async (req, res) => {
   }
 });
 
-// FIXED: Download specific file from a quote (accessible by both designer and contractor)
+// FIXED: Download specific file from a quote with proper authorization
 router.get('/:quoteId/files/:fileName/download', authenticateToken, async (req, res) => {
   try {
     const { quoteId, fileName } = req.params;
@@ -247,28 +330,23 @@ router.get('/:quoteId/files/:fileName/download', authenticateToken, async (req, 
     // Get quote data
     const quoteDoc = await adminDb.collection('quotes').doc(quoteId).get();
     if (!quoteDoc.exists) {
-      return res.status(404).json({
-        success: false,
-        message: 'Quote not found'
-      });
+      return res.status(404).json({ success: false, message: 'Quote not found' });
     }
 
     const quoteData = quoteDoc.data();
     
-    // Get job data to check if user is the contractor
+    // Get job data for authorization
     const jobDoc = await adminDb.collection('jobs').doc(quoteData.jobId).get();
     const jobData = jobDoc.exists ? jobDoc.data() : null;
     
     // Check authorization
-    const isAuthorized = userId === quoteData.designerId || 
-                        userId === jobData?.posterId ||
-                        req.user.type === 'admin';
+    const isDesigner = userId === quoteData.designerId;
+    const isContractor = jobData && (userId === jobData.posterId);
+    const isAdmin = req.user.type === 'admin';
     
-    if (!isAuthorized) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied'
-      });
+    if (!isDesigner && !isContractor && !isAdmin) {
+      console.log(`File download access denied for user ${req.user.email}`);
+      return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
     // Find the file in attachments
@@ -277,34 +355,29 @@ router.get('/:quoteId/files/:fileName/download', authenticateToken, async (req, 
     );
     
     if (!file) {
-      return res.status(404).json({
-        success: false,
-        message: 'File not found'
-      });
+      return res.status(404).json({ success: false, message: 'File not found' });
     }
     
-    console.log(`Providing download URL for quote file: ${fileName}`);
+    const fileUrl = file.url || file.downloadURL;
+    if (!fileUrl) {
+      return res.status(404).json({ success: false, message: 'File URL not available' });
+    }
     
-    // Return the download URL
-    res.json({
-      success: true,
-      file: {
-        name: file.name || file.originalname,
-        originalname: file.originalname || file.name,
-        url: file.url || file.downloadURL,
-        downloadUrl: file.url || file.downloadURL,
-        size: file.size || 0,
-        type: file.type || file.mimetype || 'application/octet-stream',
-        mimetype: file.mimetype || file.type || 'application/octet-stream'
-      }
-    });
+    console.log(`Providing download for quote file: ${fileName}`);
+    
+    // Set proper headers and redirect to file URL
+    const downloadFileName = file.name || file.originalname || fileName;
+    res.setHeader('Content-Disposition', `attachment; filename="${downloadFileName}"`);
+    res.setHeader('Content-Type', file.type || file.mimetype || 'application/octet-stream');
+    
+    // Redirect to the actual file URL for direct download
+    res.redirect(fileUrl);
 
   } catch (error) {
-    console.error('Error providing quote file download:', error);
+    console.error('Error downloading quote file:', error);
     res.status(500).json({
       success: false,
-      message: 'Error providing file download',
-      error: error.message
+      message: 'Error downloading file'
     });
   }
 });
@@ -330,11 +403,11 @@ router.get('/:quoteId/details', authenticateToken, async (req, res) => {
     const jobData = jobDoc.exists ? jobDoc.data() : null;
     
     // Check authorization - designer, contractor, or admin
-    const isAuthorized = userId === quoteData.designerId || 
-                        userId === jobData?.posterId ||
-                        req.user.type === 'admin';
+    const isDesigner = userId === quoteData.designerId;
+    const isContractor = jobData && (userId === jobData.posterId);
+    const isAdmin = req.user.type === 'admin';
     
-    if (!isAuthorized) {
+    if (!isDesigner && !isContractor && !isAdmin) {
       return res.status(403).json({
         success: false,
         message: 'Access denied'
@@ -384,17 +457,13 @@ router.get('/:quoteId/details', authenticateToken, async (req, res) => {
         job: job,
         attachments: (quoteData.attachments || []).map(file => ({
           name: file.name || file.originalname || 'Unknown File',
-          originalname: file.originalname || file.name || 'Unknown File',
           url: file.url || file.downloadURL,
           downloadUrl: file.url || file.downloadURL,
           size: file.size || 0,
-          type: file.type || file.mimetype || 'application/octet-stream',
-          mimetype: file.mimetype || file.type || 'application/octet-stream',
+          type: file.type || file.mimetype || getFileTypeFromName(file.name || file.originalname || ''),
           uploadedAt: file.uploadedAt
         })),
-        fileCount: quoteData.attachments?.length || 0,
-        hasAttachments: (quoteData.attachments?.length || 0) > 0,
-        attachmentCount: quoteData.attachments?.length || 0
+        fileCount: quoteData.attachments?.length || 0
       }
     });
     
@@ -479,6 +548,24 @@ router.put('/:id/approve', authenticateToken, async (req, res) => {
     await batch.commit();
     console.log(`Quote approval batch operation completed for quote ${quoteId}`);
 
+    // Send notifications using enhanced service
+    try {
+      // Notify the approved designer
+      await NotificationService.notifyQuoteStatusChanged(quoteData, jobData, 'approved');
+      console.log('Quote approval notification sent successfully');
+      
+      // Notify rejected designers
+      for (const doc of allQuotesQuery.docs) {
+        if (doc.id !== quoteId) {
+          const rejectedQuoteData = { id: doc.id, ...doc.data() };
+          await NotificationService.notifyQuoteStatusChanged(rejectedQuoteData, jobData, 'rejected');
+        }
+      }
+      console.log('Quote rejection notifications sent successfully');
+    } catch (notificationError) {
+      console.error('Failed to send quote approval notifications:', notificationError);
+    }
+
     res.json({
       success: true,
       message: 'Quote approved successfully'
@@ -489,6 +576,19 @@ router.put('/:id/approve', authenticateToken, async (req, res) => {
     res.status(500).json({ success: false, error: 'Failed to approve quote' });
   }
 });
+
+// Enhanced quote update with file support
+router.put(
+  '/:id',
+  authenticateToken,
+  isDesigner,
+  upload.array('attachments', 5), // Support up to 5 additional files
+  handleUploadError,
+  validateFileRequirements,
+  logUploadDetails,
+  validatePDFFiles,
+  updateQuote
+);
 
 // DELETE a quote
 router.delete('/:id', authenticateToken, deleteQuote);

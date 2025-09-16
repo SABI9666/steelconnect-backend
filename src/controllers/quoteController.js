@@ -1,15 +1,17 @@
 import { adminDb, admin } from '../config/firebase.js';
-import { uploadMultipleFilesToFirebase } from '../middleware/upload.js';
+import { uploadMultipleFilesToFirebase } from '../utils/firebaseStorage.js';
 
-// Create a new quote with multiple file support
+// FIXED: Create a new quote with proper file handling
 export const createQuote = async (req, res, next) => {
     try {
         const { jobId, quoteAmount, timeline, description } = req.body;
         const designerId = req.user.userId;
         const designerName = req.user.name;
 
+        console.log('=== QUOTE CREATION ===');
         console.log('Creating quote with data:', req.body);
         console.log('Files received:', req.files?.length || 0);
+        console.log('Designer:', req.user.email);
 
         // Validate required fields
         if (!jobId || !quoteAmount || !description) {
@@ -48,26 +50,37 @@ export const createQuote = async (req, res, next) => {
             });
         }
 
-        // Handle multiple file uploads (similar to job creation)
+        // Handle file uploads with proper error handling
         let attachments = [];
         if (req.files && req.files.length > 0) {
             try {
-                console.log('Uploading quote files to Firebase...');
+                console.log('Processing quote files...');
+                console.log('Files to upload:', req.files.map(f => ({
+                    name: f.originalname,
+                    size: f.size,
+                    type: f.mimetype
+                })));
+
                 const uploadedFiles = await uploadMultipleFilesToFirebase(
                     req.files, 
                     'quote-attachments', 
                     designerId
                 );
                 
-                // Format attachments with proper structure
+                // FIXED: Proper attachment structure matching what's expected
                 attachments = uploadedFiles.map(file => ({
                     name: file.name || file.originalname || 'Unknown File',
+                    originalname: file.originalname || file.name || 'Unknown File',
                     url: file.url || file.downloadURL || '',
+                    downloadURL: file.url || file.downloadURL || '',
+                    path: file.path || file.filename || '',
                     uploadedAt: file.uploadedAt || new Date().toISOString(),
-                    size: file.size || 0
+                    size: file.size || 0,
+                    type: file.type || file.mimetype || 'application/octet-stream',
+                    mimetype: file.mimetype || file.type || 'application/octet-stream'
                 }));
                 
-                console.log('Quote files uploaded successfully:', attachments.length);
+                console.log(`Successfully processed ${attachments.length} quote files`);
             } catch (uploadError) {
                 console.error('Quote file upload error:', uploadError);
                 return res.status(400).json({ 
@@ -77,7 +90,7 @@ export const createQuote = async (req, res, next) => {
             }
         }
 
-        // Create quote data
+        // Create quote data with proper structure
         const quoteData = {
             jobId,
             jobTitle: jobData.title,
@@ -87,7 +100,7 @@ export const createQuote = async (req, res, next) => {
             quoteAmount: parseFloat(quoteAmount),
             timeline: timeline ? parseInt(timeline) : null,
             description,
-            attachments: attachments, // Changed from single attachmentUrls to multiple attachments
+            attachments: attachments, // Multiple attachments array
             status: 'submitted',
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
@@ -109,22 +122,24 @@ export const createQuote = async (req, res, next) => {
         const responseData = {
             id: quoteRef.id,
             ...quoteData,
-            createdAt: new Date().toISOString()
+            createdAt: new Date().toISOString(),
+            attachmentCount: attachments.length,
+            hasAttachments: attachments.length > 0
         };
 
         res.status(201).json({
             success: true,
-            message: 'Quote submitted successfully!',
+            message: `Quote submitted successfully${attachments.length > 0 ? ` with ${attachments.length} attachments` : ''}!`,
             data: responseData
         });
 
     } catch (error) {
-        console.error('❌ Error in createQuote:', error);
+        console.error('Error in createQuote:', error);
         next(error);
     }
 };
 
-// Update existing quote with file upload support
+// FIXED: Update existing quote with file upload support
 export const updateQuote = async (req, res, next) => {
     try {
         const { id } = req.params;
@@ -157,6 +172,8 @@ export const updateQuote = async (req, res, next) => {
         // Handle file uploads if present
         if (req.files && req.files.length > 0) {
             try {
+                console.log(`Adding ${req.files.length} new files to quote ${id}`);
+                
                 const uploadedFiles = await uploadMultipleFilesToFirebase(
                     req.files, 
                     'quote-attachments', 
@@ -165,13 +182,19 @@ export const updateQuote = async (req, res, next) => {
                 
                 const newAttachments = uploadedFiles.map(file => ({
                     name: file.name || file.originalname || 'Unknown File',
+                    originalname: file.originalname || file.name || 'Unknown File',
                     url: file.url || file.downloadURL || '',
+                    downloadURL: file.url || file.downloadURL || '',
+                    path: file.path || file.filename || '',
                     uploadedAt: file.uploadedAt || new Date().toISOString(),
-                    size: file.size || 0
+                    size: file.size || 0,
+                    type: file.type || file.mimetype || 'application/octet-stream',
+                    mimetype: file.mimetype || file.type || 'application/octet-stream'
                 }));
                 
                 // Merge with existing attachments
                 updates.attachments = [...(quoteData.attachments || []), ...newAttachments];
+                console.log(`Quote ${id} now has ${updates.attachments.length} total attachments`);
             } catch (uploadError) {
                 return res.status(400).json({ 
                     success: false, 
@@ -191,7 +214,11 @@ export const updateQuote = async (req, res, next) => {
         res.status(200).json({ 
             success: true, 
             message: 'Quote updated successfully', 
-            data: { id: updatedDoc.id, ...updatedDoc.data() } 
+            data: { 
+                id: updatedDoc.id, 
+                ...updatedDoc.data(),
+                attachmentCount: (updatedDoc.data().attachments || []).length
+            } 
         });
 
     } catch (error) {
@@ -210,7 +237,12 @@ export const getQuotesByUser = async (req, res, next) => {
 
         const quotesSnapshot = await adminDb.collection('quotes').where('designerId', '==', userId).get();
         
-        const quotes = quotesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const quotes = quotesSnapshot.docs.map(doc => ({ 
+            id: doc.id, 
+            ...doc.data(),
+            attachmentCount: (doc.data().attachments || []).length,
+            hasAttachments: (doc.data().attachments || []).length > 0
+        }));
 
         // Fixed sorting to handle both Firestore timestamps and regular dates
         quotes.sort((a, b) => {
@@ -237,7 +269,7 @@ export const getQuotesByUser = async (req, res, next) => {
 
         res.json({ success: true, data: quotes });
     } catch (error) {
-        console.error('❌ Error in getQuotesByUser:', error);
+        console.error('Error in getQuotesByUser:', error);
         next(error);
     }
 };
@@ -306,7 +338,7 @@ export const approveQuote = async (req, res, next) => {
         res.status(200).json({ success: true, message: 'Quote approved and job status updated.' });
         
     } catch (error) {
-        console.error('❌ Error in approveQuote:', error);
+        console.error('Error in approveQuote:', error);
         next(error);
     }
 };
@@ -330,7 +362,12 @@ export const getQuotesForJob = async (req, res, next) => {
 
         const quotesSnapshot = await adminDb.collection('quotes').where('jobId', '==', jobId).get();
 
-        const quotes = quotesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const quotes = quotesSnapshot.docs.map(doc => ({ 
+            id: doc.id, 
+            ...doc.data(),
+            attachmentCount: (doc.data().attachments || []).length,
+            hasAttachments: (doc.data().attachments || []).length > 0
+        }));
         
         // Fixed sorting to handle both Firestore timestamps and regular dates
         quotes.sort((a, b) => {
@@ -357,7 +394,7 @@ export const getQuotesForJob = async (req, res, next) => {
 
         res.json({ success: true, data: quotes });
     } catch (error) {
-        console.error('❌ Error in getQuotesForJob:', error);
+        console.error('Error in getQuotesForJob:', error);
         next(error);
     }
 };
@@ -393,9 +430,13 @@ export const getQuoteById = async (req, res, next) => {
             return res.status(403).json({ success: false, message: 'You are not authorized to view this quote.' });
         }
 
+        // Add attachment info to response
+        quoteData.attachmentCount = (quoteData.attachments || []).length;
+        quoteData.hasAttachments = (quoteData.attachments || []).length > 0;
+
         res.json({ success: true, data: quoteData });
     } catch (error) {
-        console.error('❌ Error in getQuoteById:', error);
+        console.error('Error in getQuoteById:', error);
         next(error);
     }
 };
@@ -433,7 +474,7 @@ export const deleteQuote = async (req, res, next) => {
         res.status(200).json({ success: true, message: 'Quote deleted successfully.' });
 
     } catch (error) {
-        console.error('❌ Error in deleteQuote:', error);
+        console.error('Error in deleteQuote:', error);
         next(error);
     }
 };

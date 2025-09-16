@@ -1,8 +1,7 @@
-// jobController.js - Fixed version with multiple file upload support
 import { adminDb, admin } from '../config/firebase.js';
 import { uploadMultipleFilesToFirebase } from '../middleware/upload.js';
 
-// Create a new job with multiple file attachments
+// Create a new job
 export const createJob = async (req, res, next) => {
   try {
     console.log('Creating job with data:', req.body);
@@ -20,11 +19,11 @@ export const createJob = async (req, res, next) => {
           req.user.userId
         );
         
-        // Format attachments with proper structure
+        // FIXED: Properly map uploaded files to attachment structure
         attachments = uploadedFiles.map(file => ({
-          name: file.originalName || file.name,
-          url: file.downloadURL || file.url,
-          uploadedAt: new Date().toISOString(),
+          name: file.name || file.originalname || 'Unknown File',
+          url: file.url || file.downloadURL || '',
+          uploadedAt: file.uploadedAt || new Date().toISOString(),
           size: file.size || 0
         }));
         
@@ -55,7 +54,7 @@ export const createJob = async (req, res, next) => {
       deadline: req.body.deadline || null,
       link: req.body.link?.trim() || '',
       skills: skills,
-      attachments: attachments, // Changed from single 'attachment' to multiple 'attachments'
+      attachments: attachments,
       posterId: req.user.userId,
       posterName: req.user.name || 'Unknown User',
       status: 'open',
@@ -81,7 +80,7 @@ export const createJob = async (req, res, next) => {
     const responseData = {
       id: jobRef.id,
       ...jobData,
-      createdAt: new Date().toISOString() // Convert timestamp for response
+      createdAt: new Date().toISOString()
     };
 
     console.log('Job created successfully:', jobRef.id);
@@ -98,7 +97,88 @@ export const createJob = async (req, res, next) => {
   }
 };
 
-// Update job with file attachment support
+// Get all jobs with efficient pagination
+export const getAllJobs = async (req, res, next) => {
+  try {
+    const {
+      page = 1,
+      limit = 6,
+      status = 'open',
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
+    } = req.query;
+
+    const numericLimit = parseInt(limit);
+    let query = adminDb.collection('jobs').where('status', '==', status).orderBy(sortBy, sortOrder);
+
+    // For pagination, use cursors (startAfter) for efficiency
+    if (page > 1) {
+        const offset = (parseInt(page) - 1) * numericLimit;
+        // Get the last document of the previous page to use as a cursor
+        const prevPageSnapshot = await query.limit(offset).get();
+        if (!prevPageSnapshot.empty) {
+            const lastVisibleDoc = prevPageSnapshot.docs[prevPageSnapshot.docs.length - 1];
+            query = query.startAfter(lastVisibleDoc);
+        }
+    }
+
+    // Fetch one extra document to determine if there is a next page
+    const snapshot = await query.limit(numericLimit + 1).get();
+    
+    let jobs = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+
+    // Check if there are more jobs to load
+    const hasNext = jobs.length > numericLimit;
+    if (hasNext) {
+      jobs.pop(); // Remove the extra document from the response
+    }
+
+    res.status(200).json({
+      success: true,
+      data: jobs,
+      pagination: {
+        currentPage: parseInt(page),
+        hasNext: hasNext,
+      }
+    });
+
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Get a single job by ID
+export const getJobById = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const jobDoc = await adminDb.collection('jobs').doc(id).get();
+    
+    if (!jobDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Job not found.' });
+    }
+
+    const jobData = jobDoc.data();
+
+    const quotesSnapshot = await adminDb.collection('quotes').where('jobId', '==', id).get();
+
+    res.status(200).json({
+      success: true,
+      data: {
+        id: jobDoc.id,
+        ...jobData,
+        quotesCount: quotesSnapshot.size
+      }
+    });
+
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Update a job
 export const updateJob = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -107,25 +187,18 @@ export const updateJob = async (req, res, next) => {
     const jobDoc = await jobRef.get();
 
     if (!jobDoc.exists) {
-      return res.status(404).json({ success: false, error: 'Job not found' });
+      return res.status(404).json({ success: false, message: 'Job not found' });
     }
 
     const jobData = jobDoc.data();
 
-    // Check authorization
+    // Check if user is authorized to update (must be the poster)
     if (jobData.posterId !== req.user.userId) {
-      return res.status(403).json({ 
-        success: false, 
-        error: 'You are not authorized to update this job' 
-      });
+      return res.status(403).json({ success: false, message: 'You are not authorized to update this job' });
     }
 
-    // Prevent updates to assigned/completed jobs
     if (jobData.status === 'assigned' || jobData.status === 'completed') {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Cannot update job details after it has been assigned.' 
-      });
+      return res.status(400).json({ success: false, message: 'Cannot update job details after it has been assigned.' });
     }
 
     // Parse skills if provided
@@ -143,9 +216,9 @@ export const updateJob = async (req, res, next) => {
         );
         
         const newAttachments = uploadedFiles.map(file => ({
-          name: file.originalName || file.name,
-          url: file.downloadURL || file.url,
-          uploadedAt: new Date().toISOString(),
+          name: file.name || file.originalname || 'Unknown File',
+          url: file.url || file.downloadURL || '',
+          uploadedAt: file.uploadedAt || new Date().toISOString(),
           size: file.size || 0
         }));
         
@@ -159,114 +232,11 @@ export const updateJob = async (req, res, next) => {
       }
     }
 
-    const updateData = {
-      ...updates,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    };
-
-    await jobRef.update(updateData);
+    await jobRef.update({ ...updates, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
     const updatedDoc = await jobRef.get();
-    
-    res.status(200).json({ 
-      success: true, 
-      message: 'Job updated successfully', 
-      data: { id: updatedDoc.id, ...updatedDoc.data() } 
-    });
+    res.status(200).json({ success: true, message: 'Job updated successfully', data: { id: updatedDoc.id, ...updatedDoc.data() } });
 
   } catch (error) {
-    console.error('Error updating job:', error);
-    next(error);
-  }
-};
-
-// Get all jobs with efficient pagination
-export const getAllJobs = async (req, res, next) => {
-  try {
-    const {
-      page = 1,
-      limit = 6,
-      status = 'open',
-      sortBy = 'createdAt',
-      sortOrder = 'desc'
-    } = req.query;
-
-    const numericLimit = parseInt(limit);
-    const offset = (parseInt(page) - 1) * numericLimit;
-
-    let query = adminDb.collection('jobs')
-      .where('status', '==', status)
-      .orderBy(sortBy, sortOrder);
-
-    // Get total count for pagination
-    const totalSnapshot = await query.get();
-    const totalCount = totalSnapshot.size;
-
-    // Apply pagination
-    const snapshot = await query.limit(numericLimit).offset(offset).get();
-    
-    const jobs = snapshot.docs.map(doc => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        ...data,
-        // Ensure attachments field exists and is properly formatted
-        attachments: data.attachments || [],
-        // Convert Firestore timestamps to ISO strings
-        createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
-        updatedAt: data.updatedAt?.toDate?.()?.toISOString() || data.updatedAt
-      };
-    });
-
-    const hasNext = (offset + numericLimit) < totalCount;
-
-    res.status(200).json({
-      success: true,
-      data: jobs,
-      pagination: {
-        currentPage: parseInt(page),
-        totalCount,
-        hasNext,
-        totalPages: Math.ceil(totalCount / numericLimit)
-      }
-    });
-
-  } catch (error) {
-    console.error('Error in getAllJobs:', error);
-    next(error);
-  }
-};
-
-// Get a single job by ID
-export const getJobById = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const jobDoc = await adminDb.collection('jobs').doc(id).get();
-    
-    if (!jobDoc.exists) {
-      return res.status(404).json({ success: false, error: 'Job not found.' });
-    }
-
-    const jobData = jobDoc.data();
-
-    // Get quotes count
-    const quotesSnapshot = await adminDb.collection('quotes').where('jobId', '==', id).get();
-
-    const responseData = {
-      id: jobDoc.id,
-      ...jobData,
-      attachments: jobData.attachments || [],
-      quotesCount: quotesSnapshot.size,
-      createdAt: jobData.createdAt?.toDate?.()?.toISOString() || jobData.createdAt,
-      updatedAt: jobData.updatedAt?.toDate?.()?.toISOString() || jobData.updatedAt
-    };
-
-    res.status(200).json({
-      success: true,
-      data: responseData
-    });
-
-  } catch (error) {
-    console.error('Error in getJobById:', error);
     next(error);
   }
 };
@@ -275,40 +245,18 @@ export const getJobById = async (req, res, next) => {
 export const getJobsByUserId = async (req, res, next) => {
   try {
     const { userId } = req.params;
-    
-    // Authorization check
     if (req.user.userId !== userId) {
-      return res.status(403).json({ 
-        success: false, 
-        error: 'You are not authorized to view these jobs.' 
-      });
+      return res.status(403).json({ success: false, message: 'You are not authorized to view these jobs.' });
     }
-
-    const jobsSnapshot = await adminDb.collection('jobs')
-      .where('posterId', '==', userId)
-      .orderBy('createdAt', 'desc')
-      .get();
-    
-    const jobs = jobsSnapshot.docs.map(doc => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        ...data,
-        attachments: data.attachments || [],
-        createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
-        updatedAt: data.updatedAt?.toDate?.()?.toISOString() || data.updatedAt
-      };
-    });
-
+    const jobsSnapshot = await adminDb.collection('jobs').where('posterId', '==', userId).orderBy('createdAt', 'desc').get();
+    const jobs = jobsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     res.status(200).json({ success: true, data: jobs });
-    
   } catch (error) {
-    console.error('Error in getJobsByUserId:', error);
     next(error);
   }
 };
 
-// Delete a job and all its related data
+// Delete a job and all its related data (quotes, conversations)
 export const deleteJob = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -316,54 +264,43 @@ export const deleteJob = async (req, res, next) => {
     const jobDoc = await jobRef.get();
 
     if (!jobDoc.exists) {
-      return res.status(404).json({ success: false, error: 'Job not found.' });
+      return res.status(404).json({ success: false, message: 'Job not found.' });
     }
 
     const jobData = jobDoc.data();
 
-    // Authorization check
+    // Authorization: only the job poster can delete
     if (jobData.posterId !== req.user.userId) {
-      return res.status(403).json({ 
-        success: false, 
-        error: 'You are not authorized to delete this job.' 
-      });
+      return res.status(403).json({ success: false, message: 'You are not authorized to delete this job.' });
     }
 
-    // Prevent deletion of assigned/completed jobs
+    // To prevent deleting work in progress, check status
     if (jobData.status === 'assigned' || jobData.status === 'completed') {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Cannot delete a job that has already been assigned.' 
-      });
+      return res.status(400).json({ success: false, message: 'Cannot delete a job that has already been assigned.' });
     }
 
     const batch = adminDb.batch();
 
-    // Delete all quotes for this job
+    // 1. Find and delete all quotes for this job
     const quotesSnapshot = await adminDb.collection('quotes').where('jobId', '==', id).get();
     quotesSnapshot.docs.forEach(doc => batch.delete(doc.ref));
 
-    // Delete all conversations and their messages
+    // 2. Find and delete all conversations (and their sub-collections of messages)
     const conversationsSnapshot = await adminDb.collection('conversations').where('jobId', '==', id).get();
     for (const convoDoc of conversationsSnapshot.docs) {
-      const messagesSnapshot = await convoDoc.ref.collection('messages').get();
-      messagesSnapshot.docs.forEach(msgDoc => batch.delete(msgDoc.ref));
-      batch.delete(convoDoc.ref);
+        const messagesSnapshot = await convoDoc.ref.collection('messages').get();
+        messagesSnapshot.docs.forEach(msgDoc => batch.delete(msgDoc.ref));
+        batch.delete(convoDoc.ref);
     }
     
-    // Delete the job itself
+    // 3. Delete the job itself
     batch.delete(jobRef);
     
-    // Commit all deletions
+    // Commit all deletions in one atomic operation
     await batch.commit();
 
-    res.status(200).json({ 
-      success: true, 
-      message: 'Job and all related data deleted successfully.' 
-    });
-    
+    res.status(200).json({ success: true, message: 'Job and all related data deleted successfully.' });
   } catch (error) {
-    console.error('Error in deleteJob:', error);
     next(error);
   }
 };

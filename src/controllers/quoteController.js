@@ -1,15 +1,12 @@
 import { adminDb, admin } from '../config/firebase.js';
-import { uploadMultipleFilesToFirebase } from '../middleware/upload.js';
+import { uploadToFirebase } from '../middleware/upload.js';
 
-// Create a new quote with multiple file support
+// Create a new quote
 export const createQuote = async (req, res, next) => {
     try {
         const { jobId, quoteAmount, timeline, description } = req.body;
         const designerId = req.user.userId;
         const designerName = req.user.name;
-
-        console.log('Creating quote with data:', req.body);
-        console.log('Files received:', req.files?.length || 0);
 
         // Validate required fields
         if (!jobId || !quoteAmount || !description) {
@@ -48,33 +45,13 @@ export const createQuote = async (req, res, next) => {
             });
         }
 
-        // Handle multiple file uploads (similar to job creation)
-        let attachments = [];
+        // Handle file uploads
+        let attachmentUrls = [];
         if (req.files && req.files.length > 0) {
-            try {
-                console.log('Uploading quote files to Firebase...');
-                const uploadedFiles = await uploadMultipleFilesToFirebase(
-                    req.files, 
-                    'quote-attachments', 
-                    designerId
-                );
-                
-                // Format attachments with proper structure
-                attachments = uploadedFiles.map(file => ({
-                    name: file.name || file.originalname || 'Unknown File',
-                    url: file.url || file.downloadURL || '',
-                    uploadedAt: file.uploadedAt || new Date().toISOString(),
-                    size: file.size || 0
-                }));
-                
-                console.log('Quote files uploaded successfully:', attachments.length);
-            } catch (uploadError) {
-                console.error('Quote file upload error:', uploadError);
-                return res.status(400).json({ 
-                    success: false, 
-                    error: 'Failed to upload files: ' + uploadError.message 
-                });
-            }
+            const uploadPromises = req.files.map(file => 
+                uploadToFirebase(file, 'quote-attachments')
+            );
+            attachmentUrls = await Promise.all(uploadPromises);
         }
 
         // Create quote data
@@ -87,13 +64,11 @@ export const createQuote = async (req, res, next) => {
             quoteAmount: parseFloat(quoteAmount),
             timeline: timeline ? parseInt(timeline) : null,
             description,
-            attachments: attachments, // Changed from single attachmentUrls to multiple attachments
+            attachments: attachmentUrls,
             status: 'submitted',
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         };
-
-        console.log('Saving quote to database...');
 
         // Add quote to database
         const quoteRef = await adminDb.collection('quotes').add(quoteData);
@@ -104,98 +79,14 @@ export const createQuote = async (req, res, next) => {
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
-        console.log('Quote created successfully:', quoteRef.id);
-
-        const responseData = {
-            id: quoteRef.id,
-            ...quoteData,
-            createdAt: new Date().toISOString()
-        };
-
         res.status(201).json({
             success: true,
             message: 'Quote submitted successfully!',
-            data: responseData
+            data: { id: quoteRef.id, ...quoteData }
         });
 
     } catch (error) {
         console.error('❌ Error in createQuote:', error);
-        next(error);
-    }
-};
-
-// FIXED: Update existing quote with file upload support
-export const updateQuote = async (req, res, next) => {
-    try {
-        const { id } = req.params;
-        const updates = req.body;
-        const quoteRef = adminDb.collection('quotes').doc(id);
-        const quoteDoc = await quoteRef.get();
-
-        if (!quoteDoc.exists) {
-            return res.status(404).json({ success: false, error: 'Quote not found' });
-        }
-
-        const quoteData = quoteDoc.data();
-
-        // Check authorization
-        if (quoteData.designerId !== req.user.userId) {
-            return res.status(403).json({ 
-                success: false, 
-                error: 'You are not authorized to update this quote' 
-            });
-        }
-
-        // Only allow updates if quote is still in submitted status
-        if (quoteData.status !== 'submitted') {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Cannot update quote after it has been processed' 
-            });
-        }
-
-        // Handle file uploads if present
-        if (req.files && req.files.length > 0) {
-            try {
-                const uploadedFiles = await uploadMultipleFilesToFirebase(
-                    req.files, 
-                    'quote-attachments', 
-                    req.user.userId
-                );
-                
-                const newAttachments = uploadedFiles.map(file => ({
-                    name: file.name || file.originalname || 'Unknown File',
-                    url: file.url || file.downloadURL || '',
-                    uploadedAt: file.uploadedAt || new Date().toISOString(),
-                    size: file.size || 0
-                }));
-                
-                // Merge with existing attachments
-                updates.attachments = [...(quoteData.attachments || []), ...newAttachments];
-            } catch (uploadError) {
-                return res.status(400).json({ 
-                    success: false, 
-                    error: 'Failed to upload files: ' + uploadError.message 
-                });
-            }
-        }
-
-        const updateData = {
-            ...updates,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        };
-
-        await quoteRef.update(updateData);
-        const updatedDoc = await quoteRef.get();
-        
-        res.status(200).json({ 
-            success: true, 
-            message: 'Quote updated successfully', 
-            data: { id: updatedDoc.id, ...updatedDoc.data() } 
-        });
-
-    } catch (error) {
-        console.error('Error updating quote:', error);
         next(error);
     }
 };

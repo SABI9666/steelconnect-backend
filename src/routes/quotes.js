@@ -1,6 +1,6 @@
-// src/routes/quotes.js - Updated with file access support
+// src/routes/quotes.js - Fixed with proper file access for contractors
 import express from 'express';
-import { adminDb } from '../config/firebase.js';
+import { adminDb, uploadMultipleFilesToFirebase } from '../config/firebase.js';
 import { 
   createQuote, 
   getQuotesForJob, 
@@ -26,7 +26,7 @@ router.post(
   '/',
   authenticateToken,
   isDesigner,
-  upload.array('attachments', 5), // Support up to 5 files with field name 'attachments'
+  upload.array('attachments', 5), // Support up to 5 files
   handleUploadError,
   validateFileRequirements,
   logUploadDetails,
@@ -37,7 +37,28 @@ router.post(
       console.log('User:', req.user.email);
       console.log('Body:', req.body);
       console.log('Files:', req.files?.length || 0);
-      console.log('==============================');
+      
+      // Process files if provided
+      if (req.files && req.files.length > 0) {
+        try {
+          const uploadedFiles = await uploadMultipleFilesToFirebase(
+            req.files,
+            'quote-attachments',
+            req.user.userId
+          );
+          
+          // Add uploaded files to request body for controller
+          req.body.attachments = uploadedFiles;
+          console.log(`Uploaded ${uploadedFiles.length} files for quote`);
+        } catch (uploadError) {
+          console.error('File upload error:', uploadError);
+          return res.status(500).json({
+            success: false,
+            message: 'Failed to upload attachments',
+            error: uploadError.message
+          });
+        }
+      }
 
       // Store original response function
       const originalJson = res.json;
@@ -57,13 +78,11 @@ router.post(
               const jobDoc = await adminDb.collection('jobs').doc(jobId).get();
               if (jobDoc.exists) {
                 const jobData = { id: jobId, ...jobDoc.data() };
-                
-                // Send notification using enhanced service
                 await NotificationService.notifyQuoteSubmitted(quoteData, jobData);
-                console.log('Quote submission notification sent successfully');
+                console.log('Quote submission notification sent');
               }
             } catch (notificationError) {
-              console.error('Failed to send quote submission notification:', notificationError);
+              console.error('Failed to send quote notification:', notificationError);
             }
           })();
         }
@@ -80,18 +99,133 @@ router.post(
 );
 
 // GET all quotes for a specific job (for the contractor who posted it)
-router.get('/job/:jobId', authenticateToken, getQuotesForJob);
+router.get('/job/:jobId', authenticateToken, async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const userId = req.user.userId;
+    
+    console.log(`Quotes requested for job ${jobId} by user ${req.user.email}`);
+    
+    // First check if the user is the job poster (contractor)
+    const jobDoc = await adminDb.collection('jobs').doc(jobId).get();
+    if (!jobDoc.exists) {
+      return res.status(404).json({
+        success: false,
+        message: 'Job not found'
+      });
+    }
+    
+    const jobData = jobDoc.data();
+    
+    // Check if user is the contractor who posted the job or admin
+    const isAuthorized = jobData.posterId === userId || req.user.type === 'admin';
+    
+    if (!isAuthorized) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Only the job poster can view quotes for this job.'
+      });
+    }
+    
+    // Get all quotes for this job
+    const quotesSnapshot = await adminDb.collection('quotes')
+      .where('jobId', '==', jobId)
+      .orderBy('createdAt', 'desc')
+      .get();
+    
+    const quotes = quotesSnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+      fileCount: doc.data().attachments?.length || 0,
+      hasAttachments: (doc.data().attachments?.length || 0) > 0
+    }));
+    
+    console.log(`Found ${quotes.length} quotes for job ${jobId}`);
+    
+    res.json({
+      success: true,
+      quotes: quotes,
+      data: quotes,
+      jobInfo: {
+        id: jobId,
+        title: jobData.title,
+        status: jobData.status,
+        posterName: jobData.posterName
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error fetching quotes for job:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching quotes',
+      error: error.message
+    });
+  }
+});
 
 // GET all quotes submitted by a specific user (designer)
 router.get('/user/:userId', authenticateToken, getQuotesByUser);
 
 // GET a single quote by its ID with file access
-router.get('/:id', authenticateToken, getQuoteById);
+router.get('/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.userId;
+    
+    console.log(`Quote ${id} requested by user ${req.user.email}`);
+    
+    const quoteDoc = await adminDb.collection('quotes').doc(id).get();
+    if (!quoteDoc.exists) {
+      return res.status(404).json({
+        success: false,
+        message: 'Quote not found'
+      });
+    }
+    
+    const quoteData = quoteDoc.data();
+    
+    // Get job data to check authorization
+    const jobDoc = await adminDb.collection('jobs').doc(quoteData.jobId).get();
+    const jobData = jobDoc.exists ? jobDoc.data() : null;
+    
+    // Check authorization - quote creator, job poster, or admin can access
+    const isAuthorized = userId === quoteData.designerId || 
+                        userId === jobData?.posterId ||
+                        req.user.type === 'admin';
+    
+    if (!isAuthorized) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+    
+    res.json({
+      success: true,
+      quote: {
+        id: id,
+        ...quoteData,
+        fileCount: quoteData.attachments?.length || 0,
+        hasAttachments: (quoteData.attachments?.length || 0) > 0
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error fetching quote:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching quote',
+      error: error.message
+    });
+  }
+});
 
-// NEW: Get files for a specific quote
+// Get files for a specific quote (FIXED for contractor access)
 router.get('/:quoteId/files', authenticateToken, async (req, res) => {
   try {
     const { quoteId } = req.params;
+    const userId = req.user.userId;
     
     console.log(`Files requested for quote: ${quoteId} by user: ${req.user?.email}`);
     
@@ -106,12 +240,17 @@ router.get('/:quoteId/files', authenticateToken, async (req, res) => {
 
     const quoteData = quoteDoc.data();
     
-    // Check authorization - only quote creator, job poster, or admin can access files
-    const isAuthorized = req.user.userId === quoteData.designerId || 
-                        req.user.userId === quoteData.contractorId ||
+    // Get job data to check if user is the contractor
+    const jobDoc = await adminDb.collection('jobs').doc(quoteData.jobId).get();
+    const jobData = jobDoc.exists ? jobDoc.data() : null;
+    
+    // Check authorization - designer, contractor, or admin can access
+    const isAuthorized = userId === quoteData.designerId || 
+                        userId === jobData?.posterId ||
                         req.user.type === 'admin';
     
     if (!isAuthorized) {
+      console.log(`Access denied for user ${req.user.email} (${userId}). Job poster: ${jobData?.posterId}, Designer: ${quoteData.designerId}`);
       return res.status(403).json({
         success: false,
         message: 'Access denied'
@@ -121,11 +260,14 @@ router.get('/:quoteId/files', authenticateToken, async (req, res) => {
     const files = quoteData.attachments || [];
     const totalSize = files.reduce((sum, file) => sum + (file.size || 0), 0);
 
+    console.log(`Returning ${files.length} files for quote ${quoteId}`);
+
     res.json({
       success: true,
       files: files.map(file => ({
         name: file.name || file.originalname || 'Unknown File',
-        url: file.url,
+        url: file.url || file.downloadURL,
+        downloadUrl: file.url || file.downloadURL,
         size: file.size || 0,
         type: file.type || file.mimetype || 'application/octet-stream',
         uploadedAt: file.uploadedAt || quoteData.createdAt
@@ -152,10 +294,11 @@ router.get('/:quoteId/files', authenticateToken, async (req, res) => {
   }
 });
 
-// NEW: Download specific file from a quote
+// Download specific file from a quote (FIXED for contractor access)
 router.get('/:quoteId/files/:fileName/download', authenticateToken, async (req, res) => {
   try {
     const { quoteId, fileName } = req.params;
+    const userId = req.user.userId;
     
     console.log(`File download requested: ${fileName} from quote ${quoteId} by ${req.user.email}`);
     
@@ -170,9 +313,13 @@ router.get('/:quoteId/files/:fileName/download', authenticateToken, async (req, 
 
     const quoteData = quoteDoc.data();
     
+    // Get job data to check if user is the contractor
+    const jobDoc = await adminDb.collection('jobs').doc(quoteData.jobId).get();
+    const jobData = jobDoc.exists ? jobDoc.data() : null;
+    
     // Check authorization
-    const isAuthorized = req.user.userId === quoteData.designerId || 
-                        req.user.userId === quoteData.contractorId ||
+    const isAuthorized = userId === quoteData.designerId || 
+                        userId === jobData?.posterId ||
                         req.user.type === 'admin';
     
     if (!isAuthorized) {
@@ -201,8 +348,8 @@ router.get('/:quoteId/files/:fileName/download', authenticateToken, async (req, 
       success: true,
       file: {
         name: file.name || file.originalname,
-        url: file.url,
-        downloadUrl: file.url,
+        url: file.url || file.downloadURL,
+        downloadUrl: file.url || file.downloadURL,
         size: file.size || 0,
         type: file.type || file.mimetype || 'application/octet-stream'
       }
@@ -218,10 +365,11 @@ router.get('/:quoteId/files/:fileName/download', authenticateToken, async (req, 
   }
 });
 
-// NEW: Get quote details with all information including files
+// Get quote details with all information including files
 router.get('/:quoteId/details', authenticateToken, async (req, res) => {
   try {
     const { quoteId } = req.params;
+    const userId = req.user.userId;
     
     const quoteDoc = await adminDb.collection('quotes').doc(quoteId).get();
     if (!quoteDoc.exists) {
@@ -233,9 +381,13 @@ router.get('/:quoteId/details', authenticateToken, async (req, res) => {
     
     const quoteData = quoteDoc.data();
     
-    // Check authorization
-    const isAuthorized = req.user.userId === quoteData.designerId || 
-                        req.user.userId === quoteData.contractorId ||
+    // Get job data to check authorization
+    const jobDoc = await adminDb.collection('jobs').doc(quoteData.jobId).get();
+    const jobData = jobDoc.exists ? jobDoc.data() : null;
+    
+    // Check authorization - designer, contractor, or admin
+    const isAuthorized = userId === quoteData.designerId || 
+                        userId === jobData?.posterId ||
                         req.user.type === 'admin';
     
     if (!isAuthorized) {
@@ -266,25 +418,17 @@ router.get('/:quoteId/details', authenticateToken, async (req, res) => {
       }
     }
     
-    // Get job details if available
+    // Format job details
     let job = null;
-    if (quoteData.jobId) {
-      try {
-        const jobDoc = await adminDb.collection('jobs').doc(quoteData.jobId).get();
-        if (jobDoc.exists) {
-          const jobData = jobDoc.data();
-          job = {
-            id: jobDoc.id,
-            title: jobData.title,
-            description: jobData.description,
-            budget: jobData.budget,
-            posterName: jobData.posterName,
-            status: jobData.status
-          };
-        }
-      } catch (error) {
-        console.error('Error fetching job details:', error);
-      }
+    if (jobData) {
+      job = {
+        id: quoteData.jobId,
+        title: jobData.title,
+        description: jobData.description,
+        budget: jobData.budget,
+        posterName: jobData.posterName,
+        status: jobData.status
+      };
     }
     
     res.json({
@@ -294,7 +438,12 @@ router.get('/:quoteId/details', authenticateToken, async (req, res) => {
         ...quoteData,
         designer: designer,
         job: job,
-        attachments: quoteData.attachments || [],
+        attachments: (quoteData.attachments || []).map(file => ({
+          name: file.name || file.originalname || 'Unknown File',
+          url: file.url || file.downloadURL,
+          size: file.size || 0,
+          uploadedAt: file.uploadedAt
+        })),
         fileCount: quoteData.attachments?.length || 0
       }
     });
@@ -332,9 +481,9 @@ router.put('/:id/approve', authenticateToken, async (req, res) => {
     }
     const jobData = { id: jobId, ...jobDoc.data() };
 
-    // Check authorization
+    // Check authorization - only job poster can approve quotes
     if (jobData.posterId !== userId) {
-      return res.status(403).json({ success: false, error: 'Unauthorized' });
+      return res.status(403).json({ success: false, error: 'Unauthorized - only job poster can approve quotes' });
     }
 
     // Get all quotes for this job before updating (for rejection notifications)

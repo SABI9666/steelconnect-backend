@@ -7,8 +7,8 @@ import {
   getQuotesByUser, 
   getQuoteById, 
   approveQuote, 
-  deleteQuote,
-  updateQuote
+  deleteQuote
+  // REMOVED: updateQuote - function doesn't exist in controller
 } from '../controllers/quotecontroller.js';
 import { authenticateToken, isDesigner } from '../middleware/auth.js';
 import { 
@@ -89,7 +89,9 @@ router.get('/user/:userId', authenticateToken, getQuotesByUser);
 // GET a single quote by its ID
 router.get('/:id', authenticateToken, getQuoteById);
 
-// Enhanced quote update with file support
+// REMOVED: Quote update route since updateQuote function doesn't exist
+// If you need this functionality, you'll need to implement updateQuote in the controller first
+/*
 router.put(
   '/:id', 
   authenticateToken, 
@@ -98,8 +100,9 @@ router.put(
   handleUploadError,
   validatePDFFiles,
   logUploadDetails,
-  updateQuote
+  updateQuote  // This function doesn't exist
 );
+*/
 
 // Enhanced quote approval with notifications
 router.put('/:id/approve', authenticateToken, async (req, res) => {

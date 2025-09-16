@@ -1,5 +1,4 @@
-
-// src/routes/admin.js - COMPLETE FINAL VERSION with all features
+// src/routes/admin.js - COMPLETE FINAL VERSION with quote file viewing support
 import express from 'express';
 import multer from 'multer';
 import { authenticateToken, isAdmin } from '../middleware/authMiddleware.js';
@@ -1004,30 +1003,266 @@ router.delete('/estimations/:id', async (req, res) => {
     }
 });
 
-// --- GENERAL CONTENT MANAGEMENT (JOBS, QUOTES) ---
-const createAdminCrudEndpoints = (collectionName) => {
-    router.get(`/${collectionName}`, async (req, res) => {
-        try {
-            const snapshot = await adminDb.collection(collectionName).orderBy('createdAt', 'desc').get();
-            const items = snapshot.docs.map(doc => ({ _id: doc.id, ...doc.data() }));
-            res.json({ success: true, [collectionName]: items });
-        } catch (e) { 
-            res.status(500).json({ success: false, message: `Error fetching ${collectionName}` }); 
+// --- ENHANCED QUOTES MANAGEMENT WITH FILE VIEWING ---
+router.get('/quotes', async (req, res) => {
+    try {
+        console.log('Fetching quotes with detailed information...');
+        
+        const snapshot = await adminDb.collection('quotes').orderBy('createdAt', 'desc').get();
+        const quotes = [];
+        
+        for (const doc of snapshot.docs) {
+            const data = doc.data();
+            
+            // Get designer details
+            let designer = null;
+            if (data.designerId) {
+                try {
+                    const userDoc = await adminDb.collection('users').doc(data.designerId).get();
+                    if (userDoc.exists) {
+                        const userData = userDoc.data();
+                        designer = {
+                            _id: userDoc.id,
+                            name: userData.name || 'Unknown',
+                            email: userData.email || 'Unknown',
+                            type: userData.type || 'Unknown'
+                        };
+                    }
+                } catch (userError) {
+                    console.error(`Error fetching designer ${data.designerId}:`, userError);
+                }
+            }
+            
+            // Get job details
+            let job = null;
+            if (data.jobId) {
+                try {
+                    const jobDoc = await adminDb.collection('jobs').doc(data.jobId).get();
+                    if (jobDoc.exists) {
+                        const jobData = jobDoc.data();
+                        job = {
+                            _id: jobDoc.id,
+                            title: jobData.title || 'Unknown Job',
+                            budget: jobData.budget || 'N/A',
+                            posterName: jobData.posterName || 'Unknown'
+                        };
+                    }
+                } catch (jobError) {
+                    console.error(`Error fetching job ${data.jobId}:`, jobError);
+                }
+            }
+            
+            // Get contractor details
+            let contractor = null;
+            if (data.contractorId) {
+                try {
+                    const userDoc = await adminDb.collection('users').doc(data.contractorId).get();
+                    if (userDoc.exists) {
+                        const userData = userDoc.data();
+                        contractor = {
+                            _id: userDoc.id,
+                            name: userData.name || 'Unknown',
+                            email: userData.email || 'Unknown',
+                            type: userData.type || 'Unknown'
+                        };
+                    }
+                } catch (userError) {
+                    console.error(`Error fetching contractor ${data.contractorId}:`, userError);
+                }
+            }
+            
+            const quote = {
+                _id: doc.id,
+                jobId: data.jobId,
+                jobTitle: data.jobTitle || (job ? job.title : 'Unknown Job'),
+                designerId: data.designerId,
+                designerName: data.designerName || (designer ? designer.name : 'Unknown'),
+                contractorId: data.contractorId,
+                quoteAmount: data.quoteAmount,
+                timeline: data.timeline,
+                description: data.description,
+                status: data.status || 'submitted',
+                attachments: data.attachments || [], // NEW: Include attachments
+                createdAt: data.createdAt,
+                updatedAt: data.updatedAt,
+                approvedAt: data.approvedAt,
+                rejectedAt: data.rejectedAt,
+                // Additional details for admin view
+                designer: designer,
+                contractor: contractor,
+                job: job,
+                userEmail: designer ? designer.email : data.designerEmail,
+                clientEmail: contractor ? contractor.email : data.contractorEmail
+            };
+            
+            quotes.push(quote);
         }
-    });
+        
+        console.log(`Returning ${quotes.length} quotes with file details`);
+        res.json({ success: true, quotes });
+    } catch (error) {
+        console.error("Enhanced Fetch Quotes Error:", error);
+        res.status(500).json({ success: false, message: 'Error fetching quotes' });
+    }
+});
 
-    router.delete(`/${collectionName}/:id`, async (req, res) => {
-        try {
-            await adminDb.collection(collectionName).doc(req.params.id).delete();
-            res.json({ success: true, message: `${collectionName.slice(0, -1)} deleted successfully.` });
-        } catch (e) { 
-            res.status(500).json({ success: false, message: `Error deleting item` }); 
+// NEW: Get quote files endpoint
+router.get('/quotes/:quoteId/files', async (req, res) => {
+    try {
+        console.log(`Fetching files for quote ${req.params.quoteId}`);
+        
+        const quoteDoc = await adminDb.collection('quotes').doc(req.params.quoteId).get();
+        if (!quoteDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Quote not found' });
         }
-    });
-};
+        
+        const quoteData = quoteDoc.data();
+        const attachments = quoteData.attachments || [];
+        
+        // Add additional metadata for admin view
+        const filesWithMetadata = attachments.map((file, index) => ({
+            index: index,
+            name: file.name || file.originalname || `Attachment ${index + 1}`,
+            url: file.url || file.downloadURL,
+            size: file.size || 0,
+            uploadedAt: file.uploadedAt || quoteData.createdAt,
+            type: file.mimetype || getFileTypeFromName(file.name || file.originalname || '')
+        }));
+        
+        res.json({ 
+            success: true, 
+            files: filesWithMetadata,
+            quoteInfo: {
+                id: req.params.quoteId,
+                jobTitle: quoteData.jobTitle,
+                designerName: quoteData.designerName,
+                quoteAmount: quoteData.quoteAmount,
+                status: quoteData.status
+            }
+        });
+        
+    } catch (error) {
+        console.error("Fetch Quote Files Error:", error);
+        res.status(500).json({ success: false, message: 'Error fetching quote files' });
+    }
+});
 
-// Create endpoints for Jobs and Quotes
-createAdminCrudEndpoints('jobs');
-createAdminCrudEndpoints('quotes');
+// NEW: Get quote details with all information
+router.get('/quotes/:quoteId/details', async (req, res) => {
+    try {
+        const quoteDoc = await adminDb.collection('quotes').doc(req.params.quoteId).get();
+        if (!quoteDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Quote not found' });
+        }
+        
+        const quoteData = quoteDoc.data();
+        
+        // Get designer details
+        let designer = null;
+        if (quoteData.designerId) {
+            try {
+                const userDoc = await adminDb.collection('users').doc(quoteData.designerId).get();
+                if (userDoc.exists) {
+                    const userData = userDoc.data();
+                    designer = {
+                        id: userDoc.id,
+                        name: userData.name,
+                        email: userData.email,
+                        type: userData.type,
+                        phone: userData.phone,
+                        company: userData.companyName
+                    };
+                }
+            } catch (error) {
+                console.error('Error fetching designer details:', error);
+            }
+        }
+        
+        // Get job details
+        let job = null;
+        if (quoteData.jobId) {
+            try {
+                const jobDoc = await adminDb.collection('jobs').doc(quoteData.jobId).get();
+                if (jobDoc.exists) {
+                    const jobData = jobDoc.data();
+                    job = {
+                        id: jobDoc.id,
+                        title: jobData.title,
+                        description: jobData.description,
+                        budget: jobData.budget,
+                        posterName: jobData.posterName,
+                        status: jobData.status
+                    };
+                }
+            } catch (error) {
+                console.error('Error fetching job details:', error);
+            }
+        }
+        
+        res.json({
+            success: true,
+            quote: {
+                id: req.params.quoteId,
+                ...quoteData,
+                designer: designer,
+                job: job,
+                attachments: quoteData.attachments || []
+            }
+        });
+        
+    } catch (error) {
+        console.error("Get Quote Details Error:", error);
+        res.status(500).json({ success: false, message: 'Error fetching quote details' });
+    }
+});
+
+// Helper function to determine file type from filename
+function getFileTypeFromName(filename) {
+    if (!filename) return 'unknown';
+    
+    const ext = filename.toLowerCase().split('.').pop();
+    const typeMap = {
+        'pdf': 'application/pdf',
+        'doc': 'application/msword',
+        'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'xls': 'application/vnd.ms-excel',
+        'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'txt': 'text/plain',
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'png': 'image/png'
+    };
+    
+    return typeMap[ext] || 'application/octet-stream';
+}
+
+// --- GENERAL CONTENT MANAGEMENT (JOBS) ---
+router.get('/jobs', async (req, res) => {
+    try {
+        const snapshot = await adminDb.collection('jobs').orderBy('createdAt', 'desc').get();
+        const items = snapshot.docs.map(doc => ({ _id: doc.id, ...doc.data() }));
+        res.json({ success: true, jobs: items });
+    } catch (e) { 
+        res.status(500).json({ success: false, message: `Error fetching jobs` }); 
+    }
+});
+
+router.delete('/jobs/:id', async (req, res) => {
+    try {
+        await adminDb.collection('jobs').doc(req.params.id).delete();
+        res.json({ success: true, message: `Job deleted successfully.` });
+    } catch (e) { 
+        res.status(500).json({ success: false, message: `Error deleting item` }); 
+    }
+});
+
+router.delete('/quotes/:id', async (req, res) => {
+    try {
+        await adminDb.collection('quotes').doc(req.params.id).delete();
+        res.json({ success: true, message: `Quote deleted successfully.` });
+    } catch (e) { 
+        res.status(500).json({ success: false, message: `Error deleting item` }); 
+    }
+});
 
 export default router;

@@ -256,7 +256,7 @@ router.get('/contractor/:contractorEmail', authenticateToken, async (req, res) =
   }
 });
 
-// NEW: Get specific estimation details for contractor
+// Get specific estimation details for contractor
 router.get('/:estimationId/details', authenticateToken, async (req, res) => {
   try {
     const { estimationId } = req.params;
@@ -316,7 +316,7 @@ router.get('/:estimationId/details', authenticateToken, async (req, res) => {
   }
 });
 
-// NEW: Download estimation result file for contractor
+// FIXED: Download estimation result file for contractor - DIRECT DOWNLOAD
 router.get('/:estimationId/result', authenticateToken, async (req, res) => {
   try {
     const { estimationId } = req.params;
@@ -325,7 +325,6 @@ router.get('/:estimationId/result', authenticateToken, async (req, res) => {
     const estimationDoc = await adminDb.collection('estimations').doc(estimationId).get();
 
     if (!estimationDoc.exists) {
-      console.log(`[CONTRACTOR] Estimation not found: ${estimationId}`);
       return res.status(404).json({
         success: false,
         message: 'Estimation not found'
@@ -334,30 +333,67 @@ router.get('/:estimationId/result', authenticateToken, async (req, res) => {
 
     const data = estimationDoc.data();
 
-    // Verify this estimation belongs to the current contractor
+    // Verify access
     const isOwner = data.contractorEmail === req.user.email || data.contractorId === req.user.uid;
     const isAdmin = req.user.type === 'admin';
 
     if (!isOwner && !isAdmin) {
-      console.log(`[CONTRACTOR] Access denied. Estimation belongs to: ${data.contractorEmail}, requested by: ${req.user.email}`);
       return res.status(403).json({
         success: false,
-        message: 'Access denied to this estimation'
+        message: 'Access denied'
       });
     }
 
-    // Check if result file exists
+    // Check if result exists
     if (!data.resultFile || !data.resultFile.url) {
-      console.log(`[CONTRACTOR] No result file available for estimation: ${estimationId}`);
       return res.status(404).json({
         success: false,
-        message: 'No result file available for this estimation yet. Please wait for admin to upload the result.'
+        message: 'Result file not available yet'
       });
     }
 
-    console.log(`[CONTRACTOR] Providing download info for result file: ${data.resultFile.name || data.resultFile.originalname}`);
+    console.log(`[CONTRACTOR] Redirecting to Firebase Storage URL for direct download`);
+    
+    // Set proper headers for file download
+    const fileName = data.resultFile.name || data.resultFile.originalname || 'estimation_result.pdf';
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Type', data.resultFile.mimetype || 'application/pdf');
+    
+    // Redirect to the actual file URL for direct download
+    res.redirect(data.resultFile.url);
 
-    // Return the download information
+  } catch (error) {
+    console.error("[CONTRACTOR] Download Result Error:", error);
+    res.status(500).json({
+      success: false,
+      message: 'Error downloading file'
+    });
+  }
+});
+
+// FIXED: Alternative endpoint for getting download info (for frontend handling)
+router.get('/:estimationId/result-info', authenticateToken, async (req, res) => {
+  try {
+    const { estimationId } = req.params;
+    const estimationDoc = await adminDb.collection('estimations').doc(estimationId).get();
+
+    if (!estimationDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Estimation not found' });
+    }
+
+    const data = estimationDoc.data();
+    const isOwner = data.contractorEmail === req.user.email || data.contractorId === req.user.uid;
+    const isAdmin = req.user.type === 'admin';
+
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    if (!data.resultFile || !data.resultFile.url) {
+      return res.status(404).json({ success: false, message: 'Result file not available' });
+    }
+
+    // Return download information for frontend
     res.json({
       success: true,
       downloadInfo: {
@@ -379,16 +415,15 @@ router.get('/:estimationId/result', authenticateToken, async (req, res) => {
     });
 
   } catch (error) {
-    console.error("[CONTRACTOR] Download Result Error:", error);
+    console.error("Get Result Info Error:", error);
     res.status(500).json({
       success: false,
-      message: 'Error accessing result file',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      message: 'Error getting result info'
     });
   }
 });
 
-// NEW: Alternative direct download endpoint for contractors
+// FIXED: Direct download endpoint for contractors (alternative method)
 router.get('/:estimationId/download-result', authenticateToken, async (req, res) => {
   try {
     const { estimationId } = req.params;
@@ -423,6 +458,11 @@ router.get('/:estimationId/download-result', authenticateToken, async (req, res)
         message: 'Result file not available yet'
       });
     }
+
+    // Set download headers
+    const fileName = data.resultFile.name || data.resultFile.originalname || 'estimation_result.pdf';
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Type', data.resultFile.mimetype || 'application/pdf');
 
     // Redirect to the Firebase Storage URL for direct download
     console.log(`[CONTRACTOR] Redirecting to Firebase Storage URL for direct download`);
@@ -542,7 +582,7 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
   }
 });
 
-// Get files for specific estimation
+// FIXED: Get files for specific estimation with proper authorization
 router.get('/:estimationId/files', authenticateToken, async (req, res) => {
   try {
     const { estimationId } = req.params;
@@ -558,7 +598,10 @@ router.get('/:estimationId/files', authenticateToken, async (req, res) => {
     const estimationData = estimationDoc.data();
     
     // Check authorization
-    if (req.user.type !== 'admin' && req.user.email !== estimationData.contractorEmail) {
+    const isOwner = req.user.email === estimationData.contractorEmail || req.user.userId === estimationData.contractorId;
+    const isAdmin = req.user.type === 'admin';
+    
+    if (!isOwner && !isAdmin) {
       return res.status(403).json({
         success: false,
         message: 'Access denied'
@@ -566,14 +609,31 @@ router.get('/:estimationId/files', authenticateToken, async (req, res) => {
     }
 
     const files = estimationData.uploadedFiles || [];
-    const totalSize = files.reduce((sum, file) => sum + (file.size || 0), 0);
+    
+    // Format files with consistent structure
+    const formattedFiles = files.map((file, index) => ({
+      index: index,
+      name: file.name || file.originalname || `File ${index + 1}`,
+      url: file.url || file.downloadURL,
+      downloadUrl: file.url || file.downloadURL,
+      size: file.size || 0,
+      type: file.mimetype || 'application/pdf',
+      uploadedAt: file.uploadedAt || estimationData.createdAt
+    }));
+    
+    const totalSize = formattedFiles.reduce((sum, file) => sum + (file.size || 0), 0);
 
     res.json({
       success: true,
-      files: files,
-      fileCount: files.length,
+      files: formattedFiles,
+      fileCount: formattedFiles.length,
       totalSize: totalSize,
-      totalSizeMB: (totalSize / (1024 * 1024)).toFixed(2)
+      totalSizeMB: (totalSize / (1024 * 1024)).toFixed(2),
+      estimationInfo: {
+        id: estimationId,
+        projectTitle: estimationData.projectTitle,
+        status: estimationData.status
+      }
     });
 
   } catch (error) {
@@ -586,7 +646,7 @@ router.get('/:estimationId/files', authenticateToken, async (req, res) => {
   }
 });
 
-// ENHANCED: File download with proper authorization
+// FIXED: File download with proper authorization and direct download
 router.get('/:estimationId/files/:fileName/download', authenticateToken, async (req, res) => {
   try {
     const { estimationId, fileName } = req.params;
@@ -604,7 +664,10 @@ router.get('/:estimationId/files/:fileName/download', authenticateToken, async (
     const estimationData = estimationDoc.data();
     
     // Check authorization
-    if (req.user.type !== 'admin' && req.user.email !== estimationData.contractorEmail) {
+    const isOwner = req.user.email === estimationData.contractorEmail || req.user.userId === estimationData.contractorId;
+    const isAdmin = req.user.type === 'admin';
+    
+    if (!isOwner && !isAdmin) {
       return res.status(403).json({
         success: false,
         message: 'Access denied'
@@ -623,19 +686,23 @@ router.get('/:estimationId/files/:fileName/download', authenticateToken, async (
       });
     }
     
-    console.log(`Providing download URL for file: ${fileName}`);
+    const fileUrl = file.url || file.downloadURL;
+    if (!fileUrl) {
+      return res.status(404).json({
+        success: false,
+        message: 'File URL not available'
+      });
+    }
     
-    // Return the download URL instead of redirecting
-    res.json({
-      success: true,
-      file: {
-        name: file.originalname || file.name,
-        url: file.url,
-        downloadUrl: file.url,
-        size: file.size,
-        type: file.mimetype || 'application/pdf'
-      }
-    });
+    console.log(`Providing direct download for file: ${fileName}`);
+    
+    // Set proper headers and redirect to file
+    const downloadFileName = file.originalname || file.name || fileName;
+    res.setHeader('Content-Disposition', `attachment; filename="${downloadFileName}"`);
+    res.setHeader('Content-Type', file.mimetype || 'application/pdf');
+    
+    // Redirect to the actual file URL
+    res.redirect(fileUrl);
 
   } catch (error) {
     console.error('Error providing file download:', error);

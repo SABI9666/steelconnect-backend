@@ -281,3 +281,4 @@ export default {
   uploadMultipleFilesToFirebase,
   validateFileUpload,
   deleteFileFromFirebase
+};

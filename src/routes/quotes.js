@@ -7,8 +7,7 @@ import {
   getQuotesByUser, 
   getQuoteById, 
   approveQuote, 
-  deleteQuote,
-  updateQuote
+  deleteQuote
 } from '../controllers/quotecontroller.js';
 import { authenticateToken, isDesigner } from '../middleware/auth.js';
 import { 

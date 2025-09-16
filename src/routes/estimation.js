@@ -1,10 +1,10 @@
-// estimation.js - Updated for multiple PDF uploads (up to 10 files, 15MB each)
+// estimation.js - Updated with fixed imports and file access
 import express from 'express';
 import multer from 'multer';
 import { authenticateToken, isContractor, isAdmin } from '../middleware/authMiddleware.js';
 import { 
   adminDb, 
-  adminStorage, 
+  storage,  // FIXED: Changed from adminStorage to storage
   uploadMultipleFilesToFirebase, 
   validateFileUpload, 
   deleteFileFromFirebase,
@@ -115,13 +115,13 @@ router.post('/contractor/submit', authenticateToken, isContractor, upload.array(
     try {
       uploadedFiles = await uploadMultipleFilesToFirebase(
         files, 
-        FILE_UPLOAD_CONFIG.uploadPaths.estimations, 
+        'estimation-files', // Use string path instead of config object
         req.user.userId
       );
       
-      console.log(`✅ Successfully uploaded ${uploadedFiles.length} files`);
+      console.log(`Successfully uploaded ${uploadedFiles.length} files`);
     } catch (uploadError) {
-      console.error('❌ File upload failed:', uploadError);
+      console.error('File upload failed:', uploadError);
       return res.status(500).json({
         success: false,
         message: 'File upload failed',
@@ -151,7 +151,7 @@ router.post('/contractor/submit', authenticateToken, isContractor, upload.array(
 
     const estimationRef = await adminDb.collection('estimations').add(estimationData);
     
-    console.log(`✅ Estimation created with ID: ${estimationRef.id}`);
+    console.log(`Estimation created with ID: ${estimationRef.id}`);
     
     // Prepare response (don't expose file URLs for security)
     const responseData = {
@@ -163,7 +163,7 @@ router.post('/contractor/submit', authenticateToken, isContractor, upload.array(
       fileCount: uploadedFiles.length,
       totalFileSize: estimationData.totalFileSize,
       uploadedFiles: uploadedFiles.map(f => ({
-        name: f.originalname,
+        name: f.originalname || f.name,
         size: f.size,
         type: f.mimetype,
         uploadedAt: f.uploadedAt
@@ -180,7 +180,7 @@ router.post('/contractor/submit', authenticateToken, isContractor, upload.array(
     });
 
   } catch (error) {
-    console.error('❌ Error submitting estimation:', error);
+    console.error('Error submitting estimation:', error);
     res.status(500).json({
       success: false,
       message: 'Error submitting estimation request',
@@ -189,7 +189,7 @@ router.post('/contractor/submit', authenticateToken, isContractor, upload.array(
   }
 });
 
-// Get contractor's estimations with file information
+// FIXED: Get contractor's estimations with file information
 router.get('/contractor/:contractorEmail', authenticateToken, async (req, res) => {
   try {
     const { contractorEmail } = req.params;
@@ -226,7 +226,8 @@ router.get('/contractor/:contractorEmail', authenticateToken, async (req, res) =
 
     res.json({
       success: true,
-      estimations: estimations
+      estimations: estimations,
+      data: estimations // ADDED: For consistency with other endpoints
     });
 
   } catch (error) {
@@ -284,7 +285,7 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
     // Upload result file
     const uploadedFiles = await uploadMultipleFilesToFirebase(
       [file], 
-      FILE_UPLOAD_CONFIG.uploadPaths.results, 
+      'estimation-results', 
       estimationId
     );
     
@@ -306,7 +307,7 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
     
     await adminDb.collection('estimations').doc(estimationId).update(updateData);
     
-    console.log(`✅ Result uploaded for estimation ${estimationId}`);
+    console.log(`Result uploaded for estimation ${estimationId}`);
 
     // Send email notification to contractor
     try {
@@ -315,9 +316,9 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
         { name: estimationData.contractorName, email: estimationData.contractorEmail },
         { id: estimationId, title: estimationData.projectTitle, amount: updateData.estimatedAmount }
       );
-      console.log(`📧 Email notification sent successfully to ${estimationData.contractorEmail}`);
+      console.log(`Email notification sent successfully to ${estimationData.contractorEmail}`);
     } catch (emailError) {
-      console.error(`❌ Failed to send estimation result email for ${estimationId}:`, emailError.message);
+      console.error(`Failed to send estimation result email for ${estimationId}:`, emailError.message);
     }
     
     res.json({
@@ -325,7 +326,7 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
       message: 'Estimation result uploaded successfully',
       data: {
         resultFile: {
-          name: resultFile.originalname,
+          name: resultFile.originalname || resultFile.name,
           size: resultFile.size,
           type: resultFile.mimetype,
           uploadedAt: resultFile.uploadedAt
@@ -335,7 +336,7 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
     });
 
   } catch (error) {
-    console.error('❌ Error uploading estimation result:', error);
+    console.error('Error uploading estimation result:', error);
     res.status(500).json({
       success: false,
       message: 'Error uploading estimation result',
@@ -388,7 +389,7 @@ router.get('/:estimationId/files', authenticateToken, async (req, res) => {
   }
 });
 
-// Enhanced file download with proper authorization
+// ENHANCED: File download with proper authorization
 router.get('/:estimationId/files/:fileName/download', authenticateToken, async (req, res) => {
   try {
     const { estimationId, fileName } = req.params;
@@ -414,7 +415,10 @@ router.get('/:estimationId/files/:fileName/download', authenticateToken, async (
     }
     
     // Find the file in uploadedFiles
-    const file = estimationData.uploadedFiles?.find(f => f.originalname === fileName);
+    const file = estimationData.uploadedFiles?.find(f => 
+      (f.originalname === fileName) || (f.name === fileName)
+    );
+    
     if (!file) {
       return res.status(404).json({
         success: false,
@@ -422,76 +426,25 @@ router.get('/:estimationId/files/:fileName/download', authenticateToken, async (
       });
     }
     
-    console.log(`✅ Redirecting to file URL for download: ${fileName}`);
+    console.log(`Providing download URL for file: ${fileName}`);
     
-    // Set headers for file download
-    res.setHeader('Content-Disposition', `attachment; filename="${file.originalname}"`);
-    res.setHeader('Content-Type', file.mimetype || 'application/pdf');
-    
-    // Redirect to the file URL
-    res.redirect(file.url);
-
-  } catch (error) {
-    console.error('❌ Error downloading file:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error downloading file',
-      error: error.message
-    });
-  }
-});
-
-// Bulk download all files for an estimation
-router.get('/:estimationId/files/download-all', authenticateToken, async (req, res) => {
-  try {
-    const { estimationId } = req.params;
-    
-    console.log(`Bulk download requested for estimation ${estimationId} by ${req.user.email}`);
-    
-    const estimationDoc = await adminDb.collection('estimations').doc(estimationId).get();
-    if (!estimationDoc.exists) {
-      return res.status(404).json({
-        success: false,
-        message: 'Estimation not found'
-      });
-    }
-    
-    const estimationData = estimationDoc.data();
-    
-    // Check authorization
-    if (req.user.type !== 'admin' && req.user.email !== estimationData.contractorEmail) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied'
-      });
-    }
-    
-    const files = estimationData.uploadedFiles || [];
-    if (files.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'No files found for this estimation'
-      });
-    }
-    
-    // For now, return the list of file URLs for frontend to handle bulk download
-    // In production, you might want to create a ZIP file
+    // Return the download URL instead of redirecting
     res.json({
       success: true,
-      message: `${files.length} files available for download`,
-      files: files.map(file => ({
-        name: file.originalname,
+      file: {
+        name: file.originalname || file.name,
         url: file.url,
+        downloadUrl: file.url,
         size: file.size,
-        type: file.mimetype
-      }))
+        type: file.mimetype || 'application/pdf'
+      }
     });
 
   } catch (error) {
-    console.error('❌ Error in bulk download:', error);
+    console.error('Error providing file download:', error);
     res.status(500).json({
       success: false,
-      message: 'Error preparing bulk download',
+      message: 'Error providing file download',
       error: error.message
     });
   }
@@ -536,7 +489,7 @@ router.delete('/:estimationId', authenticateToken, async (req, res) => {
         try {
           await deleteFileFromFirebase(file.path || file.filename);
         } catch (fileDeleteError) {
-          console.error(`Failed to delete file ${file.originalname}:`, fileDeleteError);
+          console.error(`Failed to delete file ${file.originalname || file.name}:`, fileDeleteError);
           // Continue with other files even if one fails
         }
       }

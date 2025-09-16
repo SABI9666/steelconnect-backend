@@ -1,5 +1,5 @@
 // src/utils/firebaseStorage.js - Firebase Storage Upload Utility
-import { storage } from '../config/firebase.js'; // Changed from adminStorage to storage
+import { storage } from '../config/firebase.js'; // Fixed: Changed from adminStorage to storage
 
 /**
  * Upload file to Firebase Storage

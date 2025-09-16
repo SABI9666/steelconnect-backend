@@ -1,15 +1,38 @@
-// src/config/firebase.js - Clean configuration without circular imports
+// src/config/firebase.js - Clean configuration with Base64 service account support
 import admin from 'firebase-admin';
 import { getStorage } from 'firebase-admin/storage';
 
 // Initialize Firebase Admin
 if (!admin.apps.length) {
-    admin.initializeApp({
-        credential: admin.credential.cert({
+    let credential;
+    
+    if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64) {
+        // Production: Use Base64 encoded service account key
+        try {
+            const serviceAccountBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64;
+            const serviceAccountJson = Buffer.from(serviceAccountBase64, 'base64').toString('utf-8');
+            const serviceAccount = JSON.parse(serviceAccountJson);
+            
+            credential = admin.credential.cert(serviceAccount);
+            console.log('Firebase initialized with Base64 service account key');
+        } catch (error) {
+            console.error('Error parsing Base64 service account:', error);
+            throw new Error('Invalid FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 format');
+        }
+    } else if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
+        // Development: Use individual environment variables
+        credential = admin.credential.cert({
             projectId: process.env.FIREBASE_PROJECT_ID,
             clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-            privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n')
-        }),
+            privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+        });
+        console.log('Firebase initialized with individual environment variables');
+    } else {
+        throw new Error('Firebase credentials not found. Please set either FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 or individual Firebase environment variables.');
+    }
+
+    admin.initializeApp({
+        credential: credential,
         storageBucket: process.env.FIREBASE_STORAGE_BUCKET
     });
 }
@@ -17,7 +40,7 @@ if (!admin.apps.length) {
 // Export Firebase services
 export const adminDb = admin.firestore();
 export const adminAuth = admin.auth();
-export const storage = getStorage(); // Changed from adminStorage to storage for consistency
+export const storage = getStorage();
 
 // File upload configuration
 export const FILE_UPLOAD_CONFIG = {
@@ -61,4 +84,3 @@ export const FILE_UPLOAD_CONFIG = {
 
 export { admin };
 export default admin;
-

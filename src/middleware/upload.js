@@ -1,8 +1,8 @@
-// middleware/upload.js - Fixed version for job file uploads
+// middleware/upload.js - Minimal update to add quote support without changing jobs/estimation
 import multer from 'multer';
 import { FILE_UPLOAD_CONFIG, uploadMultipleFilesToFirebase, validateFileUpload, deleteFileFromFirebase } from '../config/firebase.js';
 
-// Updated multer configuration to support job file uploads (not just PDFs)
+// Updated multer configuration to support job AND quote file uploads
 export const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -15,32 +15,57 @@ export const upload = multer({
   fileFilter: (req, file, cb) => {
     console.log(`Processing file: ${file.originalname}, MIME: ${file.mimetype}`);
     
-    // Define allowed file types for job uploads (expanded from PDF-only)
-    const allowedJobMimeTypes = [
-      'application/pdf',
-      'application/msword',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'image/jpeg',
-      'image/jpg', 
-      'image/png',
-      'application/dwg', // DWG files
-      'application/acad', // AutoCAD files
-      'image/vnd.dwg' // Alternative DWG MIME type
-    ];
+    // Determine upload type based on URL
+    const isEstimationUpload = req.originalUrl.includes('/estimation');
+    const isQuoteUpload = req.originalUrl.includes('/quotes');
     
-    const allowedJobExtensions = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'dwg'];
-    
-    // Check MIME type
-    if (!allowedJobMimeTypes.includes(file.mimetype)) {
-      console.log(`Rejected file ${file.originalname}: Invalid MIME type ${file.mimetype}`);
-      return cb(new Error(`File type not allowed. Supported formats: PDF, DOC, DOCX, JPG, PNG, DWG. Received: ${file.mimetype}`), false);
-    }
-    
-    // Check file extension as additional validation
-    const ext = file.originalname.toLowerCase().split('.').pop();
-    if (!allowedJobExtensions.includes(ext)) {
-      console.log(`Rejected file ${file.originalname}: Invalid extension .${ext}`);
-      return cb(new Error(`File extension not allowed. Supported formats: ${allowedJobExtensions.join(', ')}. File extension: .${ext}`), false);
+    if (isEstimationUpload) {
+      // UNCHANGED: Strict PDF-only for estimations
+      if (!FILE_UPLOAD_CONFIG.allowedMimeTypes.includes(file.mimetype)) {
+        console.log(`Rejected estimation file ${file.originalname}: Invalid MIME type ${file.mimetype}`);
+        return cb(new Error(`Only PDF files are allowed for estimations. Received: ${file.mimetype}`), false);
+      }
+      
+      const ext = file.originalname.toLowerCase().split('.').pop();
+      if (!FILE_UPLOAD_CONFIG.allowedExtensions.map(e => e.replace('.', '')).includes(ext)) {
+        console.log(`Rejected estimation file ${file.originalname}: Invalid extension .${ext}`);
+        return cb(new Error(`Only PDF files are allowed for estimations. File extension: .${ext}`), false);
+      }
+    } else {
+      // EXPANDED: Support multiple file types for jobs AND quotes
+      const allowedMimeTypes = [
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'image/jpeg',
+        'image/jpg', 
+        'image/png',
+        'application/dwg', // DWG files
+        'application/acad', // AutoCAD files
+        'image/vnd.dwg', // Alternative DWG MIME type
+        // ADDED: Additional types for quotes
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'text/plain'
+      ];
+      
+      const allowedExtensions = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'dwg', 'xls', 'xlsx', 'txt'];
+      
+      // Check MIME type
+      if (!allowedMimeTypes.includes(file.mimetype)) {
+        console.log(`Rejected file ${file.originalname}: Invalid MIME type ${file.mimetype}`);
+        const supportedFormats = isQuoteUpload ? 
+          'PDF, DOC, DOCX, JPG, PNG, DWG, XLS, XLSX, TXT' : 
+          'PDF, DOC, DOCX, JPG, PNG, DWG';
+        return cb(new Error(`File type not allowed. Supported formats: ${supportedFormats}. Received: ${file.mimetype}`), false);
+      }
+      
+      // Check file extension as additional validation
+      const ext = file.originalname.toLowerCase().split('.').pop();
+      if (!allowedExtensions.includes(ext)) {
+        console.log(`Rejected file ${file.originalname}: Invalid extension .${ext}`);
+        return cb(new Error(`File extension not allowed. Supported formats: ${allowedExtensions.join(', ')}. File extension: .${ext}`), false);
+      }
     }
     
     console.log(`Accepted file: ${file.originalname}`);
@@ -48,24 +73,21 @@ export const upload = multer({
   }
 });
 
-// Single file upload function (wrapper around multiple file upload)
+// UNCHANGED: Single file upload function
 export async function uploadToFirebase(file, folder, userId = null) {
   try {
-    // Convert single file to array format for the multiple upload function
     const files = [file];
     const uploadedFiles = await uploadMultipleFilesToFirebase(files, folder, userId);
-    
-    // Return just the single file result
     return uploadedFiles[0];
   } catch (error) {
     throw new Error(`Single file upload failed: ${error.message}`);
   }
 }
 
-// Re-export Firebase utilities for convenience
+// UNCHANGED: Re-export Firebase utilities
 export { uploadMultipleFilesToFirebase, validateFileUpload, deleteFileFromFirebase, FILE_UPLOAD_CONFIG };
 
-// Enhanced error handling middleware
+// UNCHANGED: Error handling middleware
 export const handleUploadError = (error, req, res, next) => {
   console.error('Upload error:', error);
   
@@ -101,8 +123,7 @@ export const handleUploadError = (error, req, res, next) => {
     }
   }
   
-  // Handle custom file validation errors
-  if (error.message.includes('File type not allowed') || error.message.includes('File extension not allowed')) {
+  if (error.message.includes('File type not allowed') || error.message.includes('File extension not allowed') || error.message.includes('Only PDF files are allowed')) {
     return res.status(400).json({
       success: false,
       error: error.message,
@@ -110,7 +131,6 @@ export const handleUploadError = (error, req, res, next) => {
     });
   }
   
-  // Handle Firebase upload errors
   if (error.message.includes('Firebase upload failed') || error.message.includes('Failed to upload')) {
     return res.status(500).json({
       success: false,
@@ -119,31 +139,30 @@ export const handleUploadError = (error, req, res, next) => {
     });
   }
   
-  // Generic error
   next(error);
 };
 
-// Updated validation middleware for job files (not just PDFs)
+// UNCHANGED: File requirements validation
 export const validateFileRequirements = (req, res, next) => {
   const files = req.files;
+  const isQuoteUpload = req.originalUrl.includes('/quotes');
+  const maxFiles = isQuoteUpload ? 5 : FILE_UPLOAD_CONFIG.maxFiles; // Limit quotes to 5 files
   
-  // Files are optional for job creation, so we don't require them
   if (!files || files.length === 0) {
     console.log('No files provided - continuing without files');
     return next();
   }
   
-  if (files.length > FILE_UPLOAD_CONFIG.maxFiles) {
+  if (files.length > maxFiles) {
     return res.status(400).json({
       success: false,
-      error: `Maximum ${FILE_UPLOAD_CONFIG.maxFiles} files allowed. You uploaded ${files.length} files.`,
+      error: `Maximum ${maxFiles} files allowed. You uploaded ${files.length} files.`,
       errorCode: 'TOO_MANY_FILES'
     });
   }
   
-  // Check total upload size
   const totalSize = files.reduce((sum, file) => sum + file.size, 0);
-  const maxTotalSize = FILE_UPLOAD_CONFIG.maxFileSize * FILE_UPLOAD_CONFIG.maxFiles;
+  const maxTotalSize = FILE_UPLOAD_CONFIG.maxFileSize * maxFiles;
   
   if (totalSize > maxTotalSize) {
     const totalMB = (totalSize / (1024 * 1024)).toFixed(2);
@@ -159,7 +178,7 @@ export const validateFileRequirements = (req, res, next) => {
   next();
 };
 
-// Middleware to log upload details
+// UNCHANGED: Upload logging
 export const logUploadDetails = (req, res, next) => {
   if (req.files && req.files.length > 0) {
     console.log('=== UPLOAD DETAILS ===');
@@ -173,7 +192,7 @@ export const logUploadDetails = (req, res, next) => {
   next();
 };
 
-// Updated file validation for job uploads (supports multiple file types)
+// UPDATED: File validation with quote support
 export const validatePDFFiles = (req, res, next) => {
   const files = req.files;
   
@@ -184,7 +203,8 @@ export const validatePDFFiles = (req, res, next) => {
   
   console.log(`Validating ${files.length} files...`);
   
-  const allowedJobMimeTypes = [
+  // EXPANDED: Include quote-supported file types
+  const allowedMimeTypes = [
     'application/pdf',
     'application/msword',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -193,21 +213,23 @@ export const validatePDFFiles = (req, res, next) => {
     'image/png',
     'application/dwg',
     'application/acad',
-    'image/vnd.dwg'
+    'image/vnd.dwg',
+    // Quote-specific additions
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'text/plain'
   ];
   
   for (const file of files) {
-    // Check MIME type
-    if (!allowedJobMimeTypes.includes(file.mimetype)) {
+    if (!allowedMimeTypes.includes(file.mimetype)) {
       console.log(`File validation failed: ${file.originalname} has invalid MIME type: ${file.mimetype}`);
       return res.status(400).json({
         success: false,
-        error: `File "${file.originalname}" type not supported. Supported formats: PDF, DOC, DOCX, JPG, PNG, DWG.`,
+        error: `File "${file.originalname}" type not supported. Supported formats: PDF, DOC, DOCX, JPG, PNG, DWG, XLS, XLSX, TXT.`,
         errorCode: 'INVALID_FILE_TYPE'
       });
     }
     
-    // Check file size
     if (file.size > FILE_UPLOAD_CONFIG.maxFileSize) {
       const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
       const maxMB = (FILE_UPLOAD_CONFIG.maxFileSize / (1024 * 1024)).toFixed(0);
@@ -226,7 +248,7 @@ export const validatePDFFiles = (req, res, next) => {
   next();
 };
 
-// PDF-specific validation (for estimation tool)
+// UNCHANGED: PDF-only validation for estimations
 export const validatePDFFilesOnly = (req, res, next) => {
   const files = req.files;
   
@@ -241,7 +263,6 @@ export const validatePDFFilesOnly = (req, res, next) => {
   console.log(`Validating ${files.length} PDF files...`);
   
   for (const file of files) {
-    // Check MIME type - only PDFs for estimation tool
     if (!FILE_UPLOAD_CONFIG.allowedMimeTypes.includes(file.mimetype)) {
       console.log(`PDF validation failed: ${file.originalname} has invalid MIME type: ${file.mimetype}`);
       return res.status(400).json({
@@ -251,7 +272,6 @@ export const validatePDFFilesOnly = (req, res, next) => {
       });
     }
     
-    // Check file size
     if (file.size > FILE_UPLOAD_CONFIG.maxFileSize) {
       const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
       const maxMB = (FILE_UPLOAD_CONFIG.maxFileSize / (1024 * 1024)).toFixed(0);
@@ -270,6 +290,7 @@ export const validatePDFFilesOnly = (req, res, next) => {
   next();
 };
 
+// UNCHANGED: Default export
 export default { 
   upload, 
   handleUploadError, 

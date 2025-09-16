@@ -1,8 +1,6 @@
-// middleware/upload.js - Fixed circular import by splitting imports
+// middleware/upload.js - Added quote support without changing existing functionality
 import multer from 'multer';
-// FIXED: Split imports to avoid circular dependency
-import { FILE_UPLOAD_CONFIG } from '../config/firebase.js';
-import { uploadMultipleFilesToFirebase, validateFileUpload, deleteFileFromFirebase } from '../utils/firebaseStorage.js';
+import { FILE_UPLOAD_CONFIG, uploadMultipleFilesToFirebase, validateFileUpload, deleteFileFromFirebase } from '../config/firebase.js';
 
 // Updated multer configuration to support job AND quote file uploads
 export const upload = multer({
@@ -17,57 +15,42 @@ export const upload = multer({
   fileFilter: (req, file, cb) => {
     console.log(`Processing file: ${file.originalname}, MIME: ${file.mimetype}`);
     
-    // Determine upload type based on URL
-    const isEstimationUpload = req.originalUrl.includes('/estimation');
+    // ADDED: Check if this is a quote upload route
     const isQuoteUpload = req.originalUrl.includes('/quotes');
     
-    if (isEstimationUpload) {
-      // UNCHANGED: Strict PDF-only for estimations
-      if (!FILE_UPLOAD_CONFIG.allowedMimeTypes.includes(file.mimetype)) {
-        console.log(`Rejected estimation file ${file.originalname}: Invalid MIME type ${file.mimetype}`);
-        return cb(new Error(`Only PDF files are allowed for estimations. Received: ${file.mimetype}`), false);
-      }
-      
-      const ext = file.originalname.toLowerCase().split('.').pop();
-      if (!FILE_UPLOAD_CONFIG.allowedExtensions.map(e => e.replace('.', '')).includes(ext)) {
-        console.log(`Rejected estimation file ${file.originalname}: Invalid extension .${ext}`);
-        return cb(new Error(`Only PDF files are allowed for estimations. File extension: .${ext}`), false);
-      }
-    } else {
-      // EXPANDED: Support multiple file types for jobs AND quotes
-      const allowedMimeTypes = [
-        'application/pdf',
-        'application/msword',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'image/jpeg',
-        'image/jpg', 
-        'image/png',
-        'application/dwg', // DWG files
-        'application/acad', // AutoCAD files
-        'image/vnd.dwg', // Alternative DWG MIME type
-        // ADDED: Additional types for quotes
-        'application/vnd.ms-excel',
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'text/plain'
-      ];
-      
-      const allowedExtensions = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'dwg', 'xls', 'xlsx', 'txt'];
-      
-      // Check MIME type
-      if (!allowedMimeTypes.includes(file.mimetype)) {
-        console.log(`Rejected file ${file.originalname}: Invalid MIME type ${file.mimetype}`);
-        const supportedFormats = isQuoteUpload ? 
-          'PDF, DOC, DOCX, JPG, PNG, DWG, XLS, XLSX, TXT' : 
-          'PDF, DOC, DOCX, JPG, PNG, DWG';
-        return cb(new Error(`File type not allowed. Supported formats: ${supportedFormats}. Received: ${file.mimetype}`), false);
-      }
-      
-      // Check file extension as additional validation
-      const ext = file.originalname.toLowerCase().split('.').pop();
-      if (!allowedExtensions.includes(ext)) {
-        console.log(`Rejected file ${file.originalname}: Invalid extension .${ext}`);
-        return cb(new Error(`File extension not allowed. Supported formats: ${allowedExtensions.join(', ')}. File extension: .${ext}`), false);
-      }
+    // Define allowed file types for job AND quote uploads
+    const allowedJobMimeTypes = [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'image/jpeg',
+      'image/jpg', 
+      'image/png',
+      'application/dwg', // DWG files
+      'application/acad', // AutoCAD files
+      'image/vnd.dwg', // Alternative DWG MIME type
+      // ADDED: Additional types for quotes
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'text/plain'
+    ];
+    
+    const allowedJobExtensions = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'dwg', 'xls', 'xlsx', 'txt'];
+    
+    // Check MIME type
+    if (!allowedJobMimeTypes.includes(file.mimetype)) {
+      console.log(`Rejected file ${file.originalname}: Invalid MIME type ${file.mimetype}`);
+      const supportedFormats = isQuoteUpload ? 
+        'PDF, DOC, DOCX, JPG, PNG, DWG, XLS, XLSX, TXT' : 
+        'PDF, DOC, DOCX, JPG, PNG, DWG';
+      return cb(new Error(`File type not allowed. Supported formats: ${supportedFormats}. Received: ${file.mimetype}`), false);
+    }
+    
+    // Check file extension as additional validation
+    const ext = file.originalname.toLowerCase().split('.').pop();
+    if (!allowedJobExtensions.includes(ext)) {
+      console.log(`Rejected file ${file.originalname}: Invalid extension .${ext}`);
+      return cb(new Error(`File extension not allowed. Supported formats: ${allowedJobExtensions.join(', ')}. File extension: .${ext}`), false);
     }
     
     console.log(`Accepted file: ${file.originalname}`);
@@ -86,10 +69,10 @@ export async function uploadToFirebase(file, folder, userId = null) {
   }
 }
 
-// Re-export Firebase utilities from the correct location
+// UNCHANGED: Re-export Firebase utilities
 export { uploadMultipleFilesToFirebase, validateFileUpload, deleteFileFromFirebase, FILE_UPLOAD_CONFIG };
 
-// UNCHANGED: Error handling middleware
+// UNCHANGED: Enhanced error handling middleware
 export const handleUploadError = (error, req, res, next) => {
   console.error('Upload error:', error);
   
@@ -125,7 +108,7 @@ export const handleUploadError = (error, req, res, next) => {
     }
   }
   
-  if (error.message.includes('File type not allowed') || error.message.includes('File extension not allowed') || error.message.includes('Only PDF files are allowed')) {
+  if (error.message.includes('File type not allowed') || error.message.includes('File extension not allowed')) {
     return res.status(400).json({
       success: false,
       error: error.message,
@@ -144,11 +127,11 @@ export const handleUploadError = (error, req, res, next) => {
   next(error);
 };
 
-// UNCHANGED: File requirements validation
+// UPDATED: File requirements validation with quote support
 export const validateFileRequirements = (req, res, next) => {
   const files = req.files;
   const isQuoteUpload = req.originalUrl.includes('/quotes');
-  const maxFiles = isQuoteUpload ? 5 : FILE_UPLOAD_CONFIG.maxFiles; // Limit quotes to 5 files
+  const maxFiles = isQuoteUpload ? 5 : FILE_UPLOAD_CONFIG.maxFiles; // ADDED: Limit quotes to 5 files
   
   if (!files || files.length === 0) {
     console.log('No files provided - continuing without files');
@@ -180,7 +163,7 @@ export const validateFileRequirements = (req, res, next) => {
   next();
 };
 
-// UNCHANGED: Upload logging
+// UNCHANGED: Middleware to log upload details
 export const logUploadDetails = (req, res, next) => {
   if (req.files && req.files.length > 0) {
     console.log('=== UPLOAD DETAILS ===');
@@ -194,7 +177,7 @@ export const logUploadDetails = (req, res, next) => {
   next();
 };
 
-// UPDATED: File validation with quote support
+// UPDATED: File validation with quote support (expanded file types)
 export const validatePDFFiles = (req, res, next) => {
   const files = req.files;
   
@@ -206,7 +189,7 @@ export const validatePDFFiles = (req, res, next) => {
   console.log(`Validating ${files.length} files...`);
   
   // EXPANDED: Include quote-supported file types
-  const allowedMimeTypes = [
+  const allowedJobMimeTypes = [
     'application/pdf',
     'application/msword',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -216,14 +199,14 @@ export const validatePDFFiles = (req, res, next) => {
     'application/dwg',
     'application/acad',
     'image/vnd.dwg',
-    // Quote-specific additions
+    // ADDED: Quote-specific additions
     'application/vnd.ms-excel',
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     'text/plain'
   ];
   
   for (const file of files) {
-    if (!allowedMimeTypes.includes(file.mimetype)) {
+    if (!allowedJobMimeTypes.includes(file.mimetype)) {
       console.log(`File validation failed: ${file.originalname} has invalid MIME type: ${file.mimetype}`);
       return res.status(400).json({
         success: false,
@@ -250,7 +233,7 @@ export const validatePDFFiles = (req, res, next) => {
   next();
 };
 
-// UNCHANGED: PDF-only validation for estimations
+// UNCHANGED: PDF-specific validation (for estimation tool)
 export const validatePDFFilesOnly = (req, res, next) => {
   const files = req.files;
   

@@ -1,4 +1,4 @@
-// firebase.js - Updated with enhanced file upload configuration
+// firebase.js - Targeted fix ONLY for job file uploads, estimation functionality unchanged
 import admin from 'firebase-admin';
 
 // Check for the required environment variable
@@ -22,11 +22,11 @@ if (!admin.apps.length) {
   });
 }
 
-// Enhanced file upload configuration
+// Enhanced file upload configuration (unchanged for estimation compatibility)
 export const FILE_UPLOAD_CONFIG = {
   maxFiles: 10,
   maxFileSize: 15 * 1024 * 1024, // 15MB in bytes
-  allowedMimeTypes: ['application/pdf'],
+  allowedMimeTypes: ['application/pdf'], // Keep PDF-only for estimations
   allowedExtensions: ['.pdf'],
   uploadPaths: {
     jobs: 'job-attachments',
@@ -36,7 +36,7 @@ export const FILE_UPLOAD_CONFIG = {
   }
 };
 
-// Enhanced file upload utility
+// FIXED: Enhanced file upload utility with proper response structure for job uploads
 export async function uploadMultipleFilesToFirebase(files, folder, userId = null) {
   const uploadedFiles = [];
   const bucket = adminStorage.bucket();
@@ -44,7 +44,7 @@ export async function uploadMultipleFilesToFirebase(files, folder, userId = null
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     
-    // Validate file
+    // Validate file (keep existing validation logic for estimation compatibility)
     if (!FILE_UPLOAD_CONFIG.allowedMimeTypes.includes(file.mimetype)) {
       throw new Error(`File ${file.originalname}: Only PDF files are allowed`);
     }
@@ -54,7 +54,7 @@ export async function uploadMultipleFilesToFirebase(files, folder, userId = null
       throw new Error(`File ${file.originalname}: File size (${sizeMB}MB) exceeds 15MB limit`);
     }
     
-    // Generate unique filename
+    // Generate unique filename (unchanged)
     const timestamp = Date.now();
     const randomId = Math.round(Math.random() * 1E9);
     const safeFileName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
@@ -83,15 +83,21 @@ export async function uploadMultipleFilesToFirebase(files, folder, userId = null
             await fileRef.makePublic();
             const publicUrl = `https://storage.googleapis.com/${bucket.name}/${filename}`;
             
-            resolve({
+            // FIXED: Return object with both 'name' and 'originalname' properties
+            // This ensures compatibility with both job controller and estimation system
+            const fileResult = {
               filename: filename,
-              originalname: file.originalname,
+              originalname: file.originalname,  // Keep for estimation compatibility
+              name: file.originalname,          // ADDED: For job controller compatibility
               mimetype: file.mimetype,
               size: file.size,
               url: publicUrl,
+              downloadURL: publicUrl,           // ADDED: Alternative URL property
               uploadedAt: new Date().toISOString(),
               path: filename
-            });
+            };
+            
+            resolve(fileResult);
           } catch (error) {
             reject(error);
           }
@@ -113,7 +119,7 @@ export async function uploadMultipleFilesToFirebase(files, folder, userId = null
   return uploadedFiles;
 }
 
-// Utility to delete file from Firebase Storage
+// Utility to delete file from Firebase Storage (unchanged)
 export async function deleteFileFromFirebase(filePath) {
   try {
     const bucket = adminStorage.bucket();
@@ -127,7 +133,7 @@ export async function deleteFileFromFirebase(filePath) {
   }
 }
 
-// Utility to validate file upload request
+// Utility to validate file upload request (unchanged for estimation compatibility)
 export function validateFileUpload(files, maxFiles = FILE_UPLOAD_CONFIG.maxFiles) {
   if (!files || files.length === 0) {
     throw new Error('At least one file is required');
@@ -152,7 +158,7 @@ export function validateFileUpload(files, maxFiles = FILE_UPLOAD_CONFIG.maxFiles
   return true;
 }
 
-// Export the initialized services
+// Export the initialized services (unchanged)
 const adminDb = admin.firestore();
 const adminStorage = admin.storage();
 

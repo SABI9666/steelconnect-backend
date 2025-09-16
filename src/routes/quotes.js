@@ -7,8 +7,7 @@ import {
   getQuotesByUser, 
   getQuoteById, 
   approveQuote, 
-  deleteQuote,
-  updateQuote
+  deleteQuote
 } from '../controllers/quotecontroller.js';
 import { authenticateToken, isDesigner } from '../middleware/auth.js';
 import { 
@@ -576,19 +575,6 @@ router.put('/:id/approve', authenticateToken, async (req, res) => {
     res.status(500).json({ success: false, error: 'Failed to approve quote' });
   }
 });
-
-// Enhanced quote update with file support - COMMENTED OUT FOR NOW
-// router.put(
-//   '/:id',
-//   authenticateToken,
-//   isDesigner,
-//   upload.array('attachments', 5), // Support up to 5 additional files
-//   handleUploadError,
-//   validateFileRequirements,
-//   logUploadDetails,
-//   validatePDFFiles,
-//   updateQuote
-// );
 
 // DELETE a quote
 router.delete('/:id', authenticateToken, deleteQuote);

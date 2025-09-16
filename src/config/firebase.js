@@ -59,4 +59,6 @@ export const FILE_UPLOAD_CONFIG = {
     }
 };
 
+export { admin };
 export default admin;
+

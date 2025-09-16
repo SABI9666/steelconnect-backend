@@ -1,6 +1,8 @@
-// middleware/upload.js - Minimal update to add quote support without changing jobs/estimation
+// middleware/upload.js - Fixed circular import by splitting imports
 import multer from 'multer';
-import { FILE_UPLOAD_CONFIG, uploadMultipleFilesToFirebase, validateFileUpload, deleteFileFromFirebase } from '../config/firebase.js';
+// FIXED: Split imports to avoid circular dependency
+import { FILE_UPLOAD_CONFIG } from '../config/firebase.js';
+import { uploadMultipleFilesToFirebase, validateFileUpload, deleteFileFromFirebase } from '../utils/firebaseStorage.js';
 
 // Updated multer configuration to support job AND quote file uploads
 export const upload = multer({
@@ -84,7 +86,7 @@ export async function uploadToFirebase(file, folder, userId = null) {
   }
 }
 
-// UNCHANGED: Re-export Firebase utilities
+// Re-export Firebase utilities from the correct location
 export { uploadMultipleFilesToFirebase, validateFileUpload, deleteFileFromFirebase, FILE_UPLOAD_CONFIG };
 
 // UNCHANGED: Error handling middleware

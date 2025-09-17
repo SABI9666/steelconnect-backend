@@ -1,4 +1,4 @@
-/ src/routes/quotes.js - COMPLETE UPDATED with download support and error handling
+// src/routes/quotes.js - COMPLETE UPDATED with download support and error handling
 import express from 'express';
 import { adminDb } from '../config/firebase.js';
 import { 
@@ -95,11 +95,11 @@ router.get('/:id/attachments/:attachmentIndex/download', authenticateToken, asyn
     const userId = req.user.userId;
     const userType = req.user.type;
 
-    console.log(`📥 Download request for quote ${quoteId}, attachment ${attachmentIndex} by user ${userId}`);
+    console.log(`Download request for quote ${quoteId}, attachment ${attachmentIndex} by user ${userId}`);
 
     // FIXED: Validate attachmentIndex parameter
     if (attachmentIndex === undefined || attachmentIndex === 'undefined' || attachmentIndex === null) {
-      console.log('❌ Invalid attachment index provided');
+      console.log('Invalid attachment index provided');
       return res.status(400).json({ 
         success: false, 
         error: 'Attachment index is required and must be a valid number' 
@@ -108,7 +108,7 @@ router.get('/:id/attachments/:attachmentIndex/download', authenticateToken, asyn
 
     const index = parseInt(attachmentIndex);
     if (isNaN(index) || index < 0) {
-      console.log('❌ Attachment index must be a valid non-negative number');
+      console.log('Attachment index must be a valid non-negative number');
       return res.status(400).json({ 
         success: false, 
         error: 'Attachment index must be a valid non-negative number' 
@@ -118,43 +118,43 @@ router.get('/:id/attachments/:attachmentIndex/download', authenticateToken, asyn
     // Get quote data
     const quoteDoc = await adminDb.collection('quotes').doc(quoteId).get();
     if (!quoteDoc.exists) {
-      console.log('❌ Quote not found');
+      console.log('Quote not found');
       return res.status(404).json({ success: false, error: 'Quote not found' });
     }
 
     const quoteData = quoteDoc.data();
-    console.log(`📄 Quote found: ${quoteData.jobTitle || 'Untitled'} by ${quoteData.designerName}`);
+    console.log(`Quote found: ${quoteData.jobTitle || 'Untitled'} by ${quoteData.designerName}`);
 
     // Authorization check - either the designer who submitted or contractor who posted the job
     let hasAccess = false;
     
     if (quoteData.designerId === userId) {
       hasAccess = true; // Designer who submitted the quote
-      console.log('✅ Access granted: Quote submitter');
+      console.log('Access granted: Quote submitter');
     } else if (userType === 'contractor') {
       // Check if user is the contractor who posted the job
       const jobDoc = await adminDb.collection('jobs').doc(quoteData.jobId).get();
       if (jobDoc.exists && jobDoc.data().posterId === userId) {
         hasAccess = true;
-        console.log('✅ Access granted: Job poster');
+        console.log('Access granted: Job poster');
       }
     }
 
     if (!hasAccess) {
-      console.log('❌ Access denied for user');
+      console.log('Access denied for user');
       return res.status(403).json({ success: false, error: 'Access denied to this attachment' });
     }
 
     // Check if attachments exist
     const attachments = quoteData.attachments || [];
-    console.log(`📎 Found ${attachments.length} attachments`);
+    console.log(`Found ${attachments.length} attachments`);
     
     if (attachments.length === 0) {
       return res.status(404).json({ success: false, error: 'No attachments found for this quote' });
     }
     
     if (index >= attachments.length) {
-      console.log(`❌ Attachment index ${index} out of range (max: ${attachments.length - 1})`);
+      console.log(`Attachment index ${index} out of range (max: ${attachments.length - 1})`);
       return res.status(404).json({ 
         success: false, 
         error: `Attachment index ${index} not found. Available indices: 0-${attachments.length - 1}` 
@@ -162,7 +162,7 @@ router.get('/:id/attachments/:attachmentIndex/download', authenticateToken, asyn
     }
 
     const attachment = attachments[index];
-    console.log(`📎 Attachment details:`, {
+    console.log(`Attachment details:`, {
       name: attachment.name || attachment.originalname,
       size: attachment.size,
       mimetype: attachment.mimetype || attachment.type,
@@ -177,29 +177,29 @@ router.get('/:id/attachments/:attachmentIndex/download', authenticateToken, asyn
     if (attachment.url && attachment.url.startsWith('http')) {
       // Direct public URL - return as is
       downloadUrl = attachment.url;
-      console.log('✅ Using direct URL for download');
+      console.log('Using direct URL for download');
     } else if (attachment.path) {
       // Firebase Storage path - generate signed URL
       try {
-        console.log(`🔗 Generating signed URL for path: ${attachment.path}`);
+        console.log(`Generating signed URL for path: ${attachment.path}`);
         downloadUrl = await getSignedDownloadUrl(attachment.path);
-        console.log('✅ Signed URL generated successfully');
+        console.log('Signed URL generated successfully');
       } catch (error) {
-        console.error('❌ Error generating signed URL:', error);
+        console.error('Error generating signed URL:', error);
         return res.status(500).json({ 
           success: false, 
           error: 'Failed to generate secure download URL. Please try again later.' 
         });
       }
     } else {
-      console.log('❌ No valid URL or path found for attachment');
+      console.log('No valid URL or path found for attachment');
       return res.status(404).json({ 
         success: false, 
         error: 'Attachment file is not accessible. The file may have been moved or deleted.' 
       });
     }
 
-    console.log(`✅ Download URL prepared for quote ${quoteId}, attachment ${index}`);
+    console.log(`Download URL prepared for quote ${quoteId}, attachment ${index}`);
 
     // Return comprehensive response with all necessary data
     res.json({
@@ -215,7 +215,7 @@ router.get('/:id/attachments/:attachmentIndex/download', authenticateToken, asyn
     });
 
   } catch (error) {
-    console.error('❌ Error in quote attachment download:', error);
+    console.error('Error in quote attachment download:', error);
     res.status(500).json({ 
       success: false, 
       error: 'Internal server error while preparing download. Please try again later.',
@@ -231,7 +231,7 @@ router.get('/:id/attachments', authenticateToken, async (req, res) => {
     const userId = req.user.userId;
     const userType = req.user.type;
 
-    console.log(`📋 Attachments list request for quote ${quoteId} by user ${userId}`);
+    console.log(`Attachments list request for quote ${quoteId} by user ${userId}`);
 
     // Get quote data
     const quoteDoc = await adminDb.collection('quotes').doc(quoteId).get();
@@ -258,7 +258,7 @@ router.get('/:id/attachments', authenticateToken, async (req, res) => {
     }
 
     const attachments = quoteData.attachments || [];
-    console.log(`📎 Found ${attachments.length} attachments for quote ${quoteId}`);
+    console.log(`Found ${attachments.length} attachments for quote ${quoteId}`);
     
     // Return attachment list with proper indexing and metadata
     const attachmentList = attachments.map((attachment, index) => {
@@ -285,7 +285,7 @@ router.get('/:id/attachments', authenticateToken, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Error getting quote attachments:', error);
+    console.error('Error getting quote attachments:', error);
     res.status(500).json({ 
       success: false, 
       error: 'Failed to load attachments. Please try again later.',

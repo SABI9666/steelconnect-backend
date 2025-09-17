@@ -9,7 +9,7 @@ import {
   updateQuote, // Added updateQuote
   approveQuote, 
   deleteQuote 
-} from '../controllers/quotecontroller.js';
+}  from '../controllers/quoteController.js';
 import { authenticateToken, isDesigner } from '../middleware/auth.js';
 import { upload } from '../middleware/upload.js';
 import { NotificationService } from '../services/NotificationService.js';

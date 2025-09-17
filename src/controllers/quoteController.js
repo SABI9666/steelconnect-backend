@@ -1,12 +1,15 @@
+// src/controllers/quotecontroller.js - FIXED with proper file handling
 import { adminDb, admin } from '../config/firebase.js';
-import { uploadToFirebase } from '../middleware/upload.js';
+import { uploadMultipleFilesToFirebase, validateFileUpload } from '../utils/firebaseStorage.js';
 
-// Create a new quote
+// Create a new quote with proper file handling
 export const createQuote = async (req, res, next) => {
     try {
         const { jobId, quoteAmount, timeline, description } = req.body;
         const designerId = req.user.userId;
         const designerName = req.user.name;
+
+        console.log(`Creating quote for job ${jobId} by designer ${designerId}`);
 
         // Validate required fields
         if (!jobId || !quoteAmount || !description) {
@@ -45,16 +48,43 @@ export const createQuote = async (req, res, next) => {
             });
         }
 
-        // Handle file uploads
-        let attachmentUrls = [];
+        // FIXED: Handle file uploads with proper validation and storage
+        let attachments = [];
         if (req.files && req.files.length > 0) {
-            const uploadPromises = req.files.map(file => 
-                uploadToFirebase(file, 'quote-attachments')
-            );
-            attachmentUrls = await Promise.all(uploadPromises);
+            try {
+                console.log(`Processing ${req.files.length} quote attachment files`);
+                
+                // Validate files first
+                validateFileUpload(req.files, 5); // Max 5 files for quotes
+                
+                // Upload files to Firebase Storage
+                const uploadedFiles = await uploadMultipleFilesToFirebase(
+                    req.files, 
+                    'quote-attachments', 
+                    designerId
+                );
+                
+                // FIXED: Store file information with proper structure
+                attachments = uploadedFiles.map(file => ({
+                    name: file.name || file.originalname,
+                    url: file.url || file.downloadURL,
+                    path: file.path || file.filename,
+                    size: file.size,
+                    mimetype: file.mimetype || file.type,
+                    uploadedAt: file.uploadedAt || new Date().toISOString()
+                }));
+                
+                console.log(`Successfully uploaded ${attachments.length} quote attachments`);
+            } catch (uploadError) {
+                console.error('Quote file upload error:', uploadError);
+                return res.status(400).json({
+                    success: false,
+                    message: `File upload failed: ${uploadError.message}`
+                });
+            }
         }
 
-        // Create quote data
+        // Create quote data with proper attachment structure
         const quoteData = {
             jobId,
             jobTitle: jobData.title,
@@ -64,7 +94,7 @@ export const createQuote = async (req, res, next) => {
             quoteAmount: parseFloat(quoteAmount),
             timeline: timeline ? parseInt(timeline) : null,
             description,
-            attachments: attachmentUrls,
+            attachments: attachments, // FIXED: Proper attachment structure
             status: 'submitted',
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
@@ -79,6 +109,8 @@ export const createQuote = async (req, res, next) => {
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
+        console.log(`Quote created successfully with ID: ${quoteRef.id}`);
+
         res.status(201).json({
             success: true,
             message: 'Quote submitted successfully!',
@@ -91,6 +123,151 @@ export const createQuote = async (req, res, next) => {
     }
 };
 
+// FIXED: Update quote with file handling
+export const updateQuote = async (req, res, next) => {
+    try {
+        const { id: quoteId } = req.params;
+        const { quoteAmount, timeline, description } = req.body;
+        const userId = req.user.userId;
+
+        console.log(`Updating quote ${quoteId} by user ${userId}`);
+
+        // Get existing quote
+        const quoteRef = adminDb.collection('quotes').doc(quoteId);
+        const quoteDoc = await quoteRef.get();
+
+        if (!quoteDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Quote not found.' });
+        }
+
+        const existingQuote = quoteDoc.data();
+
+        // Check authorization
+        if (existingQuote.designerId !== userId) {
+            return res.status(403).json({ success: false, message: 'Unauthorized to update this quote.' });
+        }
+
+        // Check if quote can be edited
+        if (existingQuote.status !== 'submitted') {
+            return res.status(400).json({ 
+                success: false, 
+                message: `Cannot edit a quote that is ${existingQuote.status}.` 
+            });
+        }
+
+        // Handle new file uploads
+        let newAttachments = [];
+        if (req.files && req.files.length > 0) {
+            try {
+                console.log(`Processing ${req.files.length} new attachment files`);
+                
+                validateFileUpload(req.files, 5);
+                
+                const uploadedFiles = await uploadMultipleFilesToFirebase(
+                    req.files, 
+                    'quote-attachments', 
+                    userId
+                );
+                
+                newAttachments = uploadedFiles.map(file => ({
+                    name: file.name || file.originalname,
+                    url: file.url || file.downloadURL,
+                    path: file.path || file.filename,
+                    size: file.size,
+                    mimetype: file.mimetype || file.type,
+                    uploadedAt: file.uploadedAt || new Date().toISOString()
+                }));
+                
+                console.log(`Successfully uploaded ${newAttachments.length} new attachments`);
+            } catch (uploadError) {
+                console.error('Quote update file upload error:', uploadError);
+                return res.status(400).json({
+                    success: false,
+                    message: `File upload failed: ${uploadError.message}`
+                });
+            }
+        }
+
+        // Prepare update data
+        const updateData = {
+            quoteAmount: parseFloat(quoteAmount),
+            timeline: timeline ? parseInt(timeline) : null,
+            description,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+
+        // Add new attachments to existing ones
+        if (newAttachments.length > 0) {
+            const existingAttachments = existingQuote.attachments || [];
+            updateData.attachments = [...existingAttachments, ...newAttachments];
+        }
+
+        await quoteRef.update(updateData);
+
+        console.log(`Quote ${quoteId} updated successfully`);
+
+        res.json({
+            success: true,
+            message: 'Quote updated successfully!',
+            data: { id: quoteId, ...existingQuote, ...updateData }
+        });
+
+    } catch (error) {
+        console.error('❌ Error in updateQuote:', error);
+        next(error);
+    }
+};
+
+// FIXED: Get quote by ID with proper file URLs
+export const getQuoteById = async (req, res, next) => {
+    try {
+        const { id: quoteId } = req.params;
+        const userId = req.user.userId;
+        const userType = req.user.type;
+
+        const quoteRef = adminDb.collection('quotes').doc(quoteId);
+        const quoteDoc = await quoteRef.get();
+
+        if (!quoteDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Quote not found.' });
+        }
+
+        const quoteData = { id: quoteDoc.id, ...quoteDoc.data() };
+
+        // Authorization check
+        const isDesigner = quoteData.designerId === userId;
+        let isContractor = false;
+
+        if (!isDesigner && userType === 'contractor') {
+            const jobRef = adminDb.collection('jobs').doc(quoteData.jobId);
+            const jobDoc = await jobRef.get();
+            if (jobDoc.exists && jobDoc.data().posterId === userId) {
+                isContractor = true;
+            }
+        }
+        
+        if (!isDesigner && !isContractor) {
+            return res.status(403).json({ success: false, message: 'You are not authorized to view this quote.' });
+        }
+
+        // FIXED: Ensure attachment URLs are accessible
+        if (quoteData.attachments && Array.isArray(quoteData.attachments)) {
+            quoteData.attachments = quoteData.attachments.map(attachment => ({
+                ...attachment,
+                // Ensure URL is present and accessible
+                url: attachment.url || attachment.downloadURL || '',
+                downloadUrl: attachment.url || attachment.downloadURL || ''
+            }));
+        }
+
+        res.json({ success: true, data: quoteData });
+    } catch (error) {
+        console.error('❌ Error in getQuoteById:', error);
+        next(error);
+    }
+};
+
+// Keep existing functions unchanged
 export const getQuotesByUser = async (req, res, next) => {
     try {
         const { userId } = req.params;
@@ -249,44 +426,6 @@ export const getQuotesForJob = async (req, res, next) => {
         res.json({ success: true, data: quotes });
     } catch (error) {
         console.error('❌ Error in getQuotesForJob:', error);
-        next(error);
-    }
-};
-
-export const getQuoteById = async (req, res, next) => {
-    try {
-        const { id: quoteId } = req.params;
-        const userId = req.user.userId;
-        const userType = req.user.type;
-
-        const quoteRef = adminDb.collection('quotes').doc(quoteId);
-        const quoteDoc = await quoteRef.get();
-
-        if (!quoteDoc.exists) {
-            return res.status(404).json({ success: false, message: 'Quote not found.' });
-        }
-
-        const quoteData = { id: quoteDoc.id, ...quoteDoc.data() };
-
-        // Authorization check
-        const isDesigner = quoteData.designerId === userId;
-        let isContractor = false;
-
-        if (!isDesigner && userType === 'contractor') {
-            const jobRef = adminDb.collection('jobs').doc(quoteData.jobId);
-            const jobDoc = await jobRef.get();
-            if (jobDoc.exists && jobDoc.data().posterId === userId) {
-                isContractor = true;
-            }
-        }
-        
-        if (!isDesigner && !isContractor) {
-            return res.status(403).json({ success: false, message: 'You are not authorized to view this quote.' });
-        }
-
-        res.json({ success: true, data: quoteData });
-    } catch (error) {
-        console.error('❌ Error in getQuoteById:', error);
         next(error);
     }
 };

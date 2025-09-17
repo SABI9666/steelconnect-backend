@@ -1,4 +1,4 @@
-// src/routes/quotes.js - Final Complete Implementation
+// src/routes/quotes.js - UPDATED with download support
 import express from 'express';
 import { adminDb } from '../config/firebase.js';
 import { 
@@ -6,12 +6,14 @@ import {
   getQuotesForJob, 
   getQuotesByUser, 
   getQuoteById, 
+  updateQuote, // Added updateQuote
   approveQuote, 
   deleteQuote 
 } from '../controllers/quotecontroller.js';
 import { authenticateToken, isDesigner } from '../middleware/auth.js';
 import { upload } from '../middleware/upload.js';
 import { NotificationService } from '../services/NotificationService.js';
+import { getSignedDownloadUrl } from '../utils/firebaseStorage.js';
 
 const router = express.Router();
 
@@ -70,6 +72,155 @@ router.get('/user/:userId', authenticateToken, getQuotesByUser);
 
 // GET a single quote by its ID
 router.get('/:id', authenticateToken, getQuoteById);
+
+// UPDATE a quote (for designers to edit their submitted quotes)
+router.put(
+  '/:id',
+  authenticateToken,
+  isDesigner,
+  upload.array('attachments', 5),
+  updateQuote
+);
+
+// NEW: Download quote attachment
+router.get('/:id/attachments/:attachmentIndex/download', authenticateToken, async (req, res) => {
+  try {
+    const { id: quoteId, attachmentIndex } = req.params;
+    const userId = req.user.userId;
+    const userType = req.user.type;
+
+    console.log(`Download request for quote ${quoteId}, attachment ${attachmentIndex} by user ${userId}`);
+
+    // Get quote data
+    const quoteDoc = await adminDb.collection('quotes').doc(quoteId).get();
+    if (!quoteDoc.exists) {
+      return res.status(404).json({ success: false, error: 'Quote not found' });
+    }
+
+    const quoteData = quoteDoc.data();
+
+    // Authorization check - either the designer who submitted or contractor who posted the job
+    let hasAccess = false;
+    
+    if (quoteData.designerId === userId) {
+      hasAccess = true; // Designer who submitted the quote
+    } else if (userType === 'contractor') {
+      // Check if user is the contractor who posted the job
+      const jobDoc = await adminDb.collection('jobs').doc(quoteData.jobId).get();
+      if (jobDoc.exists && jobDoc.data().posterId === userId) {
+        hasAccess = true;
+      }
+    }
+
+    if (!hasAccess) {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+
+    // Check if attachments exist
+    const attachments = quoteData.attachments || [];
+    const index = parseInt(attachmentIndex);
+    
+    if (index < 0 || index >= attachments.length) {
+      return res.status(404).json({ success: false, error: 'Attachment not found' });
+    }
+
+    const attachment = attachments[index];
+    
+    // FIXED: Handle different attachment URL formats
+    let downloadUrl;
+    if (attachment.url && attachment.url.startsWith('http')) {
+      // Direct public URL - return as is
+      downloadUrl = attachment.url;
+    } else if (attachment.path) {
+      // Firebase Storage path - generate signed URL
+      try {
+        downloadUrl = await getSignedDownloadUrl(attachment.path);
+      } catch (error) {
+        console.error('Error generating signed URL:', error);
+        return res.status(500).json({ 
+          success: false, 
+          error: 'Failed to generate download URL' 
+        });
+      }
+    } else {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Attachment file not accessible' 
+      });
+    }
+
+    console.log(`Generated download URL for quote ${quoteId}, attachment ${index}`);
+
+    res.json({
+      success: true,
+      downloadUrl: downloadUrl,
+      filename: attachment.name || attachment.originalname || `attachment_${index}`,
+      size: attachment.size,
+      mimetype: attachment.mimetype || attachment.type
+    });
+
+  } catch (error) {
+    console.error('Error in quote attachment download:', error);
+    res.status(500).json({ success: false, error: 'Download failed' });
+  }
+});
+
+// NEW: Get quote attachments list
+router.get('/:id/attachments', authenticateToken, async (req, res) => {
+  try {
+    const { id: quoteId } = req.params;
+    const userId = req.user.userId;
+    const userType = req.user.type;
+
+    console.log(`Attachments list request for quote ${quoteId} by user ${userId}`);
+
+    // Get quote data
+    const quoteDoc = await adminDb.collection('quotes').doc(quoteId).get();
+    if (!quoteDoc.exists) {
+      return res.status(404).json({ success: false, error: 'Quote not found' });
+    }
+
+    const quoteData = quoteDoc.data();
+
+    // Authorization check
+    let hasAccess = false;
+    
+    if (quoteData.designerId === userId) {
+      hasAccess = true;
+    } else if (userType === 'contractor') {
+      const jobDoc = await adminDb.collection('jobs').doc(quoteData.jobId).get();
+      if (jobDoc.exists && jobDoc.data().posterId === userId) {
+        hasAccess = true;
+      }
+    }
+
+    if (!hasAccess) {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+
+    const attachments = quoteData.attachments || [];
+    
+    // Return attachment list with download URLs
+    const attachmentList = attachments.map((attachment, index) => ({
+      index: index,
+      name: attachment.name || attachment.originalname || `attachment_${index}`,
+      size: attachment.size,
+      mimetype: attachment.mimetype || attachment.type,
+      uploadedAt: attachment.uploadedAt,
+      downloadUrl: `/api/quotes/${quoteId}/attachments/${index}/download`
+    }));
+
+    res.json({
+      success: true,
+      attachments: attachmentList,
+      count: attachments.length
+    });
+
+  } catch (error) {
+    console.error('Error getting quote attachments:', error);
+    res.status(500).json({ success: false, error: 'Failed to get attachments' });
+  }
+});
 
 // Enhanced quote approval with notifications
 router.put('/:id/approve', authenticateToken, async (req, res) => {

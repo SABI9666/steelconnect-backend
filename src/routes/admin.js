@@ -1,9 +1,14 @@
-// src/routes/admin.js - COMPLETE FINAL VERSION with quote file viewing support
+// src/routes/admin.js - COMPLETE FINAL VERSION with secure file handling
 import express from 'express';
 import multer from 'multer';
 import { authenticateToken, isAdmin } from '../middleware/authMiddleware.js';
 import { adminDb } from '../config/firebase.js';
-import { uploadToFirebaseStorage } from '../utils/firebaseStorage.js';
+import { 
+    uploadToFirebaseStorage, 
+    generateSignedUrl, 
+    validateContractorAccess,
+    createSecureDownloadLink 
+} from '../config/firebase.js';
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -77,7 +82,7 @@ router.patch('/users/:userId/status', async (req, res) => {
     }
 });
 
-// FIXED: User blocking endpoint with proper error handling and logging
+// User blocking endpoint with proper error handling and logging
 router.post('/users/block-user', async (req, res) => {
     try {
         const { email, blocked, reason } = req.body;
@@ -961,36 +966,91 @@ router.get('/estimations/:estimationId/download/:fileIndex', async (req, res) =>
         }
 
         const file = files[fileIndex];
-        res.json({ success: true, file: { url: file.url, name: file.name, downloadUrl: file.url } });
+        
+        try {
+            // Generate secure signed URL for admin access
+            const signedUrl = await generateSignedUrl(file.path, 15, 'attachment');
+            
+            res.json({ 
+                success: true, 
+                file: { 
+                    url: signedUrl, 
+                    name: file.name || file.originalname, 
+                    downloadUrl: signedUrl 
+                } 
+            });
+        } catch (error) {
+            console.error("Error generating signed URL:", error);
+            // Fallback to direct URL if available
+            res.json({ 
+                success: true, 
+                file: { 
+                    url: file.url, 
+                    name: file.name || file.originalname, 
+                    downloadUrl: file.url 
+                } 
+            });
+        }
     } catch (error) {
         console.error("Download Estimation File Error:", error);
         res.status(500).json({ success: false, message: 'Error creating file download link' });
     }
 });
 
+// UPDATED: Secure result upload with contractor metadata
 router.post('/estimations/:estimationId/result', upload.single('resultFile'), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ success: false, message: 'Result file is required' });
 
-        const filePath = `estimations/results/${req.params.estimationId}/${req.file.originalname}`;
-        const fileUrl = await uploadToFirebaseStorage(req.file, filePath);
+        // Get estimation details first
+        const estDoc = await adminDb.collection('estimations').doc(req.params.estimationId).get();
+        if (!estDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Estimation not found' });
+        }
+        
+        const estData = estDoc.data();
+        
+        // Create secure file path
+        const filePath = `estimation-results/${req.params.estimationId}/${req.file.originalname}`;
+        
+        // Add contractor metadata for secure access control
+        const uploadMetadata = {
+            contractorEmail: estData.contractorEmail,
+            contractorId: estData.contractorId,
+            estimationId: req.params.estimationId,
+            uploadedBy: req.user.email,
+            fileType: 'estimation_result'
+        };
+        
+        console.log(`[ADMIN-UPLOAD] Uploading result for estimation ${req.params.estimationId} with metadata:`, uploadMetadata);
+        
+        // Use the updated secure upload function
+        const uploadedFile = await uploadToFirebaseStorage(req.file, filePath, uploadMetadata);
 
         const updateData = {
             resultFile: {
-                url: fileUrl,
+                path: filePath, // Store path for signed URL generation
+                url: uploadedFile.url, // Temporary URL (will use signed URLs for access)
                 name: req.file.originalname,
+                originalname: req.file.originalname,
+                size: req.file.size,
+                mimetype: req.file.mimetype,
                 uploadedAt: new Date().toISOString(),
                 uploadedBy: req.user.email
             },
             status: 'completed',
-            completedAt: new Date().toISOString()
+            completedAt: new Date().toISOString(),
+            completedBy: req.user.email
         };
 
         await adminDb.collection('estimations').doc(req.params.estimationId).update(updateData);
-        res.json({ success: true, message: 'Estimation result uploaded successfully' });
+        
+        console.log(`[ADMIN-UPLOAD] Result uploaded successfully for estimation ${req.params.estimationId}`);
+        
+        res.json({ success: true, message: 'Estimation result uploaded successfully with secure access' });
     } catch (error) {
-        console.error("Upload Estimation Result Error:", error);
-        res.status(500).json({ success: false, message: 'Error uploading result' });
+        console.error("[ADMIN-UPLOAD] Upload Estimation Result Error:", error);
+        res.status(500).json({ success: false, message: 'Error uploading result', error: error.message });
     }
 });
 
@@ -1082,7 +1142,7 @@ router.get('/quotes', async (req, res) => {
                 timeline: data.timeline,
                 description: data.description,
                 status: data.status || 'submitted',
-                attachments: data.attachments || [], // NEW: Include attachments
+                attachments: data.attachments || [],
                 createdAt: data.createdAt,
                 updatedAt: data.updatedAt,
                 approvedAt: data.approvedAt,
@@ -1106,7 +1166,7 @@ router.get('/quotes', async (req, res) => {
     }
 });
 
-// NEW: Get quote files endpoint
+// Get quote files endpoint
 router.get('/quotes/:quoteId/files', async (req, res) => {
     try {
         console.log(`Fetching files for quote ${req.params.quoteId}`);
@@ -1119,15 +1179,31 @@ router.get('/quotes/:quoteId/files', async (req, res) => {
         const quoteData = quoteDoc.data();
         const attachments = quoteData.attachments || [];
         
-        // Add additional metadata for admin view
-        const filesWithMetadata = attachments.map((file, index) => ({
-            index: index,
-            name: file.name || file.originalname || `Attachment ${index + 1}`,
-            url: file.url || file.downloadURL,
-            size: file.size || 0,
-            uploadedAt: file.uploadedAt || quoteData.createdAt,
-            type: file.mimetype || getFileTypeFromName(file.name || file.originalname || '')
-        }));
+        // Add additional metadata for admin view with secure URLs
+        const filesWithMetadata = [];
+        
+        for (let index = 0; index < attachments.length; index++) {
+            const file = attachments[index];
+            let secureUrl = file.url || file.downloadURL;
+            
+            // Generate signed URL if file has path
+            if (file.path) {
+                try {
+                    secureUrl = await generateSignedUrl(file.path, 60, 'attachment');
+                } catch (error) {
+                    console.log(`Could not generate signed URL for ${file.name}, using original URL`);
+                }
+            }
+            
+            filesWithMetadata.push({
+                index: index,
+                name: file.name || file.originalname || `Attachment ${index + 1}`,
+                url: secureUrl,
+                size: file.size || 0,
+                uploadedAt: file.uploadedAt || quoteData.createdAt,
+                type: file.mimetype || getFileTypeFromName(file.name || file.originalname || '')
+            });
+        }
         
         res.json({ 
             success: true, 
@@ -1147,7 +1223,7 @@ router.get('/quotes/:quoteId/files', async (req, res) => {
     }
 });
 
-// NEW: Get quote details with all information
+// Get quote details with all information
 router.get('/quotes/:quoteId/details', async (req, res) => {
     try {
         const quoteDoc = await adminDb.collection('quotes').doc(req.params.quoteId).get();

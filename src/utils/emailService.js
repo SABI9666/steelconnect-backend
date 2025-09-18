@@ -1,4 +1,5 @@
-// src/utils/emailService.js - Enhanced with SC logo as sender avatar
+
+// src/utils/emailService.js - Enhanced with professional SC logo
 import { Resend } from 'resend';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -6,10 +7,6 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 // Use your verified steelconnectapp.com domain
 const FROM_EMAIL = 'noreply@steelconnectapp.com';
 const COMPANY_NAME = 'SteelConnect';
-
-// Base64 encoded SC logo for email avatar (this will show in inbox before opening)
-// This is a blue SC logo that will appear as the sender's profile picture
-const SC_LOGO_BASE64 = 'data:image/png;base64,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';
 
 // Professional email template with SC logo
 const getEmailTemplate = (title, content) => {
@@ -20,15 +17,6 @@ const getEmailTemplate = (title, content) => {
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>${title}</title>
-        <!--[if mso]>
-        <noscript>
-            <xml>
-                <o:OfficeDocumentSettings>
-                    <o:PixelsPerInch>96</o:PixelsPerInch>
-                </o:OfficeDocumentSettings>
-            </xml>
-        </noscript>
-        <![endif]-->
         <style>
             body { 
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; 
@@ -122,19 +110,21 @@ const getEmailTemplate = (title, content) => {
             .detail-value { 
                 color: #1e293b;
                 font-size: 14px;
-                text-align: right;
-                word-break: break-all;
             }
             .button {
                 display: inline-block;
                 background: linear-gradient(135deg, #2563eb 0%, #1e3a8a 100%);
-                color: white !important;
+                color: white;
                 padding: 12px 30px;
                 border-radius: 8px;
                 text-decoration: none;
                 font-weight: 600;
                 margin: 20px 0;
                 box-shadow: 0 4px 14px rgba(37, 99, 235, 0.3);
+                transition: transform 0.2s;
+            }
+            .button:hover {
+                transform: translateY(-1px);
             }
             .security-notice {
                 background: #fef3c7;
@@ -167,13 +157,6 @@ const getEmailTemplate = (title, content) => {
                 }
                 .content {
                     padding: 20px;
-                }
-                .detail-row {
-                    flex-direction: column;
-                }
-                .detail-value {
-                    text-align: left;
-                    margin-top: 5px;
                 }
             }
         </style>
@@ -212,7 +195,7 @@ const getEmailTemplate = (title, content) => {
     `;
 };
 
-// Send login notification email with avatar
+// Send login notification email
 export async function sendLoginNotification(user, loginTime, clientIP, userAgent) {
     try {
         console.log(`Attempting to send email to: ${user.email}`);
@@ -261,27 +244,11 @@ export async function sendLoginNotification(user, loginTime, clientIP, userAgent
 
         const emailHTML = getEmailTemplate('Login Notification - SteelConnect', emailContent);
 
-        // Email configuration with custom headers for logo avatar
         const emailData = {
             from: `SteelConnect <${FROM_EMAIL}>`,
             to: user.email,
-            subject: `Login Notification - ${COMPANY_NAME}`,
-            html: emailHTML,
-            headers: {
-                'X-Entity-Ref-ID': null,
-                'List-Unsubscribe': '<mailto:unsubscribe@steelconnectapp.com>',
-                'X-Logo-URL': 'https://steelconnectapp.com/logo.png', // Add your hosted logo URL
-                'X-Brand-Logo': SC_LOGO_BASE64
-            },
-            attachments: [
-                {
-                    filename: 'sc-logo.png',
-                    content: SC_LOGO_BASE64.split(',')[1],
-                    encoding: 'base64',
-                    cid: 'sc-logo@steelconnect.com',
-                    contentDisposition: 'inline'
-                }
-            ]
+            subject: `🔐 Login Notification - ${COMPANY_NAME}`,
+            html: emailHTML
         };
 
         console.log(`Sending email from: ${FROM_EMAIL} to: ${user.email}`);
@@ -296,7 +263,7 @@ export async function sendLoginNotification(user, loginTime, clientIP, userAgent
             };
         }
 
-        console.log(`✅ Email sent successfully with SC logo. Message ID: ${response.data?.id || 'N/A'}`);
+        console.log(`✅ Email sent successfully. Message ID: ${response.data?.id || 'N/A'}`);
         
         return {
             success: true,
@@ -313,7 +280,7 @@ export async function sendLoginNotification(user, loginTime, clientIP, userAgent
     }
 }
 
-// Send estimation result notification with avatar
+// Send estimation result notification
 export async function sendEstimationResultNotification(contractor, estimation, resultFile) {
     try {
         console.log(`Attempting to send estimation result email to: ${contractor.email}`);
@@ -373,23 +340,8 @@ export async function sendEstimationResultNotification(contractor, estimation, r
         const emailData = {
             from: `SteelConnect <${FROM_EMAIL}>`,
             to: contractor.email,
-            subject: `Your Estimation Result is Ready - "${estimation.projectName || estimation.projectTitle}"`,
-            html: emailHTML,
-            headers: {
-                'X-Entity-Ref-ID': null,
-                'List-Unsubscribe': '<mailto:unsubscribe@steelconnectapp.com>',
-                'X-Logo-URL': 'https://steelconnectapp.com/logo.png',
-                'X-Brand-Logo': SC_LOGO_BASE64
-            },
-            attachments: [
-                {
-                    filename: 'sc-logo.png',
-                    content: SC_LOGO_BASE64.split(',')[1],
-                    encoding: 'base64',
-                    cid: 'sc-logo@steelconnect.com',
-                    contentDisposition: 'inline'
-                }
-            ]
+            subject: `📊 Your Estimation Result is Ready - "${estimation.projectName || estimation.projectTitle}"`,
+            html: emailHTML
         };
 
         const response = await resend.emails.send(emailData);
@@ -408,7 +360,7 @@ export async function sendEstimationResultNotification(contractor, estimation, r
     }
 }
 
-// Send profile review notification with avatar
+// Send profile review notification
 export async function sendProfileReviewNotification(user, status, reason = null) {
     try {
         const isApproved = status === 'approved';
@@ -443,22 +395,7 @@ export async function sendProfileReviewNotification(user, status, reason = null)
             from: `SteelConnect <${FROM_EMAIL}>`,
             to: user.email,
             subject: `${isApproved ? '✅' : '📝'} Profile Review ${isApproved ? 'Approved' : 'Update'} - SteelConnect`,
-            html: emailHTML,
-            headers: {
-                'X-Entity-Ref-ID': null,
-                'List-Unsubscribe': '<mailto:unsubscribe@steelconnectapp.com>',
-                'X-Logo-URL': 'https://steelconnectapp.com/logo.png',
-                'X-Brand-Logo': SC_LOGO_BASE64
-            },
-            attachments: [
-                {
-                    filename: 'sc-logo.png',
-                    content: SC_LOGO_BASE64.split(',')[1],
-                    encoding: 'base64',
-                    cid: 'sc-logo@steelconnect.com',
-                    contentDisposition: 'inline'
-                }
-            ]
+            html: emailHTML
         };
 
         const response = await resend.emails.send(emailData);
@@ -470,12 +407,8 @@ export async function sendProfileReviewNotification(user, status, reason = null)
     }
 }
 
-// Export the logo for use in other parts of the application if needed
-export const getSCLogoBase64 = () => SC_LOGO_BASE64;
-
 export default {
     sendLoginNotification,
     sendEstimationResultNotification,
-    sendProfileReviewNotification,
-    getSCLogoBase64
+    sendProfileReviewNotification
 };

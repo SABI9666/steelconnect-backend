@@ -438,6 +438,66 @@ if (estimationRoutes) {
 
 console.log('📦 Route registration completed');
 
+// =================================================================
+// START: ADDED CODE - Backend Proxy Download Route
+// =================================================================
+// IMPORTANT: You must implement the `getFileRecord` function yourself.
+// It should query your database to find the file's metadata (GCS URL, filename, mimetype).
+async function getFileRecord(fileId) {
+    console.log(`Fetching file record for ID: ${fileId}`);
+    // Example implementation with MongoDB:
+    // const file = await YourFileModel.findById(fileId);
+    // if (!file) return null;
+    // return {
+    //     gcsUrl: file.url,
+    //     filename: file.originalName,
+    //     mimetype: file.mimetype
+    // };
+    // For now, returning a placeholder. Replace this!
+    return null; 
+}
+
+app.get('/api/files/download/:fileId', async (req, res) => {
+    try {
+        const { fileId } = req.params;
+        
+        // Get the actual GCS URL from your database
+        const fileRecord = await getFileRecord(fileId);
+        if (!fileRecord || !fileRecord.gcsUrl) {
+            return res.status(404).json({ success: false, error: 'File not found or URL is missing' });
+        }
+
+        console.log(`Proxying download for ${fileRecord.filename} from ${fileRecord.gcsUrl}`);
+        
+        // Fetch the file from GCS using server-side request
+        // This requires Node.js v18+ for native fetch.
+        // For older versions, you might need a library like `node-fetch`.
+        const response = await fetch(fileRecord.gcsUrl);
+        
+        if (!response.ok) {
+            console.error(`GCS fetch failed with status: ${response.status}`);
+            throw new Error('Failed to fetch file from storage');
+        }
+        
+        // Set appropriate headers for the client to trigger a download
+        res.set({
+            'Content-Type': fileRecord.mimetype || 'application/octet-stream',
+            'Content-Disposition': `attachment; filename="${fileRecord.filename}"`
+        });
+        
+        // Pipe the file data from GCS directly to the client response
+        response.body.pipe(res);
+
+    } catch (error) {
+        console.error('Download proxy error:', error);
+        res.status(500).json({ success: false, error: 'Download failed due to an internal error' });
+    }
+});
+// =================================================================
+// END: ADDED CODE
+// =================================================================
+
+
 // --- Enhanced Error Handling Middleware ---
 app.use((error, req, res, next) => {
     const timestamp = new Date().toISOString();
@@ -514,6 +574,7 @@ app.use('*', (req, res) => {
             '/api/jobs/*',
             '/api/quotes/*',
             '/api/messages/*',
+            '/api/files/download/:fileId', // Added route
             ...(notificationRoutes ? ['/api/notifications/*'] : ['⚠️ /api/notifications/* (disabled)']),
             ...(estimationRoutes ? ['/api/estimation/*'] : ['⚠️ /api/estimation/* (disabled)']),
             ...(adminRoutes ? ['/api/admin/*'] : ['⚠️ /api/admin/* (disabled)'])
@@ -580,6 +641,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`   Jobs: http://localhost:${PORT}/api/jobs/*`);
     console.log(`   Quotes: http://localhost:${PORT}/api/quotes/*`);
     console.log(`   Messages: http://localhost:${PORT}/api/messages/*`);
+    console.log(`   File Download: http://localhost:${PORT}/api/files/download/:fileId`);
     
     if (notificationRoutes) {
         console.log(`   Notifications: http://localhost:${PORT}/api/notifications/*`);

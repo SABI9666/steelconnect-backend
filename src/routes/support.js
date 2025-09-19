@@ -1,9 +1,9 @@
-// src/routes/support.js - Support System Routes
+// src/routes/support.js - Support System Routes (FIXED VERSION)
 import express from 'express';
 import multer from 'multer';
 import { adminDb } from '../config/firebase.js';
 import { authenticateToken } from '../middleware/auth.js';
-import { uploadFiles } from '../utils/fileUpload.js';
+import { uploadMultipleFilesToFirebase } from '../utils/firebaseStorage.js'; // FIXED IMPORT
 
 const router = express.Router();
 
@@ -66,14 +66,14 @@ router.post('/submit', upload.array('attachments', 5), async (req, res) => {
         let attachments = [];
         if (files && files.length > 0) {
             try {
-                // Upload files using your existing file upload utility
-                const uploadedFiles = await uploadFiles(files, `support/${userId}`);
+                // FIXED: Use the correct function name and proper folder structure
+                const uploadedFiles = await uploadMultipleFilesToFirebase(files, `support/${userId}`);
                 attachments = uploadedFiles.map(file => ({
-                    originalName: file.originalname,
-                    filename: file.filename,
+                    originalName: file.originalname || file.name,
+                    filename: file.filename || file.name,
                     mimetype: file.mimetype,
                     size: file.size,
-                    url: file.url,
+                    url: file.url || file.downloadURL,
                     uploadedAt: new Date()
                 }));
                 

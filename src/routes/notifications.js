@@ -1,4 +1,4 @@
-// src/routes/notifications.js - COMPLETE IMPLEMENTATION
+// src/routes/notifications.js - COMPLETE UPDATED IMPLEMENTATION
 import express from 'express';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { adminDb } from '../config/firebase.js';
@@ -38,7 +38,9 @@ router.get('/', async (req, res) => {
         
         const notifications = snapshot.docs.map(doc => ({
             id: doc.id,
-            ...doc.data()
+            ...doc.data(),
+            // Ensure createdAt is properly formatted
+            createdAt: doc.data().createdAt?.toDate ? doc.data().createdAt.toDate().toISOString() : doc.data().createdAt
         }));
         
         // Mark as seen if requested
@@ -326,6 +328,45 @@ router.post('/cleanup', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error cleaning up notifications'
+        });
+    }
+});
+
+// Create support update notification
+router.post('/support-update', async (req, res) => {
+    try {
+        const { userId, ticketId, adminMessage } = req.body;
+        
+        if (!userId || !ticketId) {
+            return res.status(400).json({
+                success: false,
+                message: 'userId and ticketId are required'
+            });
+        }
+        
+        const notificationId = await NotificationService.createNotification(
+            userId,
+            'Support Ticket Update',
+            `Admin has responded to your support ticket: "${adminMessage?.substring(0, 100)}..."`,
+            'support',
+            {
+                action: 'support_reply',
+                ticketId,
+                adminMessage
+            }
+        );
+        
+        res.json({
+            success: true,
+            message: 'Support notification created',
+            notificationId
+        });
+        
+    } catch (error) {
+        console.error('Error creating support notification:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error creating support notification'
         });
     }
 });

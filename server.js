@@ -1,4 +1,4 @@
-// server.js - Complete SteelConnect Backend with Profile Management System and Verified Domain
+// server.js - Complete SteelConnect Backend with Profile Management System and Support System
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -20,7 +20,7 @@ try {
     console.log('✅ Profile routes imported successfully');
 } catch (error) {
     console.error('❌ Profile routes failed to load:', error.message);
-    console.error('🔍 Profile completion functionality will not work');
+    console.error('🔧 Profile completion functionality will not work');
     process.exit(1); // Exit since profile system is critical
 }
 
@@ -31,7 +31,7 @@ try {
     console.log('✅ Admin routes imported successfully');
 } catch (error) {
     console.warn('⚠️ Admin routes not available:', error.message);
-    console.warn('🔍 Admin functionality will be limited');
+    console.warn('🔧 Admin functionality will be limited');
 }
 
 let estimationRoutes;
@@ -41,7 +41,7 @@ try {
     console.log('✅ Estimation routes imported successfully');
 } catch (error) {
     console.warn('⚠️ Estimation routes not available:', error.message);
-    console.warn('🔍 AI estimation features will not work');
+    console.warn('🔧 AI estimation features will not work');
 }
 
 let notificationRoutes;
@@ -51,7 +51,18 @@ try {
     console.log('✅ Notification routes imported successfully');
 } catch (error) {
     console.warn('⚠️ Notification routes not available:', error.message);
-    console.warn('🔍 Real-time notifications will not work');
+    console.warn('🔧 Real-time notifications will not work');
+}
+
+// NEW: Import support routes
+let supportRoutes;
+try {
+    const supportModule = await import('./src/routes/support.js');
+    supportRoutes = supportModule.default;
+    console.log('✅ Support routes imported successfully');
+} catch (error) {
+    console.warn('⚠️ Support routes not available:', error.message);
+    console.warn('🔧 Support system will not work');
 }
 
 dotenv.config();
@@ -88,7 +99,7 @@ if (process.env.RESEND_API_KEY) {
     }
 } else {
     console.log('❌ Resend API Key: Missing');
-    console.log('🔍 Add RESEND_API_KEY to your environment variables');
+    console.log('🔧 Add RESEND_API_KEY to your environment variables');
 }
 
 // --- Database Connection with enhanced error handling ---
@@ -106,7 +117,7 @@ if (process.env.MONGODB_URI) {
     })
     .catch(err => {
         console.error('❌ MongoDB connection error:', err.message);
-        console.error('🔍 Check your MONGODB_URI environment variable');
+        console.error('🔧 Check your MONGODB_URI environment variable');
         process.exit(1);
     });
 
@@ -124,7 +135,7 @@ if (process.env.MONGODB_URI) {
     });
 } else {
     console.error('❌ MONGODB_URI not found in environment variables');
-    console.error('🔍 Database connection required for the application to work');
+    console.error('🔧 Database connection required for the application to work');
     process.exit(1);
 }
 
@@ -202,13 +213,14 @@ app.get('/health', (req, res) => {
             total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + ' MB'
         },
         environment: process.env.NODE_ENV || 'development',
-        version: '2.0.0',
+        version: '2.1.0', // Updated version for support system
         services: {
             database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
             notifications: notificationRoutes ? 'available' : 'unavailable',
             estimation: estimationRoutes ? 'available' : 'unavailable',
             admin: adminRoutes ? 'available' : 'unavailable',
             profile: profileRoutes ? 'available' : 'unavailable',
+            support: supportRoutes ? 'available' : 'unavailable', // NEW
             email: process.env.RESEND_API_KEY ? (isVerifiedDomain ? 'verified_domain' : 'configured') : 'missing'
         },
         email_config: {
@@ -228,12 +240,13 @@ app.get('/', (req, res) => {
     const isVerifiedDomain = emailDomain.includes('steelconnectapp.com');
     
     res.json({ 
-        message: 'SteelConnect Backend API v2.0 - Profile Management System',
-        version: '2.0.0',
+        message: 'SteelConnect Backend API v2.1 - Profile Management & Support System',
+        version: '2.1.0',
         status: 'healthy',
         documentation: 'Visit /api for available endpoints',
         features: {
             'Profile Management System': profileRoutes ? '✅ Active' : '❌ Disabled',
+            'Support System': supportRoutes ? '✅ Active' : '❌ Disabled', // NEW
             'Real-time Notifications': notificationRoutes ? '✅ Active' : '❌ Disabled',
             'AI Cost Estimation': estimationRoutes ? '✅ Active' : '❌ Disabled',
             'Admin Panel': adminRoutes ? '✅ Active' : '❌ Disabled',
@@ -258,7 +271,8 @@ app.get('/', (req, res) => {
             quotes: '/api/quotes',
             messages: '/api/messages',
             estimation: '/api/estimation',
-            notifications: '/api/notifications'
+            notifications: '/api/notifications',
+            support: '/api/support' // NEW
         }
     });
 });
@@ -269,12 +283,13 @@ app.get('/api', (req, res) => {
     const isVerifiedDomain = emailDomain.includes('steelconnectapp.com');
     
     res.json({
-        message: 'SteelConnect API v2.0 - Profile Management System',
-        version: '2.0.0',
+        message: 'SteelConnect API v2.1 - Profile Management & Support System',
+        version: '2.1.0',
         timestamp: new Date().toISOString(),
         status: 'operational',
         authentication: 'Bearer token required for protected routes',
         profile_system: 'Users must complete profile and get admin approval',
+        support_system: 'Integrated support ticket system for user assistance', // NEW
         email_configuration: {
             status: process.env.RESEND_API_KEY ? 'configured' : 'missing',
             from_domain: emailDomain,
@@ -301,6 +316,18 @@ app.get('/api', (req, res) => {
                 email_domain: emailDomain
             },
             {
+                path: 'POST /api/support/submit',
+                description: 'Submit support request with file attachments',
+                authentication: 'Required',
+                status: supportRoutes ? 'Available' : 'Disabled'
+            },
+            {
+                path: 'GET /api/support/my-tickets',
+                description: 'Get user\'s support tickets',
+                authentication: 'Required',
+                status: supportRoutes ? 'Available' : 'Disabled'
+            },
+            {
                 path: 'GET /api/profile/status',
                 description: 'Check profile completion status',
                 authentication: 'Required'
@@ -315,6 +342,12 @@ app.get('/api', (req, res) => {
                 description: 'Get pending profile reviews',
                 authentication: 'Required (Admin)',
                 status: adminRoutes ? 'Available' : 'Disabled'
+            },
+            {
+                path: 'GET /api/admin/support-messages',
+                description: 'Get all support tickets for admin',
+                authentication: 'Required (Admin)',
+                status: adminRoutes && supportRoutes ? 'Available' : 'Disabled'
             },
             {
                 path: 'GET /api/jobs',
@@ -348,7 +381,7 @@ if (authRoutes) {
     console.log('   • Token verification');
 } else {
     console.error('❌ CRITICAL: Auth routes failed to load');
-    console.error('🔍 Authentication will not work - application cannot start');
+    console.error('🔧 Authentication will not work - application cannot start');
     process.exit(1);
 }
 
@@ -357,7 +390,7 @@ if (profileRoutes) {
     app.use('/api/profile', profileRoutes);
     console.log('✅ Profile routes registered at /api/profile');
     console.log('👤 Profile management system: ENABLED');
-    console.log('🔍 Profile features available:');
+    console.log('🔧 Profile features available:');
     console.log('   • Profile completion workflow');
     console.log('   • File uploads (resumes, certificates)');
     console.log('   • Admin review system');
@@ -366,11 +399,27 @@ if (profileRoutes) {
     console.log('   • Profile status tracking');
 } else {
     console.error('❌ CRITICAL: Profile routes failed to load');
-    console.error('🔍 Profile management will not work - required for app functionality');
+    console.error('🔧 Profile management will not work - required for app functionality');
     process.exit(1);
 }
 
-// Admin routes (Important - for profile approval)
+// NEW: Support routes (Important - for user assistance)
+if (supportRoutes) {
+    app.use('/api/support', supportRoutes);
+    console.log('✅ Support routes registered at /api/support');
+    console.log('🎧 Support system: ENABLED');
+    console.log('   • User support request form');
+    console.log('   • File attachment support');
+    console.log('   • Priority levels (Low, Medium, High, Critical)');
+    console.log('   • Ticket ID generation and tracking');
+    console.log('   • Admin notifications for new requests');
+    console.log('   • Integration with admin message dashboard');
+} else {
+    console.warn('⚠️ Support routes unavailable - support system disabled');
+    console.warn('🔧 Create ./src/routes/support.js for support functionality');
+}
+
+// Admin routes (Important - for profile approval and support management)
 if (adminRoutes) {
     app.use('/api/admin', adminRoutes);
     console.log('✅ Admin routes registered at /api/admin');
@@ -378,9 +427,12 @@ if (adminRoutes) {
     console.log('   • Profile review and approval system');
     console.log('   • User management');
     console.log('   • Dashboard statistics');
+    if (supportRoutes) {
+        console.log('   • Support ticket management'); // NEW
+    }
 } else {
     console.warn('⚠️ Admin routes unavailable - profile approval will not work');
-    console.warn('🔍 Create ./src/routes/admin.js for profile approval system');
+    console.warn('🔧 Create ./src/routes/admin.js for profile approval system');
 }
 
 // Jobs routes (Critical - core functionality)
@@ -389,7 +441,7 @@ if (jobsRoutes) {
     console.log('✅ Jobs routes registered at /api/jobs');
 } else {
     console.error('❌ CRITICAL: Jobs routes failed to load');
-    console.error('🔍 Job management will not work');
+    console.error('🔧 Job management will not work');
     process.exit(1);
 }
 
@@ -399,7 +451,7 @@ if (quotesRoutes) {
     console.log('✅ Quotes routes registered at /api/quotes');
 } else {
     console.error('❌ CRITICAL: Quotes routes failed to load');
-    console.error('🔍 Quote system will not work');
+    console.error('🔧 Quote system will not work');
     process.exit(1);
 }
 
@@ -409,7 +461,7 @@ if (messagesRoutes) {
     console.log('✅ Messages routes registered at /api/messages');
 } else {
     console.error('❌ CRITICAL: Messages routes failed to load');
-    console.error('🔍 Messaging system will not work');
+    console.error('🔧 Messaging system will not work');
     process.exit(1);
 }
 
@@ -420,7 +472,7 @@ if (notificationRoutes) {
     console.log('📱 Real-time notifications: ENABLED');
 } else {
     console.warn('⚠️ Notification routes unavailable - notifications will not work');
-    console.warn('🔍 Create ./src/routes/notifications.js for real-time notifications');
+    console.warn('🔧 Create ./src/routes/notifications.js for real-time notifications');
 }
 
 // Estimation routes (Optional - AI features)
@@ -433,7 +485,7 @@ if (estimationRoutes) {
     console.log('   • Admin result management');
 } else {
     console.warn('⚠️ Estimation routes unavailable - AI features disabled');
-    console.warn('🔍 Cost estimation functionality will not work');
+    console.warn('🔧 Cost estimation functionality will not work');
 }
 
 console.log('📦 Route registration completed');
@@ -496,7 +548,6 @@ app.get('/api/files/download/:fileId', async (req, res) => {
 // =================================================================
 // END: ADDED CODE
 // =================================================================
-
 
 // --- Enhanced Error Handling Middleware ---
 app.use((error, req, res, next) => {
@@ -574,7 +625,8 @@ app.use('*', (req, res) => {
             '/api/jobs/*',
             '/api/quotes/*',
             '/api/messages/*',
-            '/api/files/download/:fileId', // Added route
+            '/api/files/download/:fileId',
+            ...(supportRoutes ? ['/api/support/*'] : ['⚠️ /api/support/* (disabled)']), // NEW
             ...(notificationRoutes ? ['/api/notifications/*'] : ['⚠️ /api/notifications/* (disabled)']),
             ...(estimationRoutes ? ['/api/estimation/*'] : ['⚠️ /api/estimation/* (disabled)']),
             ...(adminRoutes ? ['/api/admin/*'] : ['⚠️ /api/admin/* (disabled)'])
@@ -617,7 +669,7 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // --- Start Server ---
 const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log('🎉 SteelConnect Backend v2.0 Started Successfully');
+    console.log('🎉 SteelConnect Backend v2.1 Started Successfully');
     console.log(`🔗 Server running on port ${PORT}`);
     console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`⏰ Started at: ${new Date().toISOString()}`);
@@ -643,6 +695,9 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`   Messages: http://localhost:${PORT}/api/messages/*`);
     console.log(`   File Download: http://localhost:${PORT}/api/files/download/:fileId`);
     
+    if (supportRoutes) {
+        console.log(`   Support: http://localhost:${PORT}/api/support/*`);
+    }
     if (notificationRoutes) {
         console.log(`   Notifications: http://localhost:${PORT}/api/notifications/*`);
     }
@@ -653,9 +708,19 @@ const server = app.listen(PORT, '0.0.0.0', () => {
         console.log(`   Admin: http://localhost:${PORT}/api/admin/*`);
     }
     
-    console.log('\n🚀 SteelConnect Backend v2.0 is ready!');
+    console.log('\n🚀 SteelConnect Backend v2.1 is ready!');
     console.log('📋 Profile Management System: ACTIVE');
     console.log('👨‍💼 Admin Approval Workflow: ACTIVE');
+    
+    if (supportRoutes) {
+        console.log('🎧 Support System: ✅ ACTIVE');
+        console.log('   • User support requests with file uploads');
+        console.log('   • Priority-based ticket management');
+        console.log('   • Admin notification system');
+        console.log('   • Integration with admin dashboard');
+    } else {
+        console.log('🎧 Support System: ❌ DISABLED');
+    }
     
     // Email status summary
     if (process.env.RESEND_API_KEY && isVerifiedDomain) {

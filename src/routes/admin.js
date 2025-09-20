@@ -17,6 +17,7 @@ router.use(authenticateToken);
 router.use(isAdmin);
 
 // --- DASHBOARD ---
+// GET /api/admin/dashboard - Update dashboard to include proper support stats
 router.get('/dashboard', async (req, res) => {
     try {
         // Existing stats
@@ -25,11 +26,31 @@ router.get('/dashboard', async (req, res) => {
         const jobs = await adminDb.collection('jobs').get();
         const quotes = await adminDb.collection('quotes').get();
         const conversations = await adminDb.collection('conversations').get();
-        
-        // ** NEW: Integrated Support Ticket Stats **
+
+        // ** CORRECTED: Support Ticket Stats **
         const supportTicketsSnapshot = await adminDb.collection('support_tickets').get();
-        const pendingSupportTickets = supportTicketsSnapshot.docs.filter(doc => doc.data().ticketStatus === 'open').length;
-        const criticalSupportTickets = supportTicketsSnapshot.docs.filter(doc => doc.data().priority === 'Critical').length;
+
+        let supportStats = {
+            total: 0,
+            open: 0,
+            in_progress: 0,
+            resolved: 0,
+            closed: 0,
+            critical: 0
+        };
+        supportTicketsSnapshot.forEach(doc => {
+            const data = doc.data();
+            supportStats.total++;
+
+            const status = data.ticketStatus || 'open';
+            if (supportStats.hasOwnProperty(status)) {
+                supportStats[status]++;
+            }
+
+            if (data.priority === 'Critical') {
+                supportStats.critical++;
+            }
+        });
 
         res.json({
             success: true,
@@ -39,9 +60,10 @@ router.get('/dashboard', async (req, res) => {
                 totalQuotes: quotes.size,
                 totalConversations: conversations.size,
                 pendingProfileReviews: pendingReviews.size,
-                totalSupportTickets: supportTicketsSnapshot.size,
-                pendingSupportTickets: pendingSupportTickets,
-                criticalSupportTickets: criticalSupportTickets
+                totalSupportTickets: supportStats.total, // Use calculated total
+                totalSupportMessages: supportStats.total, // Alias for frontend compatibility
+                pendingSupportTickets: supportStats.open,
+                criticalSupportTickets: supportStats.critical
             }
         });
     } catch (error) {
@@ -49,6 +71,7 @@ router.get('/dashboard', async (req, res) => {
         res.status(500).json({ success: false, message: 'Error loading dashboard data' });
     }
 });
+
 
 // --- USER MANAGEMENT ---
 router.get('/users', async (req, res) => {
@@ -1496,65 +1519,213 @@ router.get('/support-messages/:ticketId', async (req, res) => {
     }
 });
 
-// PATCH /api/admin/support-messages/:ticketId/status - Update support ticket status
+// POST /api/admin/support-messages/:ticketId/respond - Respond to support ticket
+router.post('/support-messages/:ticketId/respond', async (req, res) => {
+    try {
+        const { ticketId } = req.params;
+        const { adminResponse, internalNote, status } = req.body;
+        const adminUser = req.user;
+        console.log(`[ADMIN-SUPPORT] Admin ${adminUser.name || adminUser.email} responding to ticket ${ticketId}`);
+        if (!adminResponse || !adminResponse.trim()) {
+            return res.status(400).json({ success: false, message: 'Admin response is required.' });
+        }
+        const ticketRef = adminDb.collection('support_tickets').doc(ticketId);
+        const ticketDoc = await ticketRef.get();
+        if (!ticketDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Support ticket not found.' });
+        }
+        const ticketData = ticketDoc.data();
+        // Create response object with proper timestamp
+        const responseData = {
+            message: adminResponse.trim(),
+            responderName: adminUser.name || adminUser.email,
+            responderEmail: adminUser.email,
+            responderType: 'admin',
+            createdAt: new Date().toISOString(), // Use ISO string instead of Firestore timestamp
+            isRead: false
+        };
+        // Update ticket with response and status
+        const updateData = {
+            ticketStatus: status || 'in_progress',
+            updatedAt: new Date().toISOString(),
+            lastUpdatedBy: adminUser.name || adminUser.email,
+            // Add response to responses array
+            responses: ticketData.responses ? [...ticketData.responses, responseData] : [responseData]
+        };
+        // Add internal note if provided
+        if (internalNote && internalNote.trim()) {
+            const noteData = {
+                note: internalNote.trim(),
+                adminName: adminUser.name || adminUser.email,
+                adminEmail: adminUser.email,
+                createdAt: new Date().toISOString()
+            };
+            updateData.internalNotes = ticketData.internalNotes ? [...ticketData.internalNotes, noteData] : [noteData];
+        }
+        await ticketRef.update(updateData);
+        // CREATE USER NOTIFICATION
+        try {
+            const notificationData = {
+                userId: ticketData.userId || ticketData.senderEmail, // Use userId if available, fallback to email
+                title: 'Support Response',
+                message: `Your support ticket "${ticketData.subject}" has received a response from our support team.`,
+                type: 'support',
+                metadata: {
+                    action: 'support_response',
+                    ticketId: ticketId,
+                    ticketSubject: ticketData.subject,
+                    adminResponse: adminResponse.substring(0, 100) + (adminResponse.length > 100 ? '...' : ''),
+                    responseFrom: adminUser.name || 'Support Team'
+                },
+                isRead: false,
+                seen: false,
+                deleted: false,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+            // Save notification to database
+            const notificationRef = adminDb.collection('notifications').doc();
+            await notificationRef.set(notificationData);
+            console.log(`✅ Support response notification created for user: ${ticketData.senderEmail}`);
+        } catch (notificationError) {
+            console.error('Error creating support response notification:', notificationError);
+            // Don't fail the response if notification fails
+        }
+        res.json({
+            success: true,
+            message: 'Response sent successfully and user has been notified.',
+            ticketId,
+            newStatus: status || 'in_progress'
+        });
+    } catch (error) {
+        console.error('[ADMIN-SUPPORT] Error responding to support ticket:', error);
+        res.status(500).json({ success: false, message: 'Failed to send response to support ticket.' });
+    }
+});
+
+
+// PATCH /api/admin/support-messages/:ticketId/status - Update support ticket status (FIXED)
 router.patch('/support-messages/:ticketId/status', async (req, res) => {
     try {
         const { ticketId } = req.params;
-        const { status, adminResponse, internalNote, assignTo } = req.body;
+        const { status, internalNote, notifyUser } = req.body;
         const adminUser = req.user;
-
         console.log(`[ADMIN-SUPPORT] Updating ticket ${ticketId} status to ${status}`);
-
         const validStatuses = ['open', 'in_progress', 'resolved', 'closed'];
         if (!validStatuses.includes(status)) {
             return res.status(400).json({ success: false, message: 'Invalid status.' });
         }
-
         const ticketRef = adminDb.collection('support_tickets').doc(ticketId);
         const ticketDoc = await ticketRef.get();
-
         if (!ticketDoc.exists) {
             return res.status(404).json({ success: false, message: 'Support ticket not found.' });
         }
-
+        const ticketData = ticketDoc.data();
         const updateData = {
             ticketStatus: status,
-            updatedAt: new Date(),
+            updatedAt: new Date().toISOString(), // Use ISO string
             lastUpdatedBy: adminUser.name || adminUser.email
         };
-
         if (status === 'resolved' || status === 'closed') {
-            updateData.resolvedAt = new Date();
+            updateData.resolvedAt = new Date().toISOString();
+            updateData.resolvedBy = adminUser.name || adminUser.email;
         }
-
-        if (assignTo) {
-            updateData.assignedTo = assignTo;
-            updateData.assignedAt = new Date();
-        }
-
-        const ticketData = ticketDoc.data();
-
-        await ticketRef.update(updateData);
-        
-        // Handling responses and notes requires FieldValue, which should be imported or handled appropriately
-        if (adminResponse && adminResponse.trim()) {
-             // Implementation for arrayUnion might be needed depending on Firebase version
-        }
+        // Add internal note if provided
         if (internalNote && internalNote.trim()) {
-            // Implementation for arrayUnion
+            const noteData = {
+                note: internalNote.trim(),
+                adminName: adminUser.name || adminUser.email,
+                adminEmail: adminUser.email,
+                createdAt: new Date().toISOString()
+            };
+            updateData.internalNotes = ticketData.internalNotes ? [...ticketData.internalNotes, noteData] : [noteData];
         }
-
+        await ticketRef.update(updateData);
+        // Create notification if user should be notified
+        if (notifyUser) {
+            try {
+                const statusMessages = {
+                    'open': 'reopened',
+                    'in_progress': 'being worked on',
+                    'resolved': 'resolved',
+                    'closed': 'closed'
+                };
+                const notificationData = {
+                    userId: ticketData.userId || ticketData.senderEmail,
+                    title: 'Support Ticket Status Update',
+                    message: `Your support ticket "${ticketData.subject}" status has been updated to: ${statusMessages[status]}.`,
+                    type: 'support',
+                    metadata: {
+                        action: 'support_status_update',
+                        ticketId: ticketId,
+                        ticketSubject: ticketData.subject,
+                        newStatus: status,
+                        statusMessage: statusMessages[status],
+                        updatedBy: adminUser.name || 'Support Team'
+                    },
+                    isRead: false,
+                    seen: false,
+                    deleted: false,
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString()
+                };
+                const notificationRef = adminDb.collection('notifications').doc();
+                await notificationRef.set(notificationData);
+                console.log(`✅ Status update notification created for user: ${ticketData.senderEmail}`);
+            } catch (notificationError) {
+                console.error('Error creating status update notification:', notificationError);
+            }
+        }
         res.json({
             success: true,
-            message: `Support ticket updated successfully.`,
+            message: `Support ticket status updated successfully to ${status}.`,
             ticketId,
             newStatus: status
         });
     } catch (error) {
-        console.error('[ADMIN-SUPPORT] Error updating support ticket:', error);
-        res.status(500).json({ success: false, message: 'Failed to update support ticket.' });
+        console.error('[ADMIN-SUPPORT] Error updating support ticket status:', error);
+        res.status(500).json({ success: false, message: 'Failed to update support ticket status.' });
     }
 });
+
+// POST /api/admin/support-messages/:ticketId/internal-note - Add internal note (FIXED)
+router.post('/support-messages/:ticketId/internal-note', async (req, res) => {
+    try {
+        const { ticketId } = req.params;
+        const { note } = req.body;
+        const adminUser = req.user;
+        if (!note || !note.trim()) {
+            return res.status(400).json({ success: false, message: 'Note content is required.' });
+        }
+        const ticketRef = adminDb.collection('support_tickets').doc(ticketId);
+        const ticketDoc = await ticketRef.get();
+        if (!ticketDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Support ticket not found.' });
+        }
+        const ticketData = ticketDoc.data();
+        const noteData = {
+            note: note.trim(),
+            adminName: adminUser.name || adminUser.email,
+            adminEmail: adminUser.email,
+            createdAt: new Date().toISOString() // Use ISO string
+        };
+        const updateData = {
+            internalNotes: ticketData.internalNotes ? [...ticketData.internalNotes, noteData] : [noteData],
+            updatedAt: new Date().toISOString(),
+            lastUpdatedBy: adminUser.name || adminUser.email
+        };
+        await ticketRef.update(updateData);
+        res.json({
+            success: true,
+            message: 'Internal note added successfully.',
+            ticketId
+        });
+    } catch (error) {
+        console.error('[ADMIN-SUPPORT] Error adding internal note:', error);
+        res.status(500).json({ success: false, message: 'Failed to add internal note.' });
+    }
+});
+
 
 // DELETE /api/admin/support-messages/:ticketId - Delete support ticket
 router.delete('/support-messages/:ticketId', async (req, res) => {
@@ -1622,8 +1793,8 @@ router.get('/support-stats', async (req, res) => {
         statsSnapshot.forEach(doc => {
             const data = doc.data();
             const status = data.ticketStatus || 'open';
-            if(stats.hasOwnProperty(status)) stats[status]++;
-            if(data.priority && stats.by_priority.hasOwnProperty(data.priority)) {
+            if (stats.hasOwnProperty(status)) stats[status]++;
+            if (data.priority && stats.by_priority.hasOwnProperty(data.priority)) {
                 stats.by_priority[data.priority]++;
             }
         });

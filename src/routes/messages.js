@@ -1,4 +1,4 @@
-// src/routes/messages.js - FIXED VERSION with temporary notification service
+// src/routes/messages.js - COMPLETE CORRECTED VERSION with proper notification system
 import express from 'express';
 import {
   getConversations,
@@ -10,7 +10,7 @@ import { adminDb } from '../config/firebase.js';
 
 const router = express.Router();
 
-// TEMPORARY NOTIFICATION SERVICE - Remove the incorrect import and use this instead
+// CORRECTED NOTIFICATION SERVICE - Handles all message and support notifications
 class TempNotificationService {
   static async notifyNewMessage(messageData, conversationData) {
     try {
@@ -93,9 +93,108 @@ class TempNotificationService {
       throw error;
     }
   }
+
+  // CORRECTED: Support notification method
+  static async notifySupportResponse(ticketData, adminResponse, adminUser) {
+    try {
+      console.log('📬 Creating support response notification...');
+      
+      if (!ticketData.userId && !ticketData.senderEmail) {
+        console.warn('No user identifier found for support notification');
+        return { success: false, error: 'No user identifier' };
+      }
+
+      // Determine user identifier - prefer userId, fallback to email
+      const userIdentifier = ticketData.userId || ticketData.senderEmail;
+      
+      const notificationData = {
+        userId: userIdentifier,
+        title: 'Support Response',
+        message: `Your support ticket "${ticketData.subject || 'Support Request'}" has received a response from our support team.`,
+        type: 'support',
+        metadata: {
+          action: 'support_response',
+          ticketId: ticketData.ticketId || ticketData.id,
+          ticketSubject: ticketData.subject,
+          adminResponse: adminResponse.substring(0, 100) + (adminResponse.length > 100 ? '...' : ''),
+          responseFrom: adminUser.name || adminUser.email || 'Support Team'
+        },
+        isRead: false,
+        seen: false,
+        deleted: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      // Save notification to database
+      const notificationRef = adminDb.collection('notifications').doc();
+      await notificationRef.set(notificationData);
+      
+      console.log(`✅ Support response notification created for user: ${userIdentifier}`);
+      return { success: true, notificationId: notificationRef.id };
+      
+    } catch (error) {
+      console.error('❌ Error creating support response notification:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // CORRECTED: Support status update notification
+  static async notifySupportStatusUpdate(ticketData, newStatus, adminUser, note = null) {
+    try {
+      console.log('📬 Creating support status update notification...');
+      
+      if (!ticketData.userId && !ticketData.senderEmail) {
+        console.warn('No user identifier found for support status notification');
+        return { success: false, error: 'No user identifier' };
+      }
+
+      const userIdentifier = ticketData.userId || ticketData.senderEmail;
+      
+      const statusMessages = {
+        'open': 'reopened',
+        'in_progress': 'being worked on by our team',
+        'resolved': 'resolved',
+        'closed': 'closed'
+      };
+
+      const notificationData = {
+        userId: userIdentifier,
+        title: 'Support Ticket Status Update',
+        message: `Your support ticket "${ticketData.subject || 'Support Request'}" is now ${statusMessages[newStatus] || newStatus}.`,
+        type: 'support',
+        metadata: {
+          action: 'support_status_update',
+          ticketId: ticketData.ticketId || ticketData.id,
+          ticketSubject: ticketData.subject,
+          oldStatus: ticketData.ticketStatus,
+          newStatus: newStatus,
+          statusMessage: statusMessages[newStatus],
+          updatedBy: adminUser.name || adminUser.email || 'Support Team',
+          note: note
+        },
+        isRead: false,
+        seen: false,
+        deleted: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      // Save notification to database
+      const notificationRef = adminDb.collection('notifications').doc();
+      await notificationRef.set(notificationData);
+      
+      console.log(`✅ Support status notification created for user: ${userIdentifier}`);
+      return { success: true, notificationId: notificationRef.id };
+      
+    } catch (error) {
+      console.error('❌ Error creating support status notification:', error);
+      return { success: false, error: error.message };
+    }
+  }
 }
 
-// Helper function to get participant details (replicated from controller)
+// Helper function to get participant details
 const getParticipantDetails = async (participantIds) => {
     try {
         const participantPromises = participantIds.map(id => adminDb.collection('users').doc(id).get());
@@ -201,7 +300,7 @@ router.post('/:conversationId/messages', checkUserBlocked, async (req, res, next
             text: text.trim(),
             senderId,
             senderName: req.user.name,
-            createdAt: messageTimestamp
+            createdAt: messageTimestamp.toISOString()
         };
         
         console.log(`[MESSAGE-ROUTE] Saving message to subcollection...`);
@@ -213,7 +312,7 @@ router.post('/:conversationId/messages', checkUserBlocked, async (req, res, next
         // Update conversation metadata
         await convoRef.update({ 
             lastMessage: text.trim().substring(0, 100),
-            updatedAt: messageTimestamp,
+            updatedAt: messageTimestamp.toISOString(),
             lastMessageBy: req.user.name
         });
 
@@ -360,5 +459,80 @@ router.get('/can-send', async (req, res) => {
         });
     }
 });
+
+// ADDITIONAL ROUTES FOR SUPPORT SYSTEM INTEGRATION
+
+// Support message notification route (called by admin system)
+router.post('/support/notify', authenticateToken, async (req, res) => {
+    try {
+        // Only allow admin users to create support notifications
+        if (req.user.type !== 'admin') {
+            return res.status(403).json({
+                success: false,
+                message: 'Access denied'
+            });
+        }
+
+        const { ticketData, adminResponse, action, newStatus, note } = req.body;
+        
+        if (!ticketData) {
+            return res.status(400).json({
+                success: false,
+                message: 'ticketData is required'
+            });
+        }
+
+        let result;
+        
+        if (action === 'response' && adminResponse) {
+            // Admin responded to support ticket
+            result = await TempNotificationService.notifySupportResponse(
+                ticketData, 
+                adminResponse, 
+                req.user
+            );
+        } else if (action === 'status_update' && newStatus) {
+            // Admin updated support ticket status
+            result = await TempNotificationService.notifySupportStatusUpdate(
+                ticketData, 
+                newStatus, 
+                req.user, 
+                note
+            );
+        } else {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid action or missing required parameters'
+            });
+        }
+
+        res.json({
+            success: result.success,
+            message: result.success ? 'Support notification created successfully' : 'Failed to create notification',
+            notificationId: result.notificationId,
+            error: result.error
+        });
+
+    } catch (error) {
+        console.error('Error in support notification route:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error creating support notification'
+        });
+    }
+});
+
+// Health check endpoint for message service
+router.get('/health', (req, res) => {
+    res.json({
+        success: true,
+        service: 'messages',
+        timestamp: new Date().toISOString(),
+        status: 'operational'
+    });
+});
+
+// Export the notification service for use by other modules
+export { TempNotificationService };
 
 export default router;

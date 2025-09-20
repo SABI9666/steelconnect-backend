@@ -274,6 +274,7 @@ router.get('/ticket/:ticketId', async (req, res) => {
         
         // Verify user owns this ticket
         if (ticketData.userId !== userId) {
+            console.warn(`[SUPPORT] Access denied for user ${userId} on ticket ${ticketId}`);
             return res.status(403).json({
                 success: false,
                 message: 'Access denied.'
@@ -282,7 +283,9 @@ router.get('/ticket/:ticketId', async (req, res) => {
 
         // Remove admin-only fields but keep responses for conversation history
         const { internalNotes, assignedTo, metadata, ...publicData } = ticketData;
-
+        
+        console.log(`[SUPPORT] Fetched details for ticket ${ticketId} for user ${userId}`);
+        
         res.json({
             success: true,
             ticket: {
@@ -294,7 +297,7 @@ router.get('/ticket/:ticketId', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('[SUPPORT] Error fetching ticket:', error);
+        console.error(`[SUPPORT] Error fetching ticket ${req.params.ticketId}:`, error);
         res.status(500).json({
             success: false,
             message: 'Failed to fetch ticket details.'
@@ -349,7 +352,7 @@ router.post('/ticket/:ticketId/respond', async (req, res) => {
         await ticketRef.update({
             responses: adminDb.FieldValue.arrayUnion(response),
             updatedAt: new Date(),
-            ticketStatus: 'waiting_admin_response',
+            ticketStatus: 'waiting_admin_response', // Status indicating admin needs to reply
             lastResponseAt: new Date(),
             lastResponseBy: req.user.name
         });
@@ -407,323 +410,6 @@ router.post('/ticket/:ticketId/respond', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Failed to add response.'
-        });
-    }
-});
-
-// Get support statistics for user
-router.get('/stats', async (req, res) => {
-    try {
-        const userId = req.user.userId || req.user.id;
-        
-        const ticketsSnapshot = await adminDb.collection('support_tickets')
-            .where('userId', '==', userId)
-            .get();
-
-        const stats = {
-            total: ticketsSnapshot.size,
-            open: 0,
-            in_progress: 0,
-            waiting_admin_response: 0,
-            resolved: 0,
-            closed: 0
-        };
-
-        ticketsSnapshot.forEach(doc => {
-            const data = doc.data();
-            const status = data.ticketStatus || 'open';
-            if (stats.hasOwnProperty(status)) {
-                stats[status]++;
-            }
-        });
-
-        res.json({
-            success: true,
-            stats
-        });
-
-    } catch (error) {
-        console.error('[SUPPORT] Error fetching stats:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch support statistics.'
-        });
-    }
-});
-
-// Search user's tickets
-router.get('/search', async (req, res) => {
-    try {
-        const { query, status, priority } = req.query;
-        const userId = req.user.userId || req.user.id;
-
-        if (!query || query.trim().length < 3) {
-            return res.status(400).json({
-                success: false,
-                message: 'Search query must be at least 3 characters long.'
-            });
-        }
-
-        let ticketsQuery = adminDb.collection('support_tickets')
-            .where('userId', '==', userId);
-
-        // Apply filters
-        if (status && status !== 'all') {
-            ticketsQuery = ticketsQuery.where('ticketStatus', '==', status);
-        }
-
-        if (priority && priority !== 'all') {
-            ticketsQuery = ticketsQuery.where('priority', '==', priority);
-        }
-
-        const ticketsSnapshot = await ticketsQuery
-            .orderBy('createdAt', 'desc')
-            .get();
-
-        const tickets = [];
-        const searchTerm = query.toLowerCase();
-
-        ticketsSnapshot.forEach(doc => {
-            const ticketData = doc.data();
-            
-            // Search in subject and message content
-            const searchableContent = `${ticketData.subject} ${ticketData.message}`.toLowerCase();
-            
-            if (searchableContent.includes(searchTerm)) {
-                const { internalNotes, assignedTo, metadata, ...publicData } = ticketData;
-                tickets.push({
-                    id: doc.id,
-                    ...publicData,
-                    source: metadata?.source || 'web_app'
-                });
-            }
-        });
-
-        res.json({
-            success: true,
-            tickets,
-            count: tickets.length,
-            query
-        });
-
-    } catch (error) {
-        console.error('[SUPPORT] Error searching tickets:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to search support tickets.'
-        });
-    }
-});
-
-// Update ticket (limited updates allowed by user)
-router.patch('/ticket/:ticketId', async (req, res) => {
-    try {
-        const { ticketId } = req.params;
-        const { subject, message } = req.body; // Only allow updating subject and message
-        const userId = req.user.userId || req.user.id;
-
-        const ticketRef = adminDb.collection('support_tickets').doc(ticketId);
-        const ticketDoc = await ticketRef.get();
-
-        if (!ticketDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'Support ticket not found.'
-            });
-        }
-
-        const ticketData = ticketDoc.data();
-        
-        // Verify user owns this ticket
-        if (ticketData.userId !== userId) {
-            return res.status(403).json({
-                success: false,
-                message: 'Access denied.'
-            });
-        }
-
-        // Only allow updates if ticket is still open
-        if (ticketData.ticketStatus !== 'open') {
-            return res.status(400).json({
-                success: false,
-                message: 'Cannot update ticket after it has been processed.'
-            });
-        }
-
-        const updateData = {
-            updatedAt: new Date()
-        };
-
-        if (subject && subject.trim()) {
-            updateData.subject = `[${ticketData.priority}] ${subject.trim()}`;
-        }
-
-        if (message && message.trim()) {
-            updateData.message = message.trim();
-        }
-
-        await ticketRef.update(updateData);
-
-        res.json({
-            success: true,
-            message: 'Support ticket updated successfully.'
-        });
-
-    } catch (error) {
-        console.error('[SUPPORT] Error updating ticket:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to update support ticket.'
-        });
-    }
-});
-
-// Close/Cancel ticket (user can close their own ticket)
-router.post('/ticket/:ticketId/close', async (req, res) => {
-    try {
-        const { ticketId } = req.params;
-        const { reason } = req.body;
-        const userId = req.user.userId || req.user.id;
-
-        const ticketRef = adminDb.collection('support_tickets').doc(ticketId);
-        const ticketDoc = await ticketRef.get();
-
-        if (!ticketDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'Support ticket not found.'
-            });
-        }
-
-        const ticketData = ticketDoc.data();
-        
-        // Verify user owns this ticket
-        if (ticketData.userId !== userId) {
-            return res.status(403).json({
-                success: false,
-                message: 'Access denied.'
-            });
-        }
-
-        // Add closure response
-        const closureResponse = {
-            message: reason ? `Ticket closed by user. Reason: ${reason}` : 'Ticket closed by user.',
-            responderId: userId,
-            responderName: req.user.name,
-            responderType: 'user',
-            createdAt: new Date()
-        };
-
-        await ticketRef.update({
-            ticketStatus: 'closed',
-            closedAt: new Date(),
-            closedBy: req.user.name,
-            responses: adminDb.FieldValue.arrayUnion(closureResponse),
-            updatedAt: new Date()
-        });
-
-        // Notify admins about ticket closure
-        try {
-            const adminUsers = await adminDb.collection('users')
-                .where('role', '==', 'admin')
-                .get();
-
-            if (!adminUsers.empty) {
-                const batch = adminDb.batch();
-                
-                adminUsers.forEach(adminDoc => {
-                    const notificationRef = adminDb.collection('notifications').doc();
-                    const notification = {
-                        userId: adminDoc.id,
-                        title: `Support Ticket Closed - ${ticketData.subject}`,
-                        message: `${req.user.name} closed their support ticket${reason ? `: ${reason}` : '.'}`,
-                        type: 'support',
-                        metadata: {
-                            action: 'ticket_closed_by_user',
-                            ticketId,
-                            userId,
-                            userName: req.user.name,
-                            reason
-                        },
-                        isRead: false,
-                        seen: false,
-                        deleted: false,
-                        createdAt: new Date(),
-                        updatedAt: new Date()
-                    };
-                    
-                    batch.set(notificationRef, notification);
-                });
-
-                await batch.commit();
-            }
-            
-        } catch (notificationError) {
-            console.error('[SUPPORT] Failed to create admin notifications for ticket closure:', notificationError);
-        }
-
-        res.json({
-            success: true,
-            message: 'Support ticket closed successfully.'
-        });
-
-    } catch (error) {
-        console.error('[SUPPORT] Error closing ticket:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to close support ticket.'
-        });
-    }
-});
-
-// Get ticket conversation/history
-router.get('/ticket/:ticketId/conversation', async (req, res) => {
-    try {
-        const { ticketId } = req.params;
-        const userId = req.user.userId || req.user.id;
-
-        const ticketDoc = await adminDb.collection('support_tickets').doc(ticketId).get();
-        
-        if (!ticketDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'Support ticket not found.'
-            });
-        }
-
-        const ticketData = ticketDoc.data();
-        
-        // Verify user owns this ticket
-        if (ticketData.userId !== userId) {
-            return res.status(403).json({
-                success: false,
-                message: 'Access denied.'
-            });
-        }
-
-        // Return conversation history
-        const conversation = {
-            ticketId,
-            subject: ticketData.subject,
-            status: ticketData.ticketStatus,
-            priority: ticketData.priority,
-            createdAt: ticketData.createdAt,
-            responses: ticketData.responses || [],
-            lastResponseAt: ticketData.lastResponseAt,
-            originalMessage: ticketData.message,
-            attachments: ticketData.attachments || []
-        };
-
-        res.json({
-            success: true,
-            conversation
-        });
-
-    } catch (error) {
-        console.error('[SUPPORT] Error fetching ticket conversation:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch ticket conversation.'
         });
     }
 });

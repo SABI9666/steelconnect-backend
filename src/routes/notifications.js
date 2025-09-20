@@ -1,4 +1,5 @@
-// src/routes/notifications.js - COMPLETE UPDATED IMPLEMENTATION
+// src/routes/notifications.js - CORRECTED VERSION with proper support notification handling
+
 import express from 'express';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { adminDb } from '../config/firebase.js';
@@ -9,7 +10,7 @@ const router = express.Router();
 // Apply authentication to all routes
 router.use(authenticateToken);
 
-// Get user notifications with enhanced filtering
+// Get user notifications with enhanced filtering (CORRECTED)
 router.get('/', async (req, res) => {
     try {
         const userId = req.user.userId;
@@ -36,12 +37,16 @@ router.get('/', async (req, res) => {
             .limit(parseInt(limit))
             .get();
         
-        const notifications = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-            // Ensure createdAt is properly formatted
-            createdAt: doc.data().createdAt?.toDate ? doc.data().createdAt.toDate().toISOString() : doc.data().createdAt
-        }));
+        const notifications = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+                id: doc.id,
+                ...data,
+                // CORRECTED: Ensure createdAt is properly formatted
+                createdAt: data.createdAt || new Date().toISOString(),
+                updatedAt: data.updatedAt || data.createdAt || new Date().toISOString()
+            };
+        });
         
         // Mark as seen if requested
         if (markSeen === 'true') {
@@ -61,7 +66,7 @@ router.get('/', async (req, res) => {
         }
         
         // Get counts
-        const counts = await NotificationService.getNotificationCounts(userId);
+        const counts = await getNotificationCounts(userId);
         
         res.json({
             success: true,
@@ -86,13 +91,66 @@ router.get('/', async (req, res) => {
     }
 });
 
-// Mark notification as read
+// CORRECTED: Local notification counts function
+async function getNotificationCounts(userId) {
+    try {
+        const [totalSnapshot, unreadSnapshot, unseenSnapshot] = await Promise.all([
+            adminDb.collection('notifications')
+                .where('userId', '==', userId)
+                .where('deleted', '!=', true)
+                .get(),
+            adminDb.collection('notifications')
+                .where('userId', '==', userId)
+                .where('deleted', '!=', true)
+                .where('isRead', '==', false)
+                .get(),
+            adminDb.collection('notifications')
+                .where('userId', '==', userId)
+                .where('deleted', '!=', true)
+                .where('seen', '==', false)
+                .get()
+        ]);
+
+        return {
+            total: totalSnapshot.size,
+            unread: unreadSnapshot.size,
+            unseen: unseenSnapshot.size
+        };
+    } catch (error) {
+        console.error('Error getting notification counts:', error);
+        return { total: 0, unread: 0, unseen: 0 };
+    }
+}
+
+// Mark notification as read (CORRECTED)
 router.patch('/:notificationId/read', async (req, res) => {
     try {
         const { notificationId } = req.params;
         const userId = req.user.userId;
         
-        await NotificationService.markAsRead(notificationId, userId);
+        // Verify notification belongs to user
+        const notificationDoc = await adminDb.collection('notifications').doc(notificationId).get();
+        
+        if (!notificationDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'Notification not found'
+            });
+        }
+        
+        const notificationData = notificationDoc.data();
+        if (notificationData.userId !== userId) {
+            return res.status(403).json({
+                success: false,
+                message: 'Access denied'
+            });
+        }
+        
+        await adminDb.collection('notifications').doc(notificationId).update({
+            isRead: true,
+            readAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        });
         
         res.json({
             success: true,
@@ -103,7 +161,7 @@ router.patch('/:notificationId/read', async (req, res) => {
         console.error('Error marking notification as read:', error);
         res.status(500).json({
             success: false,
-            message: error.message || 'Error updating notification'
+            message: 'Error updating notification'
         });
     }
 });
@@ -113,12 +171,37 @@ router.post('/mark-all-read', async (req, res) => {
     try {
         const userId = req.user.userId;
         
-        const result = await NotificationService.markAllAsRead(userId);
+        const unreadNotifications = await adminDb.collection('notifications')
+            .where('userId', '==', userId)
+            .where('deleted', '!=', true)
+            .where('isRead', '==', false)
+            .get();
+
+        if (unreadNotifications.empty) {
+            return res.json({
+                success: true,
+                message: 'No unread notifications to update',
+                updated: 0
+            });
+        }
+
+        const batch = adminDb.batch();
+        const timestamp = new Date().toISOString();
         
+        unreadNotifications.docs.forEach(doc => {
+            batch.update(doc.ref, {
+                isRead: true,
+                readAt: timestamp,
+                updatedAt: timestamp
+            });
+        });
+
+        await batch.commit();
+
         res.json({
             success: true,
-            message: result.message,
-            updated: result.updated
+            message: `${unreadNotifications.size} notifications marked as read`,
+            updated: unreadNotifications.size
         });
         
     } catch (error) {
@@ -136,7 +219,29 @@ router.delete('/:notificationId', async (req, res) => {
         const { notificationId } = req.params;
         const userId = req.user.userId;
         
-        await NotificationService.deleteNotification(notificationId, userId);
+        // Verify notification belongs to user
+        const notificationDoc = await adminDb.collection('notifications').doc(notificationId).get();
+        
+        if (!notificationDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'Notification not found'
+            });
+        }
+        
+        const notificationData = notificationDoc.data();
+        if (notificationData.userId !== userId) {
+            return res.status(403).json({
+                success: false,
+                message: 'Access denied'
+            });
+        }
+        
+        await adminDb.collection('notifications').doc(notificationId).update({
+            deleted: true,
+            deletedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        });
         
         res.json({
             success: true,
@@ -147,7 +252,7 @@ router.delete('/:notificationId', async (req, res) => {
         console.error('Error deleting notification:', error);
         res.status(500).json({
             success: false,
-            message: error.message || 'Error deleting notification'
+            message: 'Error deleting notification'
         });
     }
 });
@@ -156,8 +261,7 @@ router.delete('/:notificationId', async (req, res) => {
 router.get('/counts', async (req, res) => {
     try {
         const userId = req.user.userId;
-        
-        const counts = await NotificationService.getNotificationCounts(userId);
+        const counts = await getNotificationCounts(userId);
         
         res.json({
             success: true,
@@ -204,11 +308,11 @@ router.get('/unread-count', async (req, res) => {
     }
 });
 
-// Create notification (internal/admin use)
+// CORRECTED: Create notification (for admin/system use)
 router.post('/create', async (req, res) => {
     try {
-        // Only allow admins to create notifications via API
-        if (req.user.type !== 'admin') {
+        // Allow admins and system to create notifications
+        if (req.user.type !== 'admin' && !req.body.systemGenerated) {
             return res.status(403).json({
                 success: false,
                 message: 'Access denied'
@@ -224,18 +328,26 @@ router.post('/create', async (req, res) => {
             });
         }
         
-        const notificationId = await NotificationService.createNotification(
-            userId, 
-            title, 
-            message, 
-            type || 'info', 
-            metadata || {}
-        );
+        const notificationData = {
+            userId: userId,
+            title: title,
+            message: message,
+            type: type || 'info',
+            metadata: metadata || {},
+            isRead: false,
+            seen: false,
+            deleted: false,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            createdBy: req.user.email || 'system'
+        };
+        
+        const notificationRef = await adminDb.collection('notifications').add(notificationData);
         
         res.json({
             success: true,
             message: 'Notification created',
-            notificationId
+            notificationId: notificationRef.id
         });
         
     } catch (error) {
@@ -243,6 +355,66 @@ router.post('/create', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error creating notification'
+        });
+    }
+});
+
+// CORRECTED: Support update notification (called by admin system)
+router.post('/support-update', async (req, res) => {
+    try {
+        const { userId, ticketId, adminMessage, ticketSubject, action } = req.body;
+        
+        if (!userId || !ticketId) {
+            return res.status(400).json({
+                success: false,
+                message: 'userId and ticketId are required'
+            });
+        }
+        
+        let title = 'Support Update';
+        let message = 'Your support ticket has been updated.';
+        
+        // Customize message based on action
+        if (action === 'response') {
+            title = 'Support Response';
+            message = `Your support ticket "${ticketSubject || 'Support Request'}" has received a response from our team.`;
+        } else if (action === 'status_update') {
+            title = 'Support Status Update';
+            message = `Your support ticket "${ticketSubject || 'Support Request'}" status has been updated.`;
+        }
+        
+        const notificationData = {
+            userId: userId,
+            title: title,
+            message: message,
+            type: 'support',
+            metadata: {
+                action: action || 'support_update',
+                ticketId: ticketId,
+                ticketSubject: ticketSubject,
+                adminMessage: adminMessage ? adminMessage.substring(0, 100) : null
+            },
+            isRead: false,
+            seen: false,
+            deleted: false,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            createdBy: req.user?.email || 'admin'
+        };
+        
+        const notificationRef = await adminDb.collection('notifications').add(notificationData);
+        
+        res.json({
+            success: true,
+            message: 'Support notification created',
+            notificationId: notificationRef.id
+        });
+        
+    } catch (error) {
+        console.error('Error creating support notification:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error creating support notification'
         });
     }
 });
@@ -261,6 +433,7 @@ router.post('/bulk-read', async (req, res) => {
         }
         
         const batch = adminDb.batch();
+        const timestamp = new Date().toISOString();
         let updateCount = 0;
         
         for (const notificationId of notificationIds) {
@@ -270,11 +443,12 @@ router.post('/bulk-read', async (req, res) => {
                 
                 if (notificationDoc.exists) {
                     const notification = notificationDoc.data();
+                    // Verify ownership and unread status
                     if (notification.userId === userId && !notification.isRead) {
                         batch.update(notificationRef, {
                             isRead: true,
-                            readAt: new Date().toISOString(),
-                            updatedAt: new Date().toISOString()
+                            readAt: timestamp,
+                            updatedAt: timestamp
                         });
                         updateCount++;
                     }
@@ -314,13 +488,32 @@ router.post('/cleanup', async (req, res) => {
         }
         
         const { daysToKeep = 90 } = req.body;
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
         
-        const deletedCount = await NotificationService.cleanupOldNotifications(daysToKeep);
+        const oldNotifications = await adminDb.collection('notifications')
+            .where('createdAt', '<', cutoffDate.toISOString())
+            .get();
+
+        if (oldNotifications.empty) {
+            return res.json({
+                success: true,
+                message: 'No old notifications to clean up',
+                deleted: 0
+            });
+        }
+
+        const batch = adminDb.batch();
+        oldNotifications.docs.forEach(doc => {
+            batch.delete(doc.ref);
+        });
+
+        await batch.commit();
         
         res.json({
             success: true,
-            message: `Cleaned up ${deletedCount} old notifications`,
-            deleted: deletedCount
+            message: `Cleaned up ${oldNotifications.size} old notifications`,
+            deleted: oldNotifications.size
         });
         
     } catch (error) {
@@ -328,45 +521,6 @@ router.post('/cleanup', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error cleaning up notifications'
-        });
-    }
-});
-
-// Create support update notification
-router.post('/support-update', async (req, res) => {
-    try {
-        const { userId, ticketId, adminMessage } = req.body;
-        
-        if (!userId || !ticketId) {
-            return res.status(400).json({
-                success: false,
-                message: 'userId and ticketId are required'
-            });
-        }
-        
-        const notificationId = await NotificationService.createNotification(
-            userId,
-            'Support Ticket Update',
-            `Admin has responded to your support ticket: "${adminMessage?.substring(0, 100)}..."`,
-            'support',
-            {
-                action: 'support_reply',
-                ticketId,
-                adminMessage
-            }
-        );
-        
-        res.json({
-            success: true,
-            message: 'Support notification created',
-            notificationId
-        });
-        
-    } catch (error) {
-        console.error('Error creating support notification:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error creating support notification'
         });
     }
 });

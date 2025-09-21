@@ -22,6 +22,10 @@ const contractorOnly = (req, res, next) => {
 router.get('/configuration', authenticateToken, contractorOnly, async (req, res) => {
     try {
         const userId = req.user.uid;
+
+        if (!userId) {
+            return res.status(400).json({ success: false, message: 'User ID not found in token.' });
+        }
         
         // Get or create analysis configuration
         const configDoc = await adminDb
@@ -69,6 +73,10 @@ router.post('/connect-sheet', authenticateToken, contractorOnly, async (req, res
     try {
         const { sheetUrl, dataType, frequency } = req.body;
         const userId = req.user.uid;
+
+        if (!userId) {
+            return res.status(400).json({ success: false, message: 'User ID not found in token.' });
+        }
         
         // Validate Google Sheets URL
         if (!sheetUrl || !sheetUrl.includes('docs.google.com/spreadsheets')) {
@@ -136,6 +144,10 @@ router.post('/update-config', authenticateToken, contractorOnly, async (req, res
     try {
         const { dataType, frequency } = req.body;
         const userId = req.user.uid;
+
+        if (!userId) {
+            return res.status(400).json({ success: false, message: 'User ID not found in token.' });
+        }
         
         const updateData = {
             dataType,
@@ -163,6 +175,10 @@ router.post('/update-config', authenticateToken, contractorOnly, async (req, res
 router.get('/report-url', authenticateToken, contractorOnly, async (req, res) => {
     try {
         const userId = req.user.uid;
+
+        if (!userId) {
+            return res.status(400).json({ success: false, message: 'User ID not found in token.' });
+        }
         
         const configDoc = await adminDb.collection('analysis_configs').doc(userId).get();
         
@@ -191,6 +207,10 @@ router.get('/report-url', authenticateToken, contractorOnly, async (req, res) =>
 router.post('/sync-data', authenticateToken, contractorOnly, async (req, res) => {
     try {
         const userId = req.user.uid;
+
+        if (!userId) {
+            return res.status(400).json({ success: false, message: 'User ID not found in token.' });
+        }
         
         const configDoc = await adminDb.collection('analysis_configs').doc(userId).get();
         

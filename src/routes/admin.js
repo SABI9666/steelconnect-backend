@@ -1862,4 +1862,65 @@ router.delete('/quotes/:id', async (req, res) => {
     }
 });
 
+// --- NEW: ANALYSIS MANAGEMENT ---
+router.get('/analysis/contractors', async (req, res) => {
+    try {
+        console.log('[ADMIN-ANALYSIS] Fetching contractor analysis configurations');
+
+        const configsSnapshot = await adminDb.collection('analysis_configs').get();
+        const contractors = [];
+
+        for (const doc of configsSnapshot.docs) {
+            const config = doc.data();
+
+            // Get user details
+            let userDetails = null;
+            if (config.userId) {
+                try {
+                    const userDoc = await adminDb.collection('users').doc(config.userId).get();
+                    if (userDoc.exists) {
+                        userDetails = userDoc.data();
+                    }
+                } catch (userError) {
+                    console.error(`Error fetching user ${config.userId}:`, userError);
+                }
+            }
+
+            contractors.push({
+                id: doc.id,
+                name: userDetails?.name || config.userName || 'Unknown',
+                email: userDetails?.email || config.userEmail || 'Unknown',
+                dataType: config.dataType,
+                frequency: config.frequency,
+                sheetUrl: config.sheetUrl,
+                sheetId: config.sheetId,
+                vercelUrl: config.vercelHtmlUrl,
+                isActive: config.isActive,
+                lastSyncTime: config.lastSyncTime,
+                connectedAt: config.connectedAt
+            });
+        }
+
+        // Sort by most recent first
+        contractors.sort((a, b) => {
+            const dateA = new Date(a.connectedAt || 0);
+            const dateB = new Date(b.connectedAt || 0);
+            return dateB - dateA;
+        });
+
+        res.json({
+            success: true,
+            contractors,
+            total: contractors.length
+        });
+
+    } catch (error) {
+        console.error('[ADMIN-ANALYSIS] Error fetching contractors:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching contractor analysis data'
+        });
+    }
+});
+
 export default router;

@@ -66,8 +66,8 @@ try {
 }
 
 // NEW: Import analysis routes
-import analysisRoutes from './routes/analysis.js';
-import adminAnalysisRoutes from './routes/adminAnalysis.js';
+import analysisRoutes from './src/routes/analysis.js';
+import adminAnalysisRoutes from './src/routes/adminAnalysis.js';
 
 dotenv.config();
 

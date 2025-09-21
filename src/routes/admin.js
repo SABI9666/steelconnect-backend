@@ -9,12 +9,18 @@ import {
 } from '../config/firebase.js';
 import { sendEstimationResultNotification, sendProfileReviewNotification } from '../utils/emailService.js';
 
+// NEW: Import the router for analysis management
+import analysisRouter from './adminAnalysis.js';
+
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
 // Protect all admin routes with authentication and admin role checks
 router.use(authenticateToken);
 router.use(isAdmin);
+
+// NEW: Use the analysis management routes
+router.use('/analysis', analysisRouter);
 
 // --- DASHBOARD ---
 // GET /api/admin/dashboard - Update dashboard to include proper support stats

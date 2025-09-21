@@ -1,4 +1,4 @@
-// src/routes/support.js - Complete Support System Routes
+// src/routes/support.js - Complete Support System Routes with All Fixes
 import express from 'express';
 import multer from 'multer';
 import { adminDb } from '../config/firebase.js';
@@ -36,7 +36,7 @@ const upload = multer({
 // All support routes require authentication
 router.use(authenticateToken);
 
-// Submit support request
+// Submit support request with enhanced file handling
 router.post('/submit', upload.array('attachments', 5), async (req, res) => {
     try {
         const { subject, priority, message, userType, userName, userEmail } = req.body;
@@ -70,10 +70,11 @@ router.post('/submit', upload.array('attachments', 5), async (req, res) => {
                 attachments = uploadedFiles.map(file => ({
                     originalName: file.originalname || file.name,
                     filename: file.filename || file.name,
+                    name: file.name || file.originalname,
                     mimetype: file.mimetype,
                     size: file.size,
                     url: file.url || file.downloadURL,
-                    uploadedAt: new Date()
+                    uploadedAt: new Date().toISOString()
                 }));
                 
                 console.log(`[SUPPORT] Uploaded ${attachments.length} files for support request`);
@@ -87,8 +88,8 @@ router.post('/submit', upload.array('attachments', 5), async (req, res) => {
         // Create support ticket ID
         const ticketId = `SUP-${Date.now()}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
 
-        // Create the support message document for admin messages collection
-        const supportMessage = {
+        // Create the support ticket document
+        const supportTicket = {
             ticketId,
             subject: `[${priority}] ${subject}`,
             content: message,
@@ -102,30 +103,20 @@ router.post('/submit', upload.array('attachments', 5), async (req, res) => {
             status: 'unread',
             ticketStatus: 'open',
             type: 'support',
-            createdAt: new Date(),
-            updatedAt: new Date(),
+            responses: [], // Initialize empty responses array
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
             
-            // Additional metadata for admin dashboard
+            // Additional metadata
             metadata: {
                 userAgent: req.headers['user-agent'],
                 ipAddress: req.ip || req.connection.remoteAddress,
                 source: 'web_app',
                 category: 'user_support',
                 action: 'support_request_created'
-            }
-        };
-
-        // Save to messages collection (so admin can see it in their message dashboard)
-        const messageRef = adminDb.collection('messages').doc();
-        await messageRef.set(supportMessage);
-
-        console.log(`[SUPPORT] Support ticket ${ticketId} created in messages collection`);
-
-        // Also save to a dedicated support_tickets collection for better organization
-        const supportTicket = {
-            ...supportMessage,
-            messageId: messageRef.id,
-            responses: [],
+            },
+            
+            // Admin fields
             lastResponseAt: null,
             resolvedAt: null,
             assignedTo: null,
@@ -136,10 +127,11 @@ router.post('/submit', upload.array('attachments', 5), async (req, res) => {
             internalNotes: []
         };
 
+        // Save to support_tickets collection
         const supportRef = adminDb.collection('support_tickets').doc(ticketId);
         await supportRef.set(supportTicket);
 
-        console.log(`[SUPPORT] Support ticket ${ticketId} created in support_tickets collection`);
+        console.log(`[SUPPORT] Support ticket ${ticketId} created successfully`);
 
         // Create notifications for admins
         try {
@@ -160,7 +152,6 @@ router.post('/submit', upload.array('attachments', 5), async (req, res) => {
                         metadata: {
                             action: 'support_request_created',
                             ticketId,
-                            messageId: messageRef.id,
                             userId,
                             userName,
                             userEmail,
@@ -171,8 +162,8 @@ router.post('/submit', upload.array('attachments', 5), async (req, res) => {
                         isRead: false,
                         seen: false,
                         deleted: false,
-                        createdAt: new Date(),
-                        updatedAt: new Date()
+                        createdAt: new Date().toISOString(),
+                        updatedAt: new Date().toISOString()
                     };
                     
                     batch.set(notificationRef, notification);
@@ -195,7 +186,6 @@ router.post('/submit', upload.array('attachments', 5), async (req, res) => {
             message: 'Support request submitted successfully. You will receive a response within 24 hours.',
             data: {
                 ticketId,
-                messageId: messageRef.id,
                 status: 'submitted',
                 estimatedResponseTime: '24 hours',
                 attachmentCount: attachments.length,
@@ -216,7 +206,7 @@ router.post('/submit', upload.array('attachments', 5), async (req, res) => {
     }
 });
 
-// Get user's support tickets
+// Get user's support tickets with enhanced response tracking
 router.get('/my-tickets', async (req, res) => {
     try {
         const userId = req.user.userId || req.user.id;
@@ -230,11 +220,24 @@ router.get('/my-tickets', async (req, res) => {
         const tickets = [];
         ticketsSnapshot.forEach(doc => {
             const ticketData = doc.data();
-            // Remove sensitive admin-only fields
+            
+            // Remove sensitive admin-only fields but keep responses for conversation history
             const { internalNotes, assignedTo, metadata, ...publicData } = ticketData;
+            
+            // Process responses to mark admin responses as unread if user hasn't seen them
+            let processedResponses = [];
+            if (ticketData.responses && Array.isArray(ticketData.responses)) {
+                processedResponses = ticketData.responses.map(response => ({
+                    ...response,
+                    // Mark admin responses as unread by default (user needs to mark as read)
+                    isRead: response.responderType === 'user' ? true : (response.isRead || false)
+                }));
+            }
+            
             tickets.push({
                 id: doc.id,
                 ...publicData,
+                responses: processedResponses,
                 // Keep only safe metadata
                 source: metadata?.source || 'web_app'
             });
@@ -255,7 +258,7 @@ router.get('/my-tickets', async (req, res) => {
     }
 });
 
-// Get specific ticket details
+// Get specific ticket details with enhanced file handling
 router.get('/ticket/:ticketId', async (req, res) => {
     try {
         const { ticketId } = req.params;
@@ -284,6 +287,27 @@ router.get('/ticket/:ticketId', async (req, res) => {
         // Remove admin-only fields but keep responses for conversation history
         const { internalNotes, assignedTo, metadata, ...publicData } = ticketData;
         
+        // Process attachments to ensure proper URLs
+        let processedAttachments = [];
+        if (ticketData.attachments && Array.isArray(ticketData.attachments)) {
+            processedAttachments = ticketData.attachments.map((attachment, index) => ({
+                ...attachment,
+                index,
+                name: attachment.originalName || attachment.filename || attachment.name || `Attachment ${index + 1}`,
+                size: attachment.size || 0,
+                uploadedAt: attachment.uploadedAt || ticketData.createdAt
+            }));
+        }
+        
+        // Process responses with proper timestamps
+        let processedResponses = [];
+        if (ticketData.responses && Array.isArray(ticketData.responses)) {
+            processedResponses = ticketData.responses.map(response => ({
+                ...response,
+                createdAt: response.createdAt || new Date().toISOString()
+            }));
+        }
+        
         console.log(`[SUPPORT] Fetched details for ticket ${ticketId} for user ${userId}`);
         
         res.json({
@@ -291,6 +315,8 @@ router.get('/ticket/:ticketId', async (req, res) => {
             ticket: {
                 id: ticketDoc.id,
                 ...publicData,
+                attachments: processedAttachments,
+                responses: processedResponses,
                 // Keep only safe metadata
                 source: metadata?.source || 'web_app'
             }
@@ -340,20 +366,26 @@ router.post('/ticket/:ticketId/respond', async (req, res) => {
             });
         }
 
-        // Add response to the ticket
+        // Create response with proper timestamp and user info
         const response = {
             message: message.trim(),
             responderId: userId,
             responderName: req.user.name,
+            responderEmail: req.user.email || req.user.id, // Fallback for email
             responderType: 'user',
-            createdAt: new Date()
+            createdAt: new Date().toISOString(), // Use ISO string for consistency
+            isRead: false // Track if user has read admin responses
         };
 
+        // Update ticket with new response
+        const currentResponses = ticketData.responses || [];
+        const updatedResponses = [...currentResponses, response];
+
         await ticketRef.update({
-            responses: adminDb.FieldValue.arrayUnion(response),
-            updatedAt: new Date(),
+            responses: updatedResponses,
+            updatedAt: new Date().toISOString(),
             ticketStatus: 'waiting_admin_response', // Status indicating admin needs to reply
-            lastResponseAt: new Date(),
+            lastResponseAt: new Date().toISOString(),
             lastResponseBy: req.user.name
         });
 
@@ -384,8 +416,8 @@ router.post('/ticket/:ticketId/respond', async (req, res) => {
                         isRead: false,
                         seen: false,
                         deleted: false,
-                        createdAt: new Date(),
-                        updatedAt: new Date()
+                        createdAt: new Date().toISOString(),
+                        updatedAt: new Date().toISOString()
                     };
                     
                     batch.set(notificationRef, notification);
@@ -412,6 +444,117 @@ router.post('/ticket/:ticketId/respond', async (req, res) => {
             message: 'Failed to add response.'
         });
     }
+});
+
+// Get support ticket files
+router.get('/ticket/:ticketId/files', async (req, res) => {
+    try {
+        const { ticketId } = req.params;
+        const userId = req.user.userId || req.user.id;
+
+        const ticketDoc = await adminDb.collection('support_tickets').doc(ticketId).get();
+        
+        if (!ticketDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'Support ticket not found.'
+            });
+        }
+
+        const ticketData = ticketDoc.data();
+        
+        // Verify user owns this ticket
+        if (ticketData.userId !== userId) {
+            return res.status(403).json({
+                success: false,
+                message: 'Access denied.'
+            });
+        }
+
+        const attachments = ticketData.attachments || [];
+
+        res.json({
+            success: true,
+            files: attachments.map((attachment, index) => ({
+                index,
+                name: attachment.originalName || attachment.filename || attachment.name || `Attachment ${index + 1}`,
+                url: attachment.url,
+                size: attachment.size || 0,
+                mimetype: attachment.mimetype || 'application/octet-stream',
+                uploadedAt: attachment.uploadedAt || ticketData.createdAt
+            }))
+        });
+
+    } catch (error) {
+        console.error('Error fetching support ticket files:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch ticket files.'
+        });
+    }
+});
+
+// Mark admin responses as read
+router.patch('/ticket/:ticketId/mark-responses-read', async (req, res) => {
+    try {
+        const { ticketId } = req.params;
+        const userId = req.user.userId || req.user.id;
+
+        const ticketRef = adminDb.collection('support_tickets').doc(ticketId);
+        const ticketDoc = await ticketRef.get();
+
+        if (!ticketDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'Support ticket not found.'
+            });
+        }
+
+        const ticketData = ticketDoc.data();
+        
+        // Verify user owns this ticket
+        if (ticketData.userId !== userId) {
+            return res.status(403).json({
+                success: false,
+                message: 'Access denied.'
+            });
+        }
+
+        // Mark all admin responses as read
+        const updatedResponses = (ticketData.responses || []).map(response => {
+            if (response.responderType === 'admin') {
+                return { ...response, isRead: true, readAt: new Date().toISOString() };
+            }
+            return response;
+        });
+
+        await ticketRef.update({
+            responses: updatedResponses,
+            updatedAt: new Date().toISOString()
+        });
+
+        res.json({
+            success: true,
+            message: 'Admin responses marked as read.'
+        });
+
+    } catch (error) {
+        console.error('[SUPPORT] Error marking responses as read:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to mark responses as read.'
+        });
+    }
+});
+
+// Health check endpoint
+router.get('/health', (req, res) => {
+    res.json({
+        success: true,
+        service: 'support',
+        timestamp: new Date().toISOString(),
+        status: 'operational'
+    });
 });
 
 export default router;

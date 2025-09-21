@@ -51,6 +51,25 @@ router.get('/dashboard', async (req, res) => {
                 supportStats.critical++;
             }
         });
+        
+        // Add analysis requests stats
+        const analysisSnapshot = await adminDb.collection('analysis_requests').get();
+        let analysisStats = {
+            total: 0,
+            pending: 0,
+            completed: 0
+        };
+
+        analysisSnapshot.forEach(doc => {
+            const data = doc.data();
+            analysisStats.total++;
+            if (data.vercelUrl) {
+                analysisStats.completed++;
+            } else {
+                analysisStats.pending++;
+            }
+        });
+
 
         res.json({
             success: true,
@@ -63,7 +82,10 @@ router.get('/dashboard', async (req, res) => {
                 totalSupportTickets: supportStats.total, // Use calculated total
                 totalSupportMessages: supportStats.total, // Alias for frontend compatibility
                 pendingSupportTickets: supportStats.open,
-                criticalSupportTickets: supportStats.critical
+                criticalSupportTickets: supportStats.critical,
+                totalAnalysisRequests: analysisStats.total,
+                pendingAnalysisRequests: analysisStats.pending,
+                completedAnalysisRequests: analysisStats.completed
             }
         });
     } catch (error) {
@@ -1861,5 +1883,176 @@ router.delete('/quotes/:id', async (req, res) => {
         res.status(500).json({ success: false, message: `Error deleting item` });
     }
 });
+
+// === ANALYSIS PORTAL ROUTES ===
+// GET /api/admin/analysis/requests - Get all analysis requests
+router.get('/analysis/requests', async (req, res) => {
+    try {
+        const snapshot = await adminDb.collection('analysis_requests')
+            .orderBy('createdAt', 'desc')
+            .get();
+        const requests = [];
+        for (const doc of snapshot.docs) {
+            const data = doc.data();
+            // Get contractor details
+            let contractorInfo = {
+                name: data.contractorName || 'Unknown',
+                email: data.contractorEmail || 'Unknown'
+            };
+            if (data.contractorId) {
+                try {
+                    const userDoc = await adminDb.collection('users').doc(data.contractorId).get();
+                    if (userDoc.exists) {
+                        const userData = userDoc.data();
+                        contractorInfo = {
+                            name: userData.name || data.contractorName,
+                            email: userData.email || data.contractorEmail
+                        };
+                    }
+                } catch (error) {
+                    console.error('Error fetching contractor details:', error);
+                }
+            }
+            requests.push({
+                _id: doc.id,
+                contractorId: data.contractorId,
+                contractorName: contractorInfo.name,
+                contractorEmail: contractorInfo.email,
+                dataType: data.dataType || 'Production Update',
+                frequency: data.frequency || 'Daily',
+                description: data.description || '',
+                googleSheetUrl: data.googleSheetUrl,
+                vercelUrl: data.vercelUrl || null,
+                status: data.vercelUrl ? 'completed' : 'pending',
+                adminNotes: data.adminNotes || '',
+                createdAt: data.createdAt,
+                updatedAt: data.updatedAt
+            });
+        }
+        res.json({
+            success: true,
+            requests: requests
+        });
+    } catch (error) {
+        console.error('[ADMIN-ANALYSIS] Error fetching analysis requests:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch analysis requests'
+        });
+    }
+});
+
+// POST /api/admin/analysis/upload-report - Upload Vercel URL for analysis
+router.post('/analysis/upload-report', async (req, res) => {
+    try {
+        const { requestId, vercelUrl, adminNotes } = req.body;
+        if (!requestId || !vercelUrl) {
+            return res.status(400).json({
+                success: false,
+                message: 'Request ID and Vercel URL are required'
+            });
+        }
+        // Validate URL format
+        try {
+            new URL(vercelUrl);
+        } catch (e) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid URL format'
+            });
+        }
+        // Update the analysis request
+        const updateData = {
+            vercelUrl: vercelUrl,
+            adminNotes: adminNotes || '',
+            status: 'completed',
+            completedAt: new Date().toISOString(),
+            completedBy: req.user.email,
+            updatedAt: new Date().toISOString()
+        };
+        await adminDb.collection('analysis_requests').doc(requestId).update(updateData);
+        // Get the request details for notification
+        const requestDoc = await adminDb.collection('analysis_requests').doc(requestId).get();
+        const requestData = requestDoc.data();
+        // Create notification for contractor
+        if (requestData.contractorId) {
+            const notificationData = {
+                userId: requestData.contractorId,
+                title: 'Analysis Report Ready',
+                message: 'Your analysis report has been uploaded and is ready to view.',
+                type: 'analysis',
+                metadata: {
+                    action: 'analysis_completed',
+                    requestId: requestId,
+                    dataType: requestData.dataType
+                },
+                isRead: false,
+                seen: false,
+                createdAt: new Date().toISOString()
+            };
+            await adminDb.collection('notifications').add(notificationData);
+        }
+        res.json({
+            success: true,
+            message: 'Analysis report uploaded successfully'
+        });
+    } catch (error) {
+        console.error('[ADMIN-ANALYSIS] Error uploading report:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to upload analysis report'
+        });
+    }
+});
+
+// DELETE /api/admin/analysis/request/:requestId - Delete analysis request
+router.delete('/analysis/request/:requestId', async (req, res) => {
+    try {
+        const { requestId } = req.params;
+        await adminDb.collection('analysis_requests').doc(requestId).delete();
+        res.json({
+            success: true,
+            message: 'Analysis request deleted successfully'
+        });
+    } catch (error) {
+        console.error('[ADMIN-ANALYSIS] Error deleting request:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to delete analysis request'
+        });
+    }
+});
+
+// GET /api/admin/analysis/stats - Get analysis statistics
+router.get('/analysis/stats', async (req, res) => {
+    try {
+        const snapshot = await adminDb.collection('analysis_requests').get();
+        let stats = {
+            total: 0,
+            pending: 0,
+            completed: 0
+        };
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            stats.total++;
+            if (data.vercelUrl) {
+                stats.completed++;
+            } else {
+                stats.pending++;
+            }
+        });
+        res.json({
+            success: true,
+            stats: stats
+        });
+    } catch (error) {
+        console.error('[ADMIN-ANALYSIS] Error fetching stats:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch analysis statistics'
+        });
+    }
+});
+
 
 export default router;

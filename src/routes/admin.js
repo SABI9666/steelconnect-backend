@@ -1,4 +1,4 @@
-// src/routes/admin.js - COMPLETE FINAL MERGED VERSION
+// src/routes/admin.js - COMPLETE FINAL MERGED VERSION WITH BUSINESS ANALYTICS
 import express from 'express';
 import multer from 'multer';
 import { authenticateToken, isAdmin } from '../middleware/authMiddleware.js';
@@ -27,7 +27,7 @@ router.get('/dashboard', async (req, res) => {
         const quotes = await adminDb.collection('quotes').get();
         const conversations = await adminDb.collection('conversations').get();
 
-        // ** CORRECTED: Support Ticket Stats **
+        // Support Ticket Stats
         const supportTicketsSnapshot = await adminDb.collection('support_tickets').get();
 
         let supportStats = {
@@ -52,7 +52,7 @@ router.get('/dashboard', async (req, res) => {
             }
         });
         
-        // Add analysis requests stats
+        // Business Analytics requests stats
         const analysisSnapshot = await adminDb.collection('analysis_requests').get();
         let analysisStats = {
             total: 0,
@@ -70,7 +70,6 @@ router.get('/dashboard', async (req, res) => {
             }
         });
 
-
         res.json({
             success: true,
             stats: {
@@ -79,13 +78,16 @@ router.get('/dashboard', async (req, res) => {
                 totalQuotes: quotes.size,
                 totalConversations: conversations.size,
                 pendingProfileReviews: pendingReviews.size,
-                totalSupportTickets: supportStats.total, // Use calculated total
-                totalSupportMessages: supportStats.total, // Alias for frontend compatibility
+                totalSupportTickets: supportStats.total,
+                totalSupportMessages: supportStats.total,
                 pendingSupportTickets: supportStats.open,
                 criticalSupportTickets: supportStats.critical,
                 totalAnalysisRequests: analysisStats.total,
                 pendingAnalysisRequests: analysisStats.pending,
-                completedAnalysisRequests: analysisStats.completed
+                completedAnalysisRequests: analysisStats.completed,
+                totalBusinessAnalyticsRequests: analysisStats.total,
+                pendingBusinessAnalyticsRequests: analysisStats.pending,
+                completedBusinessAnalyticsRequests: analysisStats.completed
             }
         });
     } catch (error) {
@@ -93,7 +95,6 @@ router.get('/dashboard', async (req, res) => {
         res.status(500).json({ success: false, message: 'Error loading dashboard data' });
     }
 });
-
 
 // --- USER MANAGEMENT ---
 router.get('/users', async (req, res) => {
@@ -1197,7 +1198,6 @@ router.post('/estimations/:estimationId/result', upload.single('resultFile'), as
     }
 });
 
-
 router.delete('/estimations/:id', async (req, res) => {
     try {
         await adminDb.collection('estimations').doc(req.params.id).delete();
@@ -1456,7 +1456,7 @@ function getFileTypeFromName(filename) {
     return typeMap[ext] || 'application/octet-stream';
 }
 
-// --- NEW: SUPPORT TICKET MANAGEMENT ---
+// --- SUPPORT TICKET MANAGEMENT ---
 
 // GET /api/admin/support-messages - Get all support messages/tickets
 router.get('/support-messages', async (req, res) => {
@@ -1510,7 +1510,7 @@ router.get('/support-messages', async (req, res) => {
             pagination: {
                 page: parseInt(page),
                 limit: parseInt(limit),
-                total: supportMessages.length, // This should ideally be the total count from the collection
+                total: supportMessages.length,
                 hasNext: supportMessages.length === parseInt(limit)
             }
         });
@@ -1563,7 +1563,7 @@ router.post('/support-messages/:ticketId/respond', async (req, res) => {
             responderName: adminUser.name || adminUser.email,
             responderEmail: adminUser.email,
             responderType: 'admin',
-            createdAt: new Date().toISOString(), // Use ISO string instead of Firestore timestamp
+            createdAt: new Date().toISOString(),
             isRead: false
         };
         // Update ticket with response and status
@@ -1588,7 +1588,7 @@ router.post('/support-messages/:ticketId/respond', async (req, res) => {
         // CREATE USER NOTIFICATION
         try {
             const notificationData = {
-                userId: ticketData.userId || ticketData.senderEmail, // Use userId if available, fallback to email
+                userId: ticketData.userId || ticketData.senderEmail,
                 title: 'Support Response',
                 message: `Your support ticket "${ticketData.subject}" has received a response from our support team.`,
                 type: 'support',
@@ -1625,8 +1625,7 @@ router.post('/support-messages/:ticketId/respond', async (req, res) => {
     }
 });
 
-
-// PATCH /api/admin/support-messages/:ticketId/status - Update support ticket status (FIXED)
+// PATCH /api/admin/support-messages/:ticketId/status - Update support ticket status
 router.patch('/support-messages/:ticketId/status', async (req, res) => {
     try {
         const { ticketId } = req.params;
@@ -1645,7 +1644,7 @@ router.patch('/support-messages/:ticketId/status', async (req, res) => {
         const ticketData = ticketDoc.data();
         const updateData = {
             ticketStatus: status,
-            updatedAt: new Date().toISOString(), // Use ISO string
+            updatedAt: new Date().toISOString(),
             lastUpdatedBy: adminUser.name || adminUser.email
         };
         if (status === 'resolved' || status === 'closed') {
@@ -1710,7 +1709,7 @@ router.patch('/support-messages/:ticketId/status', async (req, res) => {
     }
 });
 
-// POST /api/admin/support-messages/:ticketId/internal-note - Add internal note (FIXED)
+// POST /api/admin/support-messages/:ticketId/internal-note - Add internal note
 router.post('/support-messages/:ticketId/internal-note', async (req, res) => {
     try {
         const { ticketId } = req.params;
@@ -1729,7 +1728,7 @@ router.post('/support-messages/:ticketId/internal-note', async (req, res) => {
             note: note.trim(),
             adminName: adminUser.name || adminUser.email,
             adminEmail: adminUser.email,
-            createdAt: new Date().toISOString() // Use ISO string
+            createdAt: new Date().toISOString()
         };
         const updateData = {
             internalNotes: ticketData.internalNotes ? [...ticketData.internalNotes, noteData] : [noteData],
@@ -1747,7 +1746,6 @@ router.post('/support-messages/:ticketId/internal-note', async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to add internal note.' });
     }
 });
-
 
 // DELETE /api/admin/support-messages/:ticketId - Delete support ticket
 router.delete('/support-messages/:ticketId', async (req, res) => {
@@ -1854,6 +1852,232 @@ router.post('/support-messages/bulk-action', async (req, res) => {
     }
 });
 
+// === BUSINESS ANALYTICS PORTAL ROUTES ===
+// GET /api/admin/business-analytics/requests - Get all business analytics requests
+router.get('/business-analytics/requests', async (req, res) => {
+    try {
+        const snapshot = await adminDb.collection('analysis_requests')
+            .orderBy('createdAt', 'desc')
+            .get();
+        const requests = [];
+        
+        for (const doc of snapshot.docs) {
+            const data = doc.data();
+            
+            // Get contractor details
+            let contractorInfo = {
+                name: data.contractorName || 'Unknown',
+                email: data.contractorEmail || 'Unknown'
+            };
+            
+            if (data.contractorId) {
+                try {
+                    const userDoc = await adminDb.collection('users').doc(data.contractorId).get();
+                    if (userDoc.exists) {
+                        const userData = userDoc.data();
+                        contractorInfo = {
+                            name: userData.name || data.contractorName,
+                            email: userData.email || data.contractorEmail
+                        };
+                    }
+                } catch (error) {
+                    console.error('Error fetching contractor details:', error);
+                }
+            }
+            
+            requests.push({
+                _id: doc.id,
+                contractorId: data.contractorId,
+                contractorName: contractorInfo.name,
+                contractorEmail: contractorInfo.email,
+                dataType: data.dataType || 'Production Update',
+                frequency: data.frequency || 'Daily',
+                description: data.description || '',
+                googleSheetUrl: data.googleSheetUrl,
+                vercelUrl: data.vercelUrl || null,
+                status: data.vercelUrl ? 'completed' : 'pending',
+                adminNotes: data.adminNotes || '',
+                createdAt: data.createdAt,
+                updatedAt: data.updatedAt
+            });
+        }
+        
+        res.json({
+            success: true,
+            requests: requests
+        });
+    } catch (error) {
+        console.error('[ADMIN-BUSINESS-ANALYTICS] Error fetching requests:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch business analytics requests'
+        });
+    }
+});
+
+// POST /api/admin/business-analytics/upload-report - Upload HTML report for business analytics
+router.post('/business-analytics/upload-report', upload.single('reportFile'), async (req, res) => {
+    try {
+        const { requestId, reportUrl, adminNotes } = req.body;
+        
+        if (!requestId) {
+            return res.status(400).json({
+                success: false,
+                message: 'Request ID is required'
+            });
+        }
+
+        let finalReportUrl = reportUrl;
+
+        // If a file was uploaded, handle it
+        if (req.file) {
+            try {
+                // Create secure file path for HTML report
+                const filePath = `business-analytics-reports/${requestId}/${req.file.originalname}`;
+                
+                // Upload metadata
+                const uploadMetadata = {
+                    requestId: requestId,
+                    uploadedBy: req.user.email,
+                    fileType: 'business_analytics_report',
+                    uploadedAt: new Date().toISOString()
+                };
+
+                console.log(`[ADMIN-BUSINESS-ANALYTICS] Uploading report for request ${requestId}`);
+
+                // Use the existing secure upload function
+                const uploadedFile = await uploadToFirebaseStorage(req.file, filePath, uploadMetadata);
+                finalReportUrl = uploadedFile.url;
+                
+            } catch (uploadError) {
+                console.error('[ADMIN-BUSINESS-ANALYTICS] File upload error:', uploadError);
+                return res.status(500).json({
+                    success: false,
+                    message: 'Failed to upload report file'
+                });
+            }
+        }
+
+        if (!finalReportUrl) {
+            return res.status(400).json({
+                success: false,
+                message: 'Either report URL or report file is required'
+            });
+        }
+
+        // Validate URL format if provided
+        if (reportUrl) {
+            try {
+                new URL(reportUrl);
+            } catch (e) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid URL format'
+                });
+            }
+        }
+
+        // Update the business analytics request
+        const updateData = {
+            vercelUrl: finalReportUrl,
+            adminNotes: adminNotes || '',
+            status: 'completed',
+            completedAt: new Date().toISOString(),
+            completedBy: req.user.email,
+            updatedAt: new Date().toISOString()
+        };
+        
+        await adminDb.collection('analysis_requests').doc(requestId).update(updateData);
+        
+        // Get the request details for notification
+        const requestDoc = await adminDb.collection('analysis_requests').doc(requestId).get();
+        const requestData = requestDoc.data();
+        
+        // Create notification for contractor
+        if (requestData.contractorId || requestData.contractorEmail) {
+            const notificationData = {
+                userId: requestData.contractorId || requestData.contractorEmail,
+                title: 'Business Analytics Report Ready',
+                message: 'Your business analytics report has been completed and is ready to view.',
+                type: 'business_analytics',
+                metadata: {
+                    action: 'analytics_completed',
+                    requestId: requestId,
+                    dataType: requestData.dataType
+                },
+                isRead: false,
+                seen: false,
+                createdAt: new Date().toISOString()
+            };
+            
+            await adminDb.collection('notifications').add(notificationData);
+        }
+        
+        res.json({
+            success: true,
+            message: 'Business analytics report uploaded successfully',
+            reportUrl: finalReportUrl
+        });
+        
+    } catch (error) {
+        console.error('[ADMIN-BUSINESS-ANALYTICS] Error uploading report:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to upload business analytics report'
+        });
+    }
+});
+
+// DELETE /api/admin/business-analytics/request/:requestId - Delete business analytics request
+router.delete('/business-analytics/request/:requestId', async (req, res) => {
+    try {
+        const { requestId } = req.params;
+        await adminDb.collection('analysis_requests').doc(requestId).delete();
+        res.json({
+            success: true,
+            message: 'Business analytics request deleted successfully'
+        });
+    } catch (error) {
+        console.error('[ADMIN-BUSINESS-ANALYTICS] Error deleting request:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to delete business analytics request'
+        });
+    }
+});
+
+// GET /api/admin/business-analytics/stats - Get business analytics statistics
+router.get('/business-analytics/stats', async (req, res) => {
+    try {
+        const snapshot = await adminDb.collection('analysis_requests').get();
+        let stats = {
+            total: 0,
+            pending: 0,
+            completed: 0
+        };
+        
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            stats.total++;
+            if (data.vercelUrl) {
+                stats.completed++;
+            } else {
+                stats.pending++;
+            }
+        });
+        
+        res.json({
+            success: true,
+            stats: stats
+        });
+    } catch (error) {
+        console.error('[ADMIN-BUSINESS-ANALYTICS] Error fetching stats:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch business analytics statistics'
+        });
+    }
+});
 
 // --- GENERAL CONTENT MANAGEMENT ---
 router.get('/jobs', async (req, res) => {
@@ -1883,176 +2107,5 @@ router.delete('/quotes/:id', async (req, res) => {
         res.status(500).json({ success: false, message: `Error deleting item` });
     }
 });
-
-// === ANALYSIS PORTAL ROUTES ===
-// GET /api/admin/analysis/requests - Get all analysis requests
-router.get('/analysis/requests', async (req, res) => {
-    try {
-        const snapshot = await adminDb.collection('analysis_requests')
-            .orderBy('createdAt', 'desc')
-            .get();
-        const requests = [];
-        for (const doc of snapshot.docs) {
-            const data = doc.data();
-            // Get contractor details
-            let contractorInfo = {
-                name: data.contractorName || 'Unknown',
-                email: data.contractorEmail || 'Unknown'
-            };
-            if (data.contractorId) {
-                try {
-                    const userDoc = await adminDb.collection('users').doc(data.contractorId).get();
-                    if (userDoc.exists) {
-                        const userData = userDoc.data();
-                        contractorInfo = {
-                            name: userData.name || data.contractorName,
-                            email: userData.email || data.contractorEmail
-                        };
-                    }
-                } catch (error) {
-                    console.error('Error fetching contractor details:', error);
-                }
-            }
-            requests.push({
-                _id: doc.id,
-                contractorId: data.contractorId,
-                contractorName: contractorInfo.name,
-                contractorEmail: contractorInfo.email,
-                dataType: data.dataType || 'Production Update',
-                frequency: data.frequency || 'Daily',
-                description: data.description || '',
-                googleSheetUrl: data.googleSheetUrl,
-                vercelUrl: data.vercelUrl || null,
-                status: data.vercelUrl ? 'completed' : 'pending',
-                adminNotes: data.adminNotes || '',
-                createdAt: data.createdAt,
-                updatedAt: data.updatedAt
-            });
-        }
-        res.json({
-            success: true,
-            requests: requests
-        });
-    } catch (error) {
-        console.error('[ADMIN-ANALYSIS] Error fetching analysis requests:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch analysis requests'
-        });
-    }
-});
-
-// POST /api/admin/analysis/upload-report - Upload Vercel URL for analysis
-router.post('/analysis/upload-report', async (req, res) => {
-    try {
-        const { requestId, vercelUrl, adminNotes } = req.body;
-        if (!requestId || !vercelUrl) {
-            return res.status(400).json({
-                success: false,
-                message: 'Request ID and Vercel URL are required'
-            });
-        }
-        // Validate URL format
-        try {
-            new URL(vercelUrl);
-        } catch (e) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid URL format'
-            });
-        }
-        // Update the analysis request
-        const updateData = {
-            vercelUrl: vercelUrl,
-            adminNotes: adminNotes || '',
-            status: 'completed',
-            completedAt: new Date().toISOString(),
-            completedBy: req.user.email,
-            updatedAt: new Date().toISOString()
-        };
-        await adminDb.collection('analysis_requests').doc(requestId).update(updateData);
-        // Get the request details for notification
-        const requestDoc = await adminDb.collection('analysis_requests').doc(requestId).get();
-        const requestData = requestDoc.data();
-        // Create notification for contractor
-        if (requestData.contractorId) {
-            const notificationData = {
-                userId: requestData.contractorId,
-                title: 'Analysis Report Ready',
-                message: 'Your analysis report has been uploaded and is ready to view.',
-                type: 'analysis',
-                metadata: {
-                    action: 'analysis_completed',
-                    requestId: requestId,
-                    dataType: requestData.dataType
-                },
-                isRead: false,
-                seen: false,
-                createdAt: new Date().toISOString()
-            };
-            await adminDb.collection('notifications').add(notificationData);
-        }
-        res.json({
-            success: true,
-            message: 'Analysis report uploaded successfully'
-        });
-    } catch (error) {
-        console.error('[ADMIN-ANALYSIS] Error uploading report:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to upload analysis report'
-        });
-    }
-});
-
-// DELETE /api/admin/analysis/request/:requestId - Delete analysis request
-router.delete('/analysis/request/:requestId', async (req, res) => {
-    try {
-        const { requestId } = req.params;
-        await adminDb.collection('analysis_requests').doc(requestId).delete();
-        res.json({
-            success: true,
-            message: 'Analysis request deleted successfully'
-        });
-    } catch (error) {
-        console.error('[ADMIN-ANALYSIS] Error deleting request:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to delete analysis request'
-        });
-    }
-});
-
-// GET /api/admin/analysis/stats - Get analysis statistics
-router.get('/analysis/stats', async (req, res) => {
-    try {
-        const snapshot = await adminDb.collection('analysis_requests').get();
-        let stats = {
-            total: 0,
-            pending: 0,
-            completed: 0
-        };
-        snapshot.forEach(doc => {
-            const data = doc.data();
-            stats.total++;
-            if (data.vercelUrl) {
-                stats.completed++;
-            } else {
-                stats.pending++;
-            }
-        });
-        res.json({
-            success: true,
-            stats: stats
-        });
-    } catch (error) {
-        console.error('[ADMIN-ANALYSIS] Error fetching stats:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch analysis statistics'
-        });
-    }
-});
-
 
 export default router;

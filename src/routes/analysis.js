@@ -15,24 +15,24 @@ router.get('/my-request', async (req, res) => {
     try {
         // FIX: Changed req.user.id to req.user.uid
         const userId = req.user.uid;
-
+        
         // Find the most recent request for this contractor
         const snapshot = await adminDb.collection('analysis_requests')
             .where('contractorId', '==', userId)
             .orderBy('createdAt', 'desc')
             .limit(1)
             .get();
-
+        
         if (snapshot.empty) {
             return res.json({
                 success: true,
                 request: null
             });
         }
-
+        
         const doc = snapshot.docs[0];
         const data = doc.data();
-
+        
         res.json({
             success: true,
             request: {
@@ -48,7 +48,7 @@ router.get('/my-request', async (req, res) => {
                 updatedAt: data.updatedAt
             }
         });
-
+        
     } catch (error) {
         console.error('[ANALYSIS] Error fetching contractor request:', error);
         res.status(500).json({
@@ -64,7 +64,7 @@ router.post('/submit-request', async (req, res) => {
         const { dataType, frequency, googleSheetUrl, description } = req.body;
         // FIX: Changed req.user.id to req.user.uid
         const userId = req.user.uid;
-
+        
         // Validate required fields
         if (!googleSheetUrl || !description) {
             return res.status(400).json({
@@ -72,7 +72,7 @@ router.post('/submit-request', async (req, res) => {
                 message: 'Google Sheet URL and description are required'
             });
         }
-
+        
         // Validate Google Sheets URL
         if (!googleSheetUrl.includes('docs.google.com/spreadsheets')) {
             return res.status(400).json({
@@ -80,20 +80,20 @@ router.post('/submit-request', async (req, res) => {
                 message: 'Invalid Google Sheets URL'
             });
         }
-
+        
         // Check if user already has a pending request
         const existingSnapshot = await adminDb.collection('analysis_requests')
             .where('contractorId', '==', userId)
             .where('vercelUrl', '==', null)
             .get();
-
+        
         if (!existingSnapshot.empty) {
             return res.status(400).json({
                 success: false,
                 message: 'You already have a pending analysis request'
             });
         }
-
+        
         // Create new analysis request
         const requestData = {
             contractorId: userId,
@@ -109,9 +109,9 @@ router.post('/submit-request', async (req, res) => {
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
         };
-
+        
         const docRef = await adminDb.collection('analysis_requests').add(requestData);
-
+        
         // Create notification for admin
         await adminDb.collection('admin_notifications').add({
             type: 'new_analysis_request',
@@ -122,13 +122,13 @@ router.post('/submit-request', async (req, res) => {
             createdAt: new Date().toISOString(),
             read: false
         });
-
+        
         res.json({
             success: true,
             message: 'Analysis request submitted successfully',
             requestId: docRef.id
         });
-
+        
     } catch (error) {
         console.error('[ANALYSIS] Error submitting request:', error);
         res.status(500).json({
@@ -145,7 +145,7 @@ router.put('/request/:requestId', async (req, res) => {
         const { dataType, frequency, googleSheetUrl, description } = req.body;
         // FIX: Changed req.user.id to req.user.uid
         const userId = req.user.uid;
-
+        
         // Verify ownership
         const requestDoc = await adminDb.collection('analysis_requests').doc(requestId).get();
         if (!requestDoc.exists) {
@@ -154,7 +154,7 @@ router.put('/request/:requestId', async (req, res) => {
                 message: 'Analysis request not found'
             });
         }
-
+        
         const requestData = requestDoc.data();
         if (requestData.contractorId !== userId) {
             return res.status(403).json({
@@ -162,7 +162,7 @@ router.put('/request/:requestId', async (req, res) => {
                 message: 'You are not authorized to update this request'
             });
         }
-
+        
         // Only allow updates if report hasn't been uploaded
         if (requestData.vercelUrl) {
             return res.status(400).json({
@@ -170,7 +170,7 @@ router.put('/request/:requestId', async (req, res) => {
                 message: 'Cannot update request after report has been uploaded'
             });
         }
-
+        
         // Update request
         const updateData = {
             dataType: dataType || requestData.dataType,
@@ -179,14 +179,14 @@ router.put('/request/:requestId', async (req, res) => {
             description: description || requestData.description,
             updatedAt: new Date().toISOString()
         };
-
+        
         await adminDb.collection('analysis_requests').doc(requestId).update(updateData);
-
+        
         res.json({
             success: true,
             message: 'Analysis request updated successfully'
         });
-
+        
     } catch (error) {
         console.error('[ANALYSIS] Error updating request:', error);
         res.status(500).json({
@@ -202,7 +202,7 @@ router.delete('/request/:requestId', async (req, res) => {
         const { requestId } = req.params;
         // FIX: Changed req.user.id to req.user.uid
         const userId = req.user.uid;
-
+        
         // Verify ownership
         const requestDoc = await adminDb.collection('analysis_requests').doc(requestId).get();
         if (!requestDoc.exists) {
@@ -211,7 +211,7 @@ router.delete('/request/:requestId', async (req, res) => {
                 message: 'Analysis request not found'
             });
         }
-
+        
         const requestData = requestDoc.data();
         if (requestData.contractorId !== userId) {
             return res.status(403).json({
@@ -219,15 +219,15 @@ router.delete('/request/:requestId', async (req, res) => {
                 message: 'You are not authorized to cancel this request'
             });
         }
-
+        
         // Delete request
         await adminDb.collection('analysis_requests').doc(requestId).delete();
-
+        
         res.json({
             success: true,
             message: 'Analysis request cancelled successfully'
         });
-
+        
     } catch (error) {
         console.error('[ANALYSIS] Error cancelling request:', error);
         res.status(500).json({
@@ -242,12 +242,12 @@ router.get('/history', async (req, res) => {
     try {
         // FIX: Changed req.user.id to req.user.uid
         const userId = req.user.uid;
-
+        
         const snapshot = await adminDb.collection('analysis_requests')
             .where('contractorId', '==', userId)
             .orderBy('createdAt', 'desc')
             .get();
-
+        
         const requests = snapshot.docs.map(doc => {
             const data = doc.data();
             return {
@@ -263,12 +263,12 @@ router.get('/history', async (req, res) => {
                 updatedAt: data.updatedAt
             };
         });
-
+        
         res.json({
             success: true,
             requests: requests
         });
-
+        
     } catch (error) {
         console.error('[ANALYSIS] Error fetching history:', error);
         res.status(500).json({

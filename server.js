@@ -67,7 +67,6 @@ try {
 
 // NEW: Import analysis routes
 import analysisRoutes from './src/routes/analysis.js';
-import adminAnalysisRoutes from './src/routes/adminAnalysis.js';
 
 dotenv.config();
 
@@ -279,8 +278,7 @@ app.get('/', (req, res) => {
             estimation: '/api/estimation',
             notifications: '/api/notifications',
             support: '/api/support', // NEW
-            analysis: '/api/analysis', // NEW
-            adminAnalysis: '/api/admin/analysis' // NEW
+            analysis: '/api/analysis' // NEW
         }
     });
 });
@@ -510,10 +508,8 @@ if (estimationRoutes) {
 
 // NEW: Analysis routes
 app.use('/api/analysis', analysisRoutes);
-app.use('/api/admin/analysis', adminAnalysisRoutes);
-console.log('📊 Analysis routes registered at /api/analysis and /api/admin/analysis');
+console.log('📊 Analysis routes registered at /api/analysis');
 console.log('   • User analytics and reporting');
-console.log('   • Admin dashboard insights');
 
 console.log('📦 Route registration completed');
 
@@ -657,8 +653,7 @@ app.use('*', (req, res) => {
             ...(notificationRoutes ? ['/api/notifications/*'] : ['⚠️ /api/notifications/* (disabled)']),
             ...(estimationRoutes ? ['/api/estimation/*'] : ['⚠️ /api/estimation/* (disabled)']),
             ...(adminRoutes ? ['/api/admin/*'] : ['⚠️ /api/admin/* (disabled)']),
-            '/api/analysis/*', // NEW
-            '/api/admin/analysis/*' // NEW
+            '/api/analysis/*' // NEW
         ],
         suggestion: 'Check the API documentation at /api'
     });
@@ -738,7 +733,6 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     }
 
     console.log(`   Analysis: http://localhost:${PORT}/api/analysis/*`);
-    console.log(`   Admin Analysis: http://localhost:${PORT}/api/admin/analysis/*`);
 
     console.log('\n🚀 SteelConnect Backend v2.1 is ready!');
     console.log('📋 Profile Management System: ACTIVE');

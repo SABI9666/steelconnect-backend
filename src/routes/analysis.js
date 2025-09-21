@@ -1,10 +1,10 @@
-// src/routes/analysis.js - NEW FILE
-// Analysis Portal API Routes
+// src/routes/analysis.js - Combined Analysis and Admin Analysis Routes
 
 import express from 'express';
-import { authenticateToken } from '../middleware/authMiddleware.js';
+import { authenticateToken, isAdmin } from '../middleware/authMiddleware.js';
 import { adminDb } from '../config/firebase.js';
 
+// Main router for user-facing analysis endpoints
 const router = express.Router();
 
 // Middleware to ensure only contractors can access
@@ -31,6 +31,18 @@ router.get('/configuration', authenticateToken, contractorOnly, async (req, res)
         
         if (configDoc.exists) {
             const config = configDoc.data();
+            res.json({
+                success: true,
+                config: {
+                    sheetUrl: config.sheetUrl || '',
+                    dataType: config.dataType || 'Production Update',
+                    frequency: config.frequency || 'Daily',
+                    vercelHtmlUrl: config.vercelHtmlUrl || '',
+                    lastSyncTime: config.lastSyncTime || null,
+                    isActive: config.isActive || false
+                }
+            });
+        } else {
             res.json({
                 success: true,
                 config: {
@@ -221,25 +233,15 @@ router.post('/sync-data', authenticateToken, contractorOnly, async (req, res) =>
     }
 });
 
-export default router;
+// Admin sub-router for analysis management
+const adminRouter = express.Router();
 
-// =====================================
-// src/routes/adminAnalysis.js - NEW FILE
-// Admin routes for Analysis Portal Management
-// =====================================
-
-import express from 'express';
-import { authenticateToken, isAdmin } from '../middleware/authMiddleware.js';
-import { adminDb } from '../config/firebase.js';
-
-const router = express.Router();
-
-// Protect all routes with admin authentication
-router.use(authenticateToken);
-router.use(isAdmin);
+// Protect all admin routes with admin authentication
+adminRouter.use(authenticateToken);
+adminRouter.use(isAdmin);
 
 // GET /api/admin/analysis/contractors - Get all contractor analysis configs
-router.get('/contractors', async (req, res) => {
+adminRouter.get('/contractors', async (req, res) => {
     try {
         console.log('[ADMIN-ANALYSIS] Fetching contractor analysis configurations');
         
@@ -300,7 +302,7 @@ router.get('/contractors', async (req, res) => {
 });
 
 // POST /api/admin/analysis/upload-report - Upload Vercel report URL
-router.post('/upload-report', async (req, res) => {
+adminRouter.post('/upload-report', async (req, res) => {
     try {
         const { contractorId, vercelUrl, notes } = req.body;
         
@@ -383,7 +385,7 @@ router.post('/upload-report', async (req, res) => {
 });
 
 // GET /api/admin/analysis/logs - Get analysis activity logs
-router.get('/logs', async (req, res) => {
+adminRouter.get('/logs', async (req, res) => {
     try {
         const { limit = 50, offset = 0 } = req.query;
         
@@ -415,7 +417,7 @@ router.get('/logs', async (req, res) => {
 });
 
 // DELETE /api/admin/analysis/:contractorId/report - Remove Vercel report
-router.delete('/:contractorId/report', async (req, res) => {
+adminRouter.delete('/:contractorId/report', async (req, res) => {
     try {
         const { contractorId } = req.params;
         
@@ -449,5 +451,8 @@ router.delete('/:contractorId/report', async (req, res) => {
         });
     }
 });
+
+// Mount the admin router under the '/admin' path
+router.use('/admin', adminRouter);
 
 export default router;

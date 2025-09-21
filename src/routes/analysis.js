@@ -1,6 +1,4 @@
-// Add these routes to your main backend API (not admin routes)
-// File: src/routes/analysis.js
-
+// src/routes/analysis.js - FIXED VERSION
 import express from 'express';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { adminDb } from '../config/firebase.js';
@@ -13,17 +11,37 @@ router.use(authenticateToken);
 // GET /api/analysis/my-request - Get contractor's analysis request
 router.get('/my-request', async (req, res) => {
     try {
-        // FIX: Changed req.user.id to req.user.uid
-        const userId = req.user.uid;
+        console.log('[ANALYSIS] Fetching request for user:', req.user);
         
-        // Find the most recent request for this contractor
-        const snapshot = await adminDb.collection('analysis_requests')
-            .where('contractorId', '==', userId)
+        // FIX 1: Use email as identifier since that's what's being used in the logs
+        const userEmail = req.user.email;
+        const userId = req.user.uid || req.user.id;
+        
+        if (!userEmail && !userId) {
+            return res.status(400).json({
+                success: false,
+                message: 'User identification not found'
+            });
+        }
+        
+        // Find the most recent request for this contractor using email
+        let snapshot = await adminDb.collection('analysis_requests')
+            .where('contractorEmail', '==', userEmail)
             .orderBy('createdAt', 'desc')
             .limit(1)
             .get();
         
+        // Fallback to userId if email search returns empty
+        if (snapshot.empty && userId) {
+            snapshot = await adminDb.collection('analysis_requests')
+                .where('contractorId', '==', userId)
+                .orderBy('createdAt', 'desc')
+                .limit(1)
+                .get();
+        }
+        
         if (snapshot.empty) {
+            console.log('[ANALYSIS] No requests found for user:', userEmail);
             return res.json({
                 success: true,
                 request: null
@@ -33,14 +51,16 @@ router.get('/my-request', async (req, res) => {
         const doc = snapshot.docs[0];
         const data = doc.data();
         
+        console.log('[ANALYSIS] Found request:', doc.id);
+        
         res.json({
             success: true,
             request: {
                 _id: doc.id,
-                dataType: data.dataType,
-                frequency: data.frequency,
-                description: data.description,
-                googleSheetUrl: data.googleSheetUrl,
+                dataType: data.dataType || 'Production Update',
+                frequency: data.frequency || 'Daily',
+                description: data.description || '',
+                googleSheetUrl: data.googleSheetUrl || '',
                 vercelUrl: data.vercelUrl || null,
                 status: data.vercelUrl ? 'completed' : 'pending',
                 adminNotes: data.adminNotes || '',
@@ -62,8 +82,10 @@ router.get('/my-request', async (req, res) => {
 router.post('/submit-request', async (req, res) => {
     try {
         const { dataType, frequency, googleSheetUrl, description } = req.body;
-        // FIX: Changed req.user.id to req.user.uid
-        const userId = req.user.uid;
+        const userId = req.user.uid || req.user.id;
+        const userEmail = req.user.email;
+        
+        console.log('[ANALYSIS] Submitting request for user:', userEmail);
         
         // Validate required fields
         if (!googleSheetUrl || !description) {
@@ -73,17 +95,17 @@ router.post('/submit-request', async (req, res) => {
             });
         }
         
-        // Validate Google Sheets URL
-        if (!googleSheetUrl.includes('docs.google.com/spreadsheets')) {
+        // Basic URL validation - allow any URL format for flexibility
+        if (!googleSheetUrl.includes('http')) {
             return res.status(400).json({
                 success: false,
-                message: 'Invalid Google Sheets URL'
+                message: 'Please provide a valid URL'
             });
         }
         
         // Check if user already has a pending request
         const existingSnapshot = await adminDb.collection('analysis_requests')
-            .where('contractorId', '==', userId)
+            .where('contractorEmail', '==', userEmail)
             .where('vercelUrl', '==', null)
             .get();
         
@@ -98,7 +120,7 @@ router.post('/submit-request', async (req, res) => {
         const requestData = {
             contractorId: userId,
             contractorName: req.user.name,
-            contractorEmail: req.user.email,
+            contractorEmail: userEmail,
             dataType: dataType || 'Production Update',
             frequency: frequency || 'Daily',
             googleSheetUrl: googleSheetUrl,
@@ -112,20 +134,11 @@ router.post('/submit-request', async (req, res) => {
         
         const docRef = await adminDb.collection('analysis_requests').add(requestData);
         
-        // Create notification for admin
-        await adminDb.collection('admin_notifications').add({
-            type: 'new_analysis_request',
-            message: `New analysis request from ${req.user.name}`,
-            requestId: docRef.id,
-            contractorId: userId,
-            contractorName: req.user.name,
-            createdAt: new Date().toISOString(),
-            read: false
-        });
+        console.log('[ANALYSIS] Request created with ID:', docRef.id);
         
         res.json({
             success: true,
-            message: 'Analysis request submitted successfully',
+            message: 'Business analytics request submitted successfully',
             requestId: docRef.id
         });
         
@@ -133,7 +146,7 @@ router.post('/submit-request', async (req, res) => {
         console.error('[ANALYSIS] Error submitting request:', error);
         res.status(500).json({
             success: false,
-            message: 'Failed to submit analysis request'
+            message: 'Failed to submit business analytics request'
         });
     }
 });
@@ -143,8 +156,9 @@ router.put('/request/:requestId', async (req, res) => {
     try {
         const { requestId } = req.params;
         const { dataType, frequency, googleSheetUrl, description } = req.body;
-        // FIX: Changed req.user.id to req.user.uid
-        const userId = req.user.uid;
+        const userEmail = req.user.email;
+        
+        console.log('[ANALYSIS] Updating request:', requestId, 'for user:', userEmail);
         
         // Verify ownership
         const requestDoc = await adminDb.collection('analysis_requests').doc(requestId).get();
@@ -156,7 +170,7 @@ router.put('/request/:requestId', async (req, res) => {
         }
         
         const requestData = requestDoc.data();
-        if (requestData.contractorId !== userId) {
+        if (requestData.contractorEmail !== userEmail) {
             return res.status(403).json({
                 success: false,
                 message: 'You are not authorized to update this request'
@@ -182,16 +196,18 @@ router.put('/request/:requestId', async (req, res) => {
         
         await adminDb.collection('analysis_requests').doc(requestId).update(updateData);
         
+        console.log('[ANALYSIS] Request updated successfully:', requestId);
+        
         res.json({
             success: true,
-            message: 'Analysis request updated successfully'
+            message: 'Business analytics request updated successfully'
         });
         
     } catch (error) {
         console.error('[ANALYSIS] Error updating request:', error);
         res.status(500).json({
             success: false,
-            message: 'Failed to update analysis request'
+            message: 'Failed to update business analytics request'
         });
     }
 });
@@ -200,8 +216,9 @@ router.put('/request/:requestId', async (req, res) => {
 router.delete('/request/:requestId', async (req, res) => {
     try {
         const { requestId } = req.params;
-        // FIX: Changed req.user.id to req.user.uid
-        const userId = req.user.uid;
+        const userEmail = req.user.email;
+        
+        console.log('[ANALYSIS] Cancelling request:', requestId, 'for user:', userEmail);
         
         // Verify ownership
         const requestDoc = await adminDb.collection('analysis_requests').doc(requestId).get();
@@ -213,7 +230,7 @@ router.delete('/request/:requestId', async (req, res) => {
         }
         
         const requestData = requestDoc.data();
-        if (requestData.contractorId !== userId) {
+        if (requestData.contractorEmail !== userEmail) {
             return res.status(403).json({
                 success: false,
                 message: 'You are not authorized to cancel this request'
@@ -223,16 +240,18 @@ router.delete('/request/:requestId', async (req, res) => {
         // Delete request
         await adminDb.collection('analysis_requests').doc(requestId).delete();
         
+        console.log('[ANALYSIS] Request cancelled successfully:', requestId);
+        
         res.json({
             success: true,
-            message: 'Analysis request cancelled successfully'
+            message: 'Business analytics request cancelled successfully'
         });
         
     } catch (error) {
         console.error('[ANALYSIS] Error cancelling request:', error);
         res.status(500).json({
             success: false,
-            message: 'Failed to cancel analysis request'
+            message: 'Failed to cancel business analytics request'
         });
     }
 });
@@ -240,11 +259,12 @@ router.delete('/request/:requestId', async (req, res) => {
 // GET /api/analysis/history - Get contractor's analysis history
 router.get('/history', async (req, res) => {
     try {
-        // FIX: Changed req.user.id to req.user.uid
-        const userId = req.user.uid;
+        const userEmail = req.user.email;
+        
+        console.log('[ANALYSIS] Fetching history for user:', userEmail);
         
         const snapshot = await adminDb.collection('analysis_requests')
-            .where('contractorId', '==', userId)
+            .where('contractorEmail', '==', userEmail)
             .orderBy('createdAt', 'desc')
             .get();
         
@@ -252,10 +272,10 @@ router.get('/history', async (req, res) => {
             const data = doc.data();
             return {
                 _id: doc.id,
-                dataType: data.dataType,
-                frequency: data.frequency,
-                description: data.description,
-                googleSheetUrl: data.googleSheetUrl,
+                dataType: data.dataType || 'Production Update',
+                frequency: data.frequency || 'Daily',
+                description: data.description || '',
+                googleSheetUrl: data.googleSheetUrl || '',
                 vercelUrl: data.vercelUrl || null,
                 status: data.vercelUrl ? 'completed' : 'pending',
                 adminNotes: data.adminNotes || '',
@@ -263,6 +283,8 @@ router.get('/history', async (req, res) => {
                 updatedAt: data.updatedAt
             };
         });
+        
+        console.log('[ANALYSIS] Found', requests.length, 'requests in history');
         
         res.json({
             success: true,
@@ -273,7 +295,7 @@ router.get('/history', async (req, res) => {
         console.error('[ANALYSIS] Error fetching history:', error);
         res.status(500).json({
             success: false,
-            message: 'Failed to fetch analysis history'
+            message: 'Failed to fetch business analytics history'
         });
     }
 });

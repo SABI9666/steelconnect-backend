@@ -65,6 +65,10 @@ try {
     console.warn('🔧 Support system will not work');
 }
 
+// NEW: Import analysis routes
+import analysisRoutes from './routes/analysis.js';
+import adminAnalysisRoutes from './routes/adminAnalysis.js';
+
 dotenv.config();
 
 const app = express();
@@ -221,7 +225,8 @@ app.get('/health', (req, res) => {
             admin: adminRoutes ? 'available' : 'unavailable',
             profile: profileRoutes ? 'available' : 'unavailable',
             support: supportRoutes ? 'available' : 'unavailable', // NEW
-            email: process.env.RESEND_API_KEY ? (isVerifiedDomain ? 'verified_domain' : 'configured') : 'missing'
+            email: process.env.RESEND_API_KEY ? (isVerifiedDomain ? 'verified_domain' : 'configured') : 'missing',
+            analysis: 'available' // NEW
         },
         email_config: {
             api_key: process.env.RESEND_API_KEY ? 'configured' : 'missing',
@@ -253,6 +258,7 @@ app.get('/', (req, res) => {
             'Job Management': '✅ Active',
             'Quote System': '✅ Active',
             'Messaging': '✅ Active',
+            'Analysis & Reporting': '✅ Active', // NEW
             'Login Email Notifications': process.env.RESEND_API_KEY && isVerifiedDomain ? '✅ Active with Verified Domain' : 
                                         process.env.RESEND_API_KEY ? '⚠️ Check Domain Verification' : '❌ Disabled'
         },
@@ -272,7 +278,9 @@ app.get('/', (req, res) => {
             messages: '/api/messages',
             estimation: '/api/estimation',
             notifications: '/api/notifications',
-            support: '/api/support' // NEW
+            support: '/api/support', // NEW
+            analysis: '/api/analysis', // NEW
+            adminAnalysis: '/api/admin/analysis' // NEW
         }
     });
 });
@@ -295,7 +303,7 @@ app.get('/api', (req, res) => {
             from_domain: emailDomain,
             domain_verification: isVerifiedDomain ? 'verified (steelconnectapp.com)' : 'needs_verification',
             production_ready: isVerifiedDomain && process.env.RESEND_API_KEY,
-            note: isVerifiedDomain ? 'Email system ready for production' : 'Verify domain in Resend dashboard'
+            note: 'Verify domain in Resend dashboard'
         },
         available_endpoints: [
             {
@@ -364,6 +372,18 @@ app.get('/api', (req, res) => {
                 description: 'AI cost estimation',
                 authentication: 'Required (Contractor, Approved Profile)',
                 status: estimationRoutes ? 'Available' : 'Disabled'
+            },
+            {
+                path: 'GET /api/analysis/*',
+                description: 'Analysis and reporting endpoints for users',
+                authentication: 'Required',
+                status: 'Available'
+            },
+            {
+                path: 'GET /api/admin/analysis/*',
+                description: 'Analysis and reporting endpoints for administrators',
+                authentication: 'Required (Admin)',
+                status: adminRoutes ? 'Available' : 'Disabled'
             }
         ]
     });
@@ -487,6 +507,13 @@ if (estimationRoutes) {
     console.warn('⚠️ Estimation routes unavailable - AI features disabled');
     console.warn('🔧 Cost estimation functionality will not work');
 }
+
+// NEW: Analysis routes
+app.use('/api/analysis', analysisRoutes);
+app.use('/api/admin/analysis', adminAnalysisRoutes);
+console.log('📊 Analysis routes registered at /api/analysis and /api/admin/analysis');
+console.log('   • User analytics and reporting');
+console.log('   • Admin dashboard insights');
 
 console.log('📦 Route registration completed');
 
@@ -629,7 +656,9 @@ app.use('*', (req, res) => {
             ...(supportRoutes ? ['/api/support/*'] : ['⚠️ /api/support/* (disabled)']), // NEW
             ...(notificationRoutes ? ['/api/notifications/*'] : ['⚠️ /api/notifications/* (disabled)']),
             ...(estimationRoutes ? ['/api/estimation/*'] : ['⚠️ /api/estimation/* (disabled)']),
-            ...(adminRoutes ? ['/api/admin/*'] : ['⚠️ /api/admin/* (disabled)'])
+            ...(adminRoutes ? ['/api/admin/*'] : ['⚠️ /api/admin/* (disabled)']),
+            '/api/analysis/*', // NEW
+            '/api/admin/analysis/*' // NEW
         ],
         suggestion: 'Check the API documentation at /api'
     });
@@ -707,7 +736,10 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     if (adminRoutes) {
         console.log(`   Admin: http://localhost:${PORT}/api/admin/*`);
     }
-    
+
+    console.log(`   Analysis: http://localhost:${PORT}/api/analysis/*`);
+    console.log(`   Admin Analysis: http://localhost:${PORT}/api/admin/analysis/*`);
+
     console.log('\n🚀 SteelConnect Backend v2.1 is ready!');
     console.log('📋 Profile Management System: ACTIVE');
     console.log('👨‍💼 Admin Approval Workflow: ACTIVE');

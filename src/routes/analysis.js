@@ -21,7 +21,7 @@ const contractorOnly = (req, res, next) => {
 // GET /api/analysis/configuration - Get contractor's analysis config
 router.get('/configuration', authenticateToken, contractorOnly, async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user.uid;
         
         // Get or create analysis configuration
         const configDoc = await adminDb
@@ -68,7 +68,7 @@ router.get('/configuration', authenticateToken, contractorOnly, async (req, res)
 router.post('/connect-sheet', authenticateToken, contractorOnly, async (req, res) => {
     try {
         const { sheetUrl, dataType, frequency } = req.body;
-        const userId = req.user.id;
+        const userId = req.user.uid;
         
         // Validate Google Sheets URL
         if (!sheetUrl || !sheetUrl.includes('docs.google.com/spreadsheets')) {
@@ -135,7 +135,7 @@ router.post('/connect-sheet', authenticateToken, contractorOnly, async (req, res
 router.post('/update-config', authenticateToken, contractorOnly, async (req, res) => {
     try {
         const { dataType, frequency } = req.body;
-        const userId = req.user.id;
+        const userId = req.user.uid;
         
         const updateData = {
             dataType,
@@ -162,7 +162,7 @@ router.post('/update-config', authenticateToken, contractorOnly, async (req, res
 // GET /api/analysis/report-url - Get Vercel report URL
 router.get('/report-url', authenticateToken, contractorOnly, async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user.uid;
         
         const configDoc = await adminDb.collection('analysis_configs').doc(userId).get();
         
@@ -190,7 +190,7 @@ router.get('/report-url', authenticateToken, contractorOnly, async (req, res) =>
 // POST /api/analysis/sync-data - Manual sync with Google Sheets
 router.post('/sync-data', authenticateToken, contractorOnly, async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user.uid;
         
         const configDoc = await adminDb.collection('analysis_configs').doc(userId).get();
         
@@ -337,7 +337,7 @@ adminRouter.post('/upload-report', async (req, res) => {
         // Log the upload
         await adminDb.collection('analysis_logs').add({
             contractorId,
-            adminId: req.user.id,
+            adminId: req.user.uid,
             adminEmail: req.user.email,
             action: 'vercel_report_uploaded',
             vercelUrl,
@@ -432,7 +432,7 @@ adminRouter.delete('/:contractorId/report', async (req, res) => {
         // Log the removal
         await adminDb.collection('analysis_logs').add({
             contractorId,
-            adminId: req.user.id,
+            adminId: req.user.uid,
             adminEmail: req.user.email,
             action: 'vercel_report_removed',
             timestamp: new Date().toISOString()

@@ -1,4 +1,4 @@
-// src/routes/analysis.js - FIXED VERSION
+// src/routes/analysis.js - FINAL FIXED VERSION
 import express from 'express';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { adminDb } from '../config/firebase.js';
@@ -13,32 +13,22 @@ router.get('/my-request', async (req, res) => {
     try {
         console.log('[ANALYSIS] Fetching request for user:', req.user);
         
-        // FIX 1: Use email as identifier since that's what's being used in the logs
+        // Use email as primary identifier
         const userEmail = req.user.email;
-        const userId = req.user.uid || req.user.id;
         
-        if (!userEmail && !userId) {
+        if (!userEmail) {
             return res.status(400).json({
                 success: false,
-                message: 'User identification not found'
+                message: 'User email not found'
             });
         }
         
         // Find the most recent request for this contractor using email
-        let snapshot = await adminDb.collection('analysis_requests')
+        const snapshot = await adminDb.collection('analysis_requests')
             .where('contractorEmail', '==', userEmail)
             .orderBy('createdAt', 'desc')
             .limit(1)
             .get();
-        
-        // Fallback to userId if email search returns empty
-        if (snapshot.empty && userId) {
-            snapshot = await adminDb.collection('analysis_requests')
-                .where('contractorId', '==', userId)
-                .orderBy('createdAt', 'desc')
-                .limit(1)
-                .get();
-        }
         
         if (snapshot.empty) {
             console.log('[ANALYSIS] No requests found for user:', userEmail);
@@ -82,16 +72,27 @@ router.get('/my-request', async (req, res) => {
 router.post('/submit-request', async (req, res) => {
     try {
         const { dataType, frequency, googleSheetUrl, description } = req.body;
-        const userId = req.user.uid || req.user.id;
+        
+        // FIXED: Get user data properly, handle undefined values
         const userEmail = req.user.email;
+        const userName = req.user.name || req.user.displayName || 'Unknown User';
+        const userId = req.user.uid || req.user.id || null; // Allow null if not available
         
         console.log('[ANALYSIS] Submitting request for user:', userEmail);
+        console.log('[ANALYSIS] User data:', { userEmail, userName, userId });
         
         // Validate required fields
         if (!googleSheetUrl || !description) {
             return res.status(400).json({
                 success: false,
-                message: 'Google Sheet URL and description are required'
+                message: 'Data source URL and description are required'
+            });
+        }
+        
+        if (!userEmail) {
+            return res.status(400).json({
+                success: false,
+                message: 'User email is required'
             });
         }
         
@@ -116,11 +117,10 @@ router.post('/submit-request', async (req, res) => {
             });
         }
         
-        // Create new analysis request
+        // Create new analysis request - FIXED: Handle undefined contractorId
         const requestData = {
-            contractorId: userId,
-            contractorName: req.user.name,
             contractorEmail: userEmail,
+            contractorName: userName,
             dataType: dataType || 'Production Update',
             frequency: frequency || 'Daily',
             googleSheetUrl: googleSheetUrl,
@@ -131,6 +131,13 @@ router.post('/submit-request', async (req, res) => {
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
         };
+        
+        // Only add contractorId if it exists
+        if (userId) {
+            requestData.contractorId = userId;
+        }
+        
+        console.log('[ANALYSIS] Creating request with data:', requestData);
         
         const docRef = await adminDb.collection('analysis_requests').add(requestData);
         
@@ -146,7 +153,8 @@ router.post('/submit-request', async (req, res) => {
         console.error('[ANALYSIS] Error submitting request:', error);
         res.status(500).json({
             success: false,
-            message: 'Failed to submit business analytics request'
+            message: 'Failed to submit business analytics request',
+            error: error.message // Include error details for debugging
         });
     }
 });
@@ -159,6 +167,13 @@ router.put('/request/:requestId', async (req, res) => {
         const userEmail = req.user.email;
         
         console.log('[ANALYSIS] Updating request:', requestId, 'for user:', userEmail);
+        
+        if (!userEmail) {
+            return res.status(400).json({
+                success: false,
+                message: 'User email is required'
+            });
+        }
         
         // Verify ownership
         const requestDoc = await adminDb.collection('analysis_requests').doc(requestId).get();
@@ -220,6 +235,13 @@ router.delete('/request/:requestId', async (req, res) => {
         
         console.log('[ANALYSIS] Cancelling request:', requestId, 'for user:', userEmail);
         
+        if (!userEmail) {
+            return res.status(400).json({
+                success: false,
+                message: 'User email is required'
+            });
+        }
+        
         // Verify ownership
         const requestDoc = await adminDb.collection('analysis_requests').doc(requestId).get();
         if (!requestDoc.exists) {
@@ -262,6 +284,13 @@ router.get('/history', async (req, res) => {
         const userEmail = req.user.email;
         
         console.log('[ANALYSIS] Fetching history for user:', userEmail);
+        
+        if (!userEmail) {
+            return res.status(400).json({
+                success: false,
+                message: 'User email is required'
+            });
+        }
         
         const snapshot = await adminDb.collection('analysis_requests')
             .where('contractorEmail', '==', userEmail)

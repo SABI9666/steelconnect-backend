@@ -243,6 +243,84 @@ router.get('/profile-reviews', async (req, res) => {
                 }
             }
 
+            // Helper: extract storage path and generate fresh signed URL
+            async function getFreshDocUrl(docData) {
+                if (!docData) return null;
+                // docData.url might be an object (from uploadToFirebaseStorage) or a string
+                const storedUrl = docData.url;
+                let storagePath = docData.path || null;
+
+                if (storedUrl && typeof storedUrl === 'object') {
+                    // uploadToFirebaseStorage returned an object - extract path
+                    storagePath = storedUrl.path || storagePath;
+                }
+
+                if (storagePath) {
+                    try {
+                        const freshUrl = await generateSignedUrl(storagePath, 60); // 1 hour
+                        return freshUrl;
+                    } catch (urlError) {
+                        console.warn(`Failed to generate signed URL for path: ${storagePath}`, urlError.message);
+                    }
+                }
+
+                // Fallback: if url is a string (old format), return it as-is
+                if (typeof storedUrl === 'string') return storedUrl;
+                // If url is an object with a nested url string, try that
+                if (storedUrl && typeof storedUrl.url === 'string') return storedUrl.url;
+
+                return null;
+            }
+
+            // Build documents array with fresh signed URLs
+            const documents = [];
+
+            if (userData?.resume) {
+                const freshUrl = await getFreshDocUrl(userData.resume);
+                if (freshUrl) {
+                    documents.push({
+                        filename: userData.resume.filename || 'Resume',
+                        url: freshUrl,
+                        type: 'resume'
+                    });
+                }
+            }
+
+            if (userData?.certificates && Array.isArray(userData.certificates)) {
+                for (const cert of userData.certificates) {
+                    const freshUrl = await getFreshDocUrl(cert);
+                    if (freshUrl) {
+                        documents.push({
+                            filename: cert.filename || 'Certificate',
+                            url: freshUrl,
+                            type: 'certificate'
+                        });
+                    }
+                }
+            }
+
+            if (userData?.businessLicense) {
+                const freshUrl = await getFreshDocUrl(userData.businessLicense);
+                if (freshUrl) {
+                    documents.push({
+                        filename: userData.businessLicense.filename || 'Business License',
+                        url: freshUrl,
+                        type: 'license'
+                    });
+                }
+            }
+
+            if (userData?.insurance) {
+                const freshUrl = await getFreshDocUrl(userData.insurance);
+                if (freshUrl) {
+                    documents.push({
+                        filename: userData.insurance.filename || 'Insurance',
+                        url: freshUrl,
+                        type: 'insurance'
+                    });
+                }
+            }
+
             const review = {
                 _id: reviewDoc.id,
                 status: reviewData.status || 'pending',
@@ -257,28 +335,7 @@ router.get('/profile-reviews', async (req, res) => {
                     company: userData?.companyName || '',
                     address: userData?.address || '',
                     adminComments: userData?.adminComments || null,
-                    documents: [
-                        ...(userData?.resume ? [{
-                            filename: userData.resume.filename || 'Resume',
-                            url: userData.resume.url,
-                            type: 'resume'
-                        }] : []),
-                        ...(userData?.certificates || []).map(cert => ({
-                            filename: cert.filename || 'Certificate',
-                            url: cert.url,
-                            type: 'certificate'
-                        })),
-                        ...(userData?.businessLicense ? [{
-                            filename: userData.businessLicense.filename || 'Business License',
-                            url: userData.businessLicense.url,
-                            type: 'license'
-                        }] : []),
-                        ...(userData?.insurance ? [{
-                            filename: userData.insurance.filename || 'Insurance',
-                            url: userData.insurance.url,
-                            type: 'insurance'
-                        }] : [])
-                    ]
+                    documents: documents
                 }
             };
 

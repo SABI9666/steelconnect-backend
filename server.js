@@ -6,6 +6,10 @@ import compression from 'compression';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 
+// Import bcrypt for admin seeding
+import bcrypt from 'bcryptjs';
+import { adminDb } from './src/config/firebase.js';
+
 // Import existing routes
 import authRoutes from './src/routes/auth.js';
 import jobsRoutes from './src/routes/jobs.js';
@@ -512,6 +516,53 @@ console.log('📊 Analysis routes registered at /api/analysis');
 console.log('   • User analytics and reporting');
 
 console.log('📦 Route registration completed');
+
+// --- Seed Default Admin User ---
+async function seedAdminUser() {
+    try {
+        const adminEmail = 'admin@steelconnect.com';
+        const adminPassword = 'admin@9666';
+
+        // Check if admin already exists
+        const existingAdmin = await adminDb.collection('users')
+            .where('email', '==', adminEmail)
+            .where('type', '==', 'admin')
+            .get();
+
+        if (!existingAdmin.empty) {
+            // Update existing admin password
+            const adminDoc = existingAdmin.docs[0];
+            const hashedPassword = await bcrypt.hash(adminPassword, 12);
+            await adminDb.collection('users').doc(adminDoc.id).update({
+                password: hashedPassword,
+                updatedAt: new Date().toISOString()
+            });
+            console.log(`✅ Admin user updated: ${adminEmail}`);
+        } else {
+            // Create new admin user
+            const hashedPassword = await bcrypt.hash(adminPassword, 12);
+            const adminData = {
+                name: 'Admin',
+                email: adminEmail,
+                password: hashedPassword,
+                type: 'admin',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                profileCompleted: true,
+                profileStatus: 'approved',
+                canAccess: true,
+                isSuper: true
+            };
+
+            const adminRef = await adminDb.collection('users').add(adminData);
+            console.log(`✅ Admin user created: ${adminEmail} (ID: ${adminRef.id})`);
+        }
+    } catch (error) {
+        console.error('❌ Admin seeding error:', error.message);
+    }
+}
+
+seedAdminUser();
 
 // =================================================================
 // START: ADDED CODE - Backend Proxy Download Route

@@ -5,6 +5,15 @@ import { authenticateToken } from '../middleware/authMiddleware.js';
 import { adminDb } from '../config/firebase.js';
 import { uploadToFirebaseStorage } from '../utils/firebaseStorage.js';
 
+// Sanitize filenames to prevent special character issues in storage URLs
+function sanitizeFilename(filename) {
+    return filename
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // Remove accents (é → e)
+        .replace(/[^a-zA-Z0-9._-]/g, '_')                // Replace special chars with underscore
+        .replace(/_+/g, '_')                               // Collapse multiple underscores
+        .replace(/^_|_$/g, '');                            // Trim leading/trailing underscores
+}
+
 const router = express.Router();
 
 // Apply authentication to all routes
@@ -160,7 +169,7 @@ router.put('/complete', upload.fields([
                 if (req.files.resume && req.files.resume[0]) {
                     const resumeFile = req.files.resume[0];
                     try {
-                        const resumePath = `profiles/resumes/${userId}_${Date.now()}_${resumeFile.originalname}`;
+                        const resumePath = `profiles/resumes/${userId}_${Date.now()}_${sanitizeFilename(resumeFile.originalname)}`;
                         const resumeUrl = await uploadToFirebaseStorage(resumeFile, resumePath);
                         
                         profileData.resume = {
@@ -184,7 +193,7 @@ router.put('/complete', upload.fields([
                         profileData.certificates = [];
                         for (let i = 0; i < req.files.certificates.length; i++) {
                             const cert = req.files.certificates[i];
-                            const certPath = `profiles/certificates/${userId}_${Date.now()}_${i}_${cert.originalname}`;
+                            const certPath = `profiles/certificates/${userId}_${Date.now()}_${i}_${sanitizeFilename(cert.originalname)}`;
                             const certUrl = await uploadToFirebaseStorage(cert, certPath);
                             
                             profileData.certificates.push({

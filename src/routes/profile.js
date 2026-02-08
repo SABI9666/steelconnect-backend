@@ -170,14 +170,15 @@ router.put('/complete', upload.fields([
                     const resumeFile = req.files.resume[0];
                     try {
                         const resumePath = `profiles/resumes/${userId}_${Date.now()}_${sanitizeFilename(resumeFile.originalname)}`;
-                        const resumeUrl = await uploadToFirebaseStorage(resumeFile, resumePath);
+                        const uploadResult = await uploadToFirebaseStorage(resumeFile, resumePath);
                         
                         profileData.resume = {
                             filename: resumeFile.originalname,
                             mimetype: resumeFile.mimetype,
                             size: resumeFile.size,
                             uploadedAt: new Date().toISOString(),
-                            url: resumeUrl
+                            path: uploadResult.path || resumePath,
+                            url: (typeof uploadResult === 'string') ? uploadResult : (uploadResult.url || null)
                         };
                     } catch (uploadError) {
                         console.error('Resume upload error:', uploadError);
@@ -194,14 +195,15 @@ router.put('/complete', upload.fields([
                         for (let i = 0; i < req.files.certificates.length; i++) {
                             const cert = req.files.certificates[i];
                             const certPath = `profiles/certificates/${userId}_${Date.now()}_${i}_${sanitizeFilename(cert.originalname)}`;
-                            const certUrl = await uploadToFirebaseStorage(cert, certPath);
+                            const uploadResult = await uploadToFirebaseStorage(cert, certPath);
                             
                             profileData.certificates.push({
                                 filename: cert.originalname,
                                 mimetype: cert.mimetype,
                                 size: cert.size,
                                 uploadedAt: new Date().toISOString(),
-                                url: certUrl
+                                path: uploadResult.path || certPath,
+                                url: (typeof uploadResult === 'string') ? uploadResult : (uploadResult.url || null)
                             });
                         }
                     } catch (uploadError) {

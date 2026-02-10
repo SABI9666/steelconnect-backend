@@ -2,11 +2,7 @@
 import express from 'express';
 import multer from 'multer';
 import { authenticateToken, isAdmin } from '../middleware/authMiddleware.js';
-import { adminDb } from '../config/firebase.js';
-import {
-    uploadToFirebaseStorage,
-    generateSignedUrl,
-} from '../config/firebase.js';
+import { adminDb, admin, uploadToFirebaseStorage, generateSignedUrl, deleteFileFromFirebase } from '../config/firebase.js';
 import { sendEstimationResultNotification, sendProfileReviewNotification } from '../utils/emailService.js';
 
 const router = express.Router();
@@ -2162,6 +2158,293 @@ router.delete('/quotes/:id', async (req, res) => {
         res.json({ success: true, message: `Quote deleted successfully.` });
     } catch (e) {
         res.status(500).json({ success: false, message: `Error deleting item` });
+    }
+});
+
+// ==========================================
+// SYSTEM ADMIN - MASTER DATA MANAGEMENT
+// ==========================================
+
+// Collection mapping for System Admin
+const SYSTEM_COLLECTIONS = {
+    users: { collection: 'users', label: 'Users' },
+    jobs: { collection: 'jobs', label: 'Projects' },
+    quotes: { collection: 'quotes', label: 'Quotes' },
+    estimations: { collection: 'estimations', label: 'AI Estimations' },
+    messages: { collection: 'messages', label: 'Messages' },
+    conversations: { collection: 'conversations', label: 'Conversations' },
+    support_tickets: { collection: 'support_tickets', label: 'Support Tickets' },
+    analysis_requests: { collection: 'analysis_requests', label: 'Analysis Requests' },
+    notifications: { collection: 'notifications', label: 'Notifications' }
+};
+
+// GET system admin overview - counts for all collections including trash
+router.get('/system-admin/overview', async (req, res) => {
+    try {
+        const overview = {};
+        for (const [key, cfg] of Object.entries(SYSTEM_COLLECTIONS)) {
+            const snapshot = await adminDb.collection(cfg.collection).get();
+            const trashSnapshot = await adminDb.collection('_trash').where('_collection', '==', cfg.collection).get();
+            overview[key] = { label: cfg.label, total: snapshot.size, deleted: trashSnapshot.size };
+        }
+        res.json({ success: true, data: overview });
+    } catch (error) {
+        console.error('System admin overview error:', error);
+        res.status(500).json({ success: false, message: 'Error fetching overview' });
+    }
+});
+
+// GET items from any collection with pagination and search
+router.get('/system-admin/data/:collectionKey', async (req, res) => {
+    try {
+        const { collectionKey } = req.params;
+        const cfg = SYSTEM_COLLECTIONS[collectionKey];
+        if (!cfg) return res.status(400).json({ success: false, message: 'Invalid collection' });
+
+        const { search, limit: queryLimit } = req.query;
+        const limitNum = Math.min(parseInt(queryLimit) || 100, 500);
+
+        let query = adminDb.collection(cfg.collection);
+        const snapshot = await query.get();
+        let items = snapshot.docs.map(doc => ({ _id: doc.id, ...doc.data() }));
+
+        // Client-side search across key fields
+        if (search) {
+            const s = search.toLowerCase();
+            items = items.filter(item => {
+                return JSON.stringify(item).toLowerCase().includes(s);
+            });
+        }
+
+        // Sort by createdAt desc if available
+        items.sort((a, b) => {
+            const da = a.createdAt?._seconds || a.createdAt?.seconds || (typeof a.createdAt === 'string' ? new Date(a.createdAt).getTime() / 1000 : 0);
+            const db = b.createdAt?._seconds || b.createdAt?.seconds || (typeof b.createdAt === 'string' ? new Date(b.createdAt).getTime() / 1000 : 0);
+            return db - da;
+        });
+
+        items = items.slice(0, limitNum);
+
+        res.json({ success: true, data: items, total: snapshot.size, collection: cfg.label });
+    } catch (error) {
+        console.error(`System admin data fetch error [${req.params.collectionKey}]:`, error);
+        res.status(500).json({ success: false, message: 'Error fetching data' });
+    }
+});
+
+// DELETE (soft) - Move item to _trash collection with full backup
+router.delete('/system-admin/data/:collectionKey/:docId', async (req, res) => {
+    try {
+        const { collectionKey, docId } = req.params;
+        const cfg = SYSTEM_COLLECTIONS[collectionKey];
+        if (!cfg) return res.status(400).json({ success: false, message: 'Invalid collection' });
+
+        const docRef = adminDb.collection(cfg.collection).doc(docId);
+        const doc = await docRef.get();
+        if (!doc.exists) return res.status(404).json({ success: false, message: 'Document not found' });
+
+        const docData = doc.data();
+
+        // Store full backup in _trash collection
+        await adminDb.collection('_trash').doc(docId).set({
+            ...docData,
+            _collection: cfg.collection,
+            _collectionKey: collectionKey,
+            _originalId: docId,
+            _deletedAt: new Date().toISOString(),
+            _deletedBy: req.user.email || req.user.userId
+        });
+
+        // For conversations, also backup subcollection messages
+        if (collectionKey === 'conversations') {
+            const msgsSnapshot = await docRef.collection('messages').get();
+            if (!msgsSnapshot.empty) {
+                const batch = adminDb.batch();
+                msgsSnapshot.docs.forEach(msgDoc => {
+                    batch.set(adminDb.collection('_trash').doc(docId).collection('messages').doc(msgDoc.id), msgDoc.data());
+                });
+                await batch.commit();
+            }
+            // Delete subcollection messages
+            const deleteBatch = adminDb.batch();
+            msgsSnapshot.docs.forEach(msgDoc => deleteBatch.delete(msgDoc.ref));
+            if (!msgsSnapshot.empty) await deleteBatch.commit();
+        }
+
+        // Delete the original document
+        await docRef.delete();
+
+        console.log(`[SYSTEM ADMIN] ${req.user.email} deleted ${cfg.label} doc ${docId}`);
+        res.json({ success: true, message: `${cfg.label} item deleted and moved to trash` });
+    } catch (error) {
+        console.error('System admin delete error:', error);
+        res.status(500).json({ success: false, message: 'Error deleting item' });
+    }
+});
+
+// BULK DELETE - Soft delete multiple items
+router.post('/system-admin/bulk-delete/:collectionKey', async (req, res) => {
+    try {
+        const { collectionKey } = req.params;
+        const { docIds } = req.body;
+        const cfg = SYSTEM_COLLECTIONS[collectionKey];
+        if (!cfg) return res.status(400).json({ success: false, message: 'Invalid collection' });
+        if (!docIds || !Array.isArray(docIds) || docIds.length === 0) return res.status(400).json({ success: false, message: 'No document IDs provided' });
+
+        let deleted = 0;
+        for (const docId of docIds) {
+            try {
+                const docRef = adminDb.collection(cfg.collection).doc(docId);
+                const doc = await docRef.get();
+                if (doc.exists) {
+                    await adminDb.collection('_trash').doc(docId).set({
+                        ...doc.data(),
+                        _collection: cfg.collection,
+                        _collectionKey: collectionKey,
+                        _originalId: docId,
+                        _deletedAt: new Date().toISOString(),
+                        _deletedBy: req.user.email || req.user.userId
+                    });
+                    await docRef.delete();
+                    deleted++;
+                }
+            } catch (e) {
+                console.error(`Bulk delete error for ${docId}:`, e.message);
+            }
+        }
+        console.log(`[SYSTEM ADMIN] ${req.user.email} bulk deleted ${deleted} items from ${cfg.label}`);
+        res.json({ success: true, message: `${deleted} item(s) deleted`, deleted });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Bulk delete error' });
+    }
+});
+
+// GET trash items
+router.get('/system-admin/trash', async (req, res) => {
+    try {
+        const { collectionKey } = req.query;
+        let query = adminDb.collection('_trash');
+        if (collectionKey && SYSTEM_COLLECTIONS[collectionKey]) {
+            query = query.where('_collection', '==', SYSTEM_COLLECTIONS[collectionKey].collection);
+        }
+        const snapshot = await query.get();
+        let items = snapshot.docs.map(doc => ({ _id: doc.id, ...doc.data() }));
+        items.sort((a, b) => new Date(b._deletedAt || 0) - new Date(a._deletedAt || 0));
+        res.json({ success: true, data: items, total: items.length });
+    } catch (error) {
+        console.error('Trash fetch error:', error);
+        res.status(500).json({ success: false, message: 'Error fetching trash' });
+    }
+});
+
+// RESTORE - Move item back from _trash to original collection
+router.post('/system-admin/restore/:docId', async (req, res) => {
+    try {
+        const { docId } = req.params;
+        const trashDoc = await adminDb.collection('_trash').doc(docId).get();
+        if (!trashDoc.exists) return res.status(404).json({ success: false, message: 'Item not found in trash' });
+
+        const trashData = trashDoc.data();
+        const originalCollection = trashData._collection;
+        const collectionKey = trashData._collectionKey;
+        const originalId = trashData._originalId || docId;
+
+        // Remove trash metadata
+        const { _collection, _collectionKey, _originalId, _deletedAt, _deletedBy, ...originalData } = trashData;
+
+        // Restore to original collection
+        await adminDb.collection(originalCollection).doc(originalId).set(originalData);
+
+        // For conversations, restore subcollection messages
+        if (collectionKey === 'conversations') {
+            const msgsSnapshot = await adminDb.collection('_trash').doc(docId).collection('messages').get();
+            if (!msgsSnapshot.empty) {
+                const batch = adminDb.batch();
+                msgsSnapshot.docs.forEach(msgDoc => {
+                    batch.set(adminDb.collection(originalCollection).doc(originalId).collection('messages').doc(msgDoc.id), msgDoc.data());
+                });
+                await batch.commit();
+                // Clean up trash subcollection
+                const delBatch = adminDb.batch();
+                msgsSnapshot.docs.forEach(msgDoc => delBatch.delete(msgDoc.ref));
+                await delBatch.commit();
+            }
+        }
+
+        // Remove from trash
+        await adminDb.collection('_trash').doc(docId).delete();
+
+        const label = SYSTEM_COLLECTIONS[collectionKey]?.label || originalCollection;
+        console.log(`[SYSTEM ADMIN] ${req.user.email} restored ${label} doc ${originalId}`);
+        res.json({ success: true, message: `${label} item restored successfully` });
+    } catch (error) {
+        console.error('System admin restore error:', error);
+        res.status(500).json({ success: false, message: 'Error restoring item' });
+    }
+});
+
+// PERMANENT DELETE from trash
+router.delete('/system-admin/trash/:docId', async (req, res) => {
+    try {
+        const { docId } = req.params;
+        const trashDoc = await adminDb.collection('_trash').doc(docId).get();
+        if (!trashDoc.exists) return res.status(404).json({ success: false, message: 'Item not found in trash' });
+
+        const trashData = trashDoc.data();
+
+        // Try to delete associated storage files
+        const filePaths = [];
+        if (trashData.resume?.path) filePaths.push(trashData.resume.path);
+        if (trashData.certificates) trashData.certificates.forEach(c => { if (c.path) filePaths.push(c.path); });
+        if (trashData.attachments) trashData.attachments.forEach(a => { if (a.path) filePaths.push(a.path); });
+        if (trashData.uploadedFiles) trashData.uploadedFiles.forEach(f => { if (f.path) filePaths.push(f.path); });
+        if (trashData.resultFile?.path) filePaths.push(trashData.resultFile.path);
+
+        for (const fp of filePaths) {
+            try { await deleteFileFromFirebase(fp); } catch (e) { console.warn(`Could not delete storage file ${fp}:`, e.message); }
+        }
+
+        // Delete subcollection messages if it's a conversation
+        if (trashData._collectionKey === 'conversations') {
+            const msgsSnapshot = await adminDb.collection('_trash').doc(docId).collection('messages').get();
+            if (!msgsSnapshot.empty) {
+                const batch = adminDb.batch();
+                msgsSnapshot.docs.forEach(msgDoc => batch.delete(msgDoc.ref));
+                await batch.commit();
+            }
+        }
+
+        await adminDb.collection('_trash').doc(docId).delete();
+        console.log(`[SYSTEM ADMIN] ${req.user.email} permanently deleted trash doc ${docId}`);
+        res.json({ success: true, message: 'Item permanently deleted' });
+    } catch (error) {
+        console.error('Permanent delete error:', error);
+        res.status(500).json({ success: false, message: 'Error permanently deleting item' });
+    }
+});
+
+// EMPTY TRASH for a collection (or all)
+router.delete('/system-admin/trash-empty', async (req, res) => {
+    try {
+        const { collectionKey } = req.query;
+        let query = adminDb.collection('_trash');
+        if (collectionKey && SYSTEM_COLLECTIONS[collectionKey]) {
+            query = query.where('_collection', '==', SYSTEM_COLLECTIONS[collectionKey].collection);
+        }
+        const snapshot = await query.get();
+        if (snapshot.empty) return res.json({ success: true, message: 'Trash is already empty', deleted: 0 });
+
+        let deleted = 0;
+        for (const doc of snapshot.docs) {
+            try {
+                await adminDb.collection('_trash').doc(doc.id).delete();
+                deleted++;
+            } catch (e) { console.error(`Error permanently deleting ${doc.id}:`, e.message); }
+        }
+        console.log(`[SYSTEM ADMIN] ${req.user.email} emptied trash: ${deleted} items`);
+        res.json({ success: true, message: `${deleted} item(s) permanently deleted`, deleted });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Error emptying trash' });
     }
 });
 

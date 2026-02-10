@@ -419,7 +419,9 @@ export const getQuotesForJob = async (req, res, next) => {
                             hourlyRate: designerData.hourlyRate || null,
                             linkedinProfile: designerData.linkedinProfile || '',
                             profileStatus: designerData.profileStatus || 'incomplete',
-                            createdAt: designerData.createdAt || null
+                            createdAt: designerData.createdAt || null,
+                            resume: designerData.resume || null,
+                            certificates: designerData.certificates || []
                         };
                     }
                 }

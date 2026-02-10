@@ -73,6 +73,42 @@ router.get('/job/:jobId', authenticateToken, getQuotesForJob);
 // GET all quotes submitted by a specific user (designer)
 router.get('/user/:userId', authenticateToken, getQuotesByUser);
 
+// GET designer profile for quote view (contractor viewing designer details)
+router.get('/designer-profile/:designerId', authenticateToken, async (req, res) => {
+  try {
+    const { designerId } = req.params;
+
+    const designerDoc = await adminDb.collection('users').doc(designerId).get();
+    if (!designerDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Designer not found' });
+    }
+
+    const d = designerDoc.data();
+    res.json({
+      success: true,
+      data: {
+        name: d.name || '',
+        email: d.email || '',
+        type: d.type || 'designer',
+        skills: d.skills || [],
+        experience: d.experience || '',
+        education: d.education || '',
+        specializations: d.specializations || [],
+        bio: d.bio || '',
+        hourlyRate: d.hourlyRate || null,
+        linkedinProfile: d.linkedinProfile || '',
+        profileStatus: d.profileStatus || 'incomplete',
+        resume: d.resume || null,
+        certificates: d.certificates || [],
+        createdAt: d.createdAt || null
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching designer profile:', error);
+    res.status(500).json({ success: false, message: 'Error fetching designer profile' });
+  }
+});
+
 // GET a single quote by its ID
 router.get('/:id', authenticateToken, getQuoteById);
 

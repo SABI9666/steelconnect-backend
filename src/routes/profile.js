@@ -2,8 +2,8 @@
 import express from 'express';
 import multer from 'multer';
 import { authenticateToken } from '../middleware/authMiddleware.js';
-import { adminDb } from '../config/firebase.js';
-import { uploadToFirebaseStorage } from '../utils/firebaseStorage.js';
+import { adminDb, admin } from '../config/firebase.js';
+import { uploadToFirebaseStorage, deleteFileFromFirebase } from '../utils/firebaseStorage.js';
 
 // Sanitize filenames to prevent special character issues in storage URLs
 function sanitizeFilename(filename) {
@@ -438,7 +438,9 @@ router.delete('/attachment/:type', async (req, res) => {
     try {
         const userId = req.user.userId;
         const { type } = req.params;
-        const { index } = req.query; // For certificates, which index to remove
+        const { index } = req.query;
+
+        console.log(`Delete attachment request: type=${type}, index=${index}, userId=${userId}`);
 
         const userDoc = await adminDb.collection('users').doc(userId).get();
         if (!userDoc.exists) {
@@ -449,10 +451,15 @@ router.delete('/attachment/:type', async (req, res) => {
         const updateData = { updatedAt: new Date().toISOString() };
 
         if (type === 'resume') {
-            if (!userData.resume) {
-                return res.status(404).json({ success: false, message: 'No resume found to delete' });
+            // Delete from Firebase Storage if path exists
+            if (userData.resume && userData.resume.path) {
+                try {
+                    await deleteFileFromFirebase(userData.resume.path);
+                } catch (storageErr) {
+                    console.warn('Could not delete resume from storage:', storageErr.message);
+                }
             }
-            updateData.resume = null;
+            updateData.resume = admin.firestore.FieldValue.delete();
         } else if (type === 'certificate') {
             const certIndex = parseInt(index);
             if (isNaN(certIndex) || certIndex < 0) {
@@ -462,6 +469,14 @@ router.delete('/attachment/:type', async (req, res) => {
             if (certIndex >= certificates.length) {
                 return res.status(404).json({ success: false, message: 'Certificate not found at this index' });
             }
+            // Delete from Firebase Storage if path exists
+            if (certificates[certIndex] && certificates[certIndex].path) {
+                try {
+                    await deleteFileFromFirebase(certificates[certIndex].path);
+                } catch (storageErr) {
+                    console.warn('Could not delete certificate from storage:', storageErr.message);
+                }
+            }
             certificates.splice(certIndex, 1);
             updateData.certificates = certificates;
         } else {
@@ -469,6 +484,7 @@ router.delete('/attachment/:type', async (req, res) => {
         }
 
         await adminDb.collection('users').doc(userId).update(updateData);
+        console.log(`Successfully deleted ${type} for user ${userId}`);
 
         res.json({ success: true, message: `${type === 'resume' ? 'Resume' : 'Certificate'} deleted successfully` });
     } catch (error) {

@@ -433,6 +433,50 @@ router.patch('/update', async (req, res) => {
     }
 });
 
+// Delete profile attachment (resume or certificate)
+router.delete('/attachment/:type', async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        const { type } = req.params;
+        const { index } = req.query; // For certificates, which index to remove
+
+        const userDoc = await adminDb.collection('users').doc(userId).get();
+        if (!userDoc.exists) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        const userData = userDoc.data();
+        const updateData = { updatedAt: new Date().toISOString() };
+
+        if (type === 'resume') {
+            if (!userData.resume) {
+                return res.status(404).json({ success: false, message: 'No resume found to delete' });
+            }
+            updateData.resume = null;
+        } else if (type === 'certificate') {
+            const certIndex = parseInt(index);
+            if (isNaN(certIndex) || certIndex < 0) {
+                return res.status(400).json({ success: false, message: 'Valid certificate index is required' });
+            }
+            const certificates = userData.certificates || [];
+            if (certIndex >= certificates.length) {
+                return res.status(404).json({ success: false, message: 'Certificate not found at this index' });
+            }
+            certificates.splice(certIndex, 1);
+            updateData.certificates = certificates;
+        } else {
+            return res.status(400).json({ success: false, message: 'Invalid attachment type. Use "resume" or "certificate"' });
+        }
+
+        await adminDb.collection('users').doc(userId).update(updateData);
+
+        res.json({ success: true, message: `${type === 'resume' ? 'Resume' : 'Certificate'} deleted successfully` });
+    } catch (error) {
+        console.error('Error deleting profile attachment:', error);
+        res.status(500).json({ success: false, message: 'Error deleting attachment' });
+    }
+});
+
 // NEW: Get admin feedback/comments for user
 router.get('/admin-feedback', async (req, res) => {
     try {

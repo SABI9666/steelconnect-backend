@@ -2185,7 +2185,8 @@ router.get('/system-admin/overview', async (req, res) => {
         for (const [key, cfg] of Object.entries(SYSTEM_COLLECTIONS)) {
             const snapshot = await adminDb.collection(cfg.collection).get();
             const trashSnapshot = await adminDb.collection('_trash').where('_collection', '==', cfg.collection).get();
-            overview[key] = { label: cfg.label, total: snapshot.size, deleted: trashSnapshot.size };
+            const heldCount = snapshot.docs.filter(d => d.data()._held === true).length;
+            overview[key] = { label: cfg.label, total: snapshot.size, deleted: trashSnapshot.size, held: heldCount };
         }
         res.json({ success: true, data: overview });
     } catch (error) {
@@ -2445,6 +2446,108 @@ router.delete('/system-admin/trash-empty', async (req, res) => {
         res.json({ success: true, message: `${deleted} item(s) permanently deleted`, deleted });
     } catch (error) {
         res.status(500).json({ success: false, message: 'Error emptying trash' });
+    }
+});
+
+// HOLD/FREEZE - Freeze an item so it's inaccessible in the portal
+router.post('/system-admin/hold/:collectionKey/:docId', async (req, res) => {
+    try {
+        const { collectionKey, docId } = req.params;
+        const cfg = SYSTEM_COLLECTIONS[collectionKey];
+        if (!cfg) return res.status(400).json({ success: false, message: 'Invalid collection' });
+
+        const docRef = adminDb.collection(cfg.collection).doc(docId);
+        const doc = await docRef.get();
+        if (!doc.exists) return res.status(404).json({ success: false, message: 'Document not found' });
+
+        await docRef.update({
+            _held: true,
+            _heldAt: new Date().toISOString(),
+            _heldBy: req.user.email || req.user.userId
+        });
+
+        console.log(`[SYSTEM ADMIN] ${req.user.email} put HOLD on ${cfg.label} doc ${docId}`);
+        res.json({ success: true, message: `${cfg.label} item is now on hold (frozen)` });
+    } catch (error) {
+        console.error('System admin hold error:', error);
+        res.status(500).json({ success: false, message: 'Error holding item' });
+    }
+});
+
+// UNHOLD/UNFREEZE - Release an item from hold
+router.post('/system-admin/unhold/:collectionKey/:docId', async (req, res) => {
+    try {
+        const { collectionKey, docId } = req.params;
+        const cfg = SYSTEM_COLLECTIONS[collectionKey];
+        if (!cfg) return res.status(400).json({ success: false, message: 'Invalid collection' });
+
+        const docRef = adminDb.collection(cfg.collection).doc(docId);
+        const doc = await docRef.get();
+        if (!doc.exists) return res.status(404).json({ success: false, message: 'Document not found' });
+
+        await docRef.update({
+            _held: admin.firestore.FieldValue.delete(),
+            _heldAt: admin.firestore.FieldValue.delete(),
+            _heldBy: admin.firestore.FieldValue.delete()
+        });
+
+        console.log(`[SYSTEM ADMIN] ${req.user.email} released HOLD on ${cfg.label} doc ${docId}`);
+        res.json({ success: true, message: `${cfg.label} item hold released` });
+    } catch (error) {
+        console.error('System admin unhold error:', error);
+        res.status(500).json({ success: false, message: 'Error releasing hold' });
+    }
+});
+
+// PERMANENT DELETE from live data - Requires password verification
+router.post('/system-admin/permanent-delete/:collectionKey/:docId', async (req, res) => {
+    try {
+        const { collectionKey, docId } = req.params;
+        const { password } = req.body;
+        const cfg = SYSTEM_COLLECTIONS[collectionKey];
+        if (!cfg) return res.status(400).json({ success: false, message: 'Invalid collection' });
+
+        // Verify the system admin password
+        if (password !== '9666') {
+            return res.status(403).json({ success: false, message: 'Invalid system admin password. Permanent delete denied.' });
+        }
+
+        const docRef = adminDb.collection(cfg.collection).doc(docId);
+        const doc = await docRef.get();
+        if (!doc.exists) return res.status(404).json({ success: false, message: 'Document not found' });
+
+        const docData = doc.data();
+
+        // Delete associated storage files
+        const filePaths = [];
+        if (docData.resume?.path) filePaths.push(docData.resume.path);
+        if (docData.certificates) docData.certificates.forEach(c => { if (c.path) filePaths.push(c.path); });
+        if (docData.attachments) docData.attachments.forEach(a => { if (a.path) filePaths.push(a.path); });
+        if (docData.uploadedFiles) docData.uploadedFiles.forEach(f => { if (f.path) filePaths.push(f.path); });
+        if (docData.resultFile?.path) filePaths.push(docData.resultFile.path);
+
+        for (const fp of filePaths) {
+            try { await deleteFileFromFirebase(fp); } catch (e) { console.warn(`Could not delete storage file ${fp}:`, e.message); }
+        }
+
+        // For conversations, also delete subcollection messages
+        if (collectionKey === 'conversations') {
+            const msgsSnapshot = await docRef.collection('messages').get();
+            if (!msgsSnapshot.empty) {
+                const batch = adminDb.batch();
+                msgsSnapshot.docs.forEach(msgDoc => batch.delete(msgDoc.ref));
+                await batch.commit();
+            }
+        }
+
+        // Permanently delete the document
+        await docRef.delete();
+
+        console.log(`[SYSTEM ADMIN] ⚠️ ${req.user.email} PERMANENTLY DELETED ${cfg.label} doc ${docId} (NO RECOVERY)`);
+        res.json({ success: true, message: `${cfg.label} item permanently deleted. This cannot be undone.` });
+    } catch (error) {
+        console.error('System admin permanent delete error:', error);
+        res.status(500).json({ success: false, message: 'Error permanently deleting item' });
     }
 });
 

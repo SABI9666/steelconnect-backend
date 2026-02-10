@@ -399,11 +399,39 @@ export const getQuotesForJob = async (req, res, next) => {
         const quotesSnapshot = await adminDb.collection('quotes').where('jobId', '==', jobId).get();
 
         const quotes = quotesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        
+
+        // Enrich quotes with designer profile data
+        for (let i = 0; i < quotes.length; i++) {
+            try {
+                if (quotes[i].designerId) {
+                    const designerDoc = await adminDb.collection('users').doc(quotes[i].designerId).get();
+                    if (designerDoc.exists) {
+                        const designerData = designerDoc.data();
+                        quotes[i].designerProfile = {
+                            name: designerData.name || quotes[i].designerName,
+                            email: designerData.email || '',
+                            type: designerData.type || 'designer',
+                            skills: designerData.skills || [],
+                            experience: designerData.experience || '',
+                            education: designerData.education || '',
+                            specializations: designerData.specializations || [],
+                            bio: designerData.bio || '',
+                            hourlyRate: designerData.hourlyRate || null,
+                            linkedinProfile: designerData.linkedinProfile || '',
+                            profileStatus: designerData.profileStatus || 'incomplete',
+                            createdAt: designerData.createdAt || null
+                        };
+                    }
+                }
+            } catch (profileError) {
+                console.error(`Error fetching designer profile for ${quotes[i].designerId}:`, profileError);
+            }
+        }
+
         // Fixed sorting to handle both Firestore timestamps and regular dates
         quotes.sort((a, b) => {
             let dateA, dateB;
-            
+
             if (a.createdAt && typeof a.createdAt.toDate === 'function') {
                 dateA = a.createdAt.toDate();
             } else if (a.createdAt) {
@@ -411,7 +439,7 @@ export const getQuotesForJob = async (req, res, next) => {
             } else {
                 dateA = new Date(0);
             }
-            
+
             if (b.createdAt && typeof b.createdAt.toDate === 'function') {
                 dateB = b.createdAt.toDate();
             } else if (b.createdAt) {
@@ -419,7 +447,7 @@ export const getQuotesForJob = async (req, res, next) => {
             } else {
                 dateB = new Date(0);
             }
-            
+
             return dateB - dateA; // Sort descending
         });
 

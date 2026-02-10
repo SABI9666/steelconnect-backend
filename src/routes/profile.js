@@ -471,4 +471,123 @@ router.get('/admin-feedback', async (req, res) => {
     }
 });
 
+// Dashboard stats for charts
+router.get('/dashboard-stats', async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        const userType = req.user.type;
+
+        const stats = {
+            userType,
+            projects: { total: 0, open: 0, assigned: 0, completed: 0 },
+            quotes: { total: 0, submitted: 0, approved: 0, rejected: 0 },
+            monthlyActivity: [],
+            revenueByStatus: {}
+        };
+
+        if (userType === 'contractor') {
+            // Get contractor's jobs
+            const jobsSnapshot = await adminDb.collection('jobs')
+                .where('posterId', '==', userId).get();
+            const jobs = jobsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+            stats.projects.total = jobs.length;
+            stats.projects.open = jobs.filter(j => j.status === 'open').length;
+            stats.projects.assigned = jobs.filter(j => j.status === 'assigned').length;
+            stats.projects.completed = jobs.filter(j => j.status === 'completed').length;
+
+            // Get quotes received on contractor's jobs
+            const jobIds = jobs.map(j => j.id);
+            let allQuotes = [];
+            // Firestore 'in' queries support max 30 items
+            for (let i = 0; i < jobIds.length; i += 30) {
+                const batch = jobIds.slice(i, i + 30);
+                if (batch.length > 0) {
+                    const quotesSnap = await adminDb.collection('quotes')
+                        .where('jobId', 'in', batch).get();
+                    allQuotes = allQuotes.concat(quotesSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+                }
+            }
+
+            stats.quotes.total = allQuotes.length;
+            stats.quotes.submitted = allQuotes.filter(q => q.status === 'submitted').length;
+            stats.quotes.approved = allQuotes.filter(q => q.status === 'approved').length;
+            stats.quotes.rejected = allQuotes.filter(q => q.status === 'rejected').length;
+
+            // Monthly activity (last 6 months)
+            const now = new Date();
+            for (let i = 5; i >= 0; i--) {
+                const monthDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                const monthEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 0, 23, 59, 59);
+                const monthName = monthDate.toLocaleString('default', { month: 'short' });
+                const monthJobs = jobs.filter(j => {
+                    const created = j.createdAt?._seconds ? new Date(j.createdAt._seconds * 1000) :
+                                   j.createdAt?.seconds ? new Date(j.createdAt.seconds * 1000) :
+                                   new Date(j.createdAt);
+                    return created >= monthDate && created <= monthEnd;
+                }).length;
+                const monthQuotes = allQuotes.filter(q => {
+                    const created = q.createdAt?._seconds ? new Date(q.createdAt._seconds * 1000) :
+                                   q.createdAt?.seconds ? new Date(q.createdAt.seconds * 1000) :
+                                   new Date(q.createdAt);
+                    return created >= monthDate && created <= monthEnd;
+                }).length;
+                stats.monthlyActivity.push({ month: monthName, projects: monthJobs, quotes: monthQuotes });
+            }
+
+        } else if (userType === 'designer') {
+            // Get designer's quotes
+            const quotesSnapshot = await adminDb.collection('quotes')
+                .where('designerId', '==', userId).get();
+            const quotes = quotesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+            stats.quotes.total = quotes.length;
+            stats.quotes.submitted = quotes.filter(q => q.status === 'submitted').length;
+            stats.quotes.approved = quotes.filter(q => q.status === 'approved').length;
+            stats.quotes.rejected = quotes.filter(q => q.status === 'rejected').length;
+
+            // Get available projects count
+            const openJobsSnapshot = await adminDb.collection('jobs')
+                .where('status', '==', 'open').get();
+            stats.projects.open = openJobsSnapshot.size;
+            stats.projects.total = openJobsSnapshot.size;
+
+            // Assigned projects (where designer is assigned)
+            const assignedJobsSnapshot = await adminDb.collection('jobs')
+                .where('assignedTo', '==', userId).get();
+            const assignedJobs = assignedJobsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            stats.projects.assigned = assignedJobs.filter(j => j.status === 'assigned').length;
+            stats.projects.completed = assignedJobs.filter(j => j.status === 'completed').length;
+
+            // Monthly activity (last 6 months)
+            const now = new Date();
+            for (let i = 5; i >= 0; i--) {
+                const monthDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                const monthEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 0, 23, 59, 59);
+                const monthName = monthDate.toLocaleString('default', { month: 'short' });
+                const monthQuotes = quotes.filter(q => {
+                    const created = q.createdAt?._seconds ? new Date(q.createdAt._seconds * 1000) :
+                                   q.createdAt?.seconds ? new Date(q.createdAt.seconds * 1000) :
+                                   new Date(q.createdAt);
+                    return created >= monthDate && created <= monthEnd;
+                }).length;
+                const monthApproved = quotes.filter(q => {
+                    if (q.status !== 'approved') return false;
+                    const approved = q.approvedAt?._seconds ? new Date(q.approvedAt._seconds * 1000) :
+                                    q.approvedAt?.seconds ? new Date(q.approvedAt.seconds * 1000) :
+                                    q.approvedAt ? new Date(q.approvedAt) : null;
+                    return approved && approved >= monthDate && approved <= monthEnd;
+                }).length;
+                stats.monthlyActivity.push({ month: monthName, quotes: monthQuotes, approved: monthApproved });
+            }
+        }
+
+        res.json({ success: true, data: stats });
+
+    } catch (error) {
+        console.error('Error fetching dashboard stats:', error);
+        res.status(500).json({ success: false, message: 'Error fetching dashboard stats' });
+    }
+});
+
 export default router;

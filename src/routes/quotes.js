@@ -109,6 +109,181 @@ router.get('/designer-profile/:designerId', authenticateToken, async (req, res) 
   }
 });
 
+// GET quote analysis for a specific job - compares and analyzes all quotes
+router.get('/analyze/:jobId', authenticateToken, async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const contractorId = req.user.userId || req.user.id;
+
+    // Get job details
+    const jobDoc = await adminDb.collection('jobs').doc(jobId).get();
+    if (!jobDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Job not found' });
+    }
+    const jobData = { id: jobId, ...jobDoc.data() };
+
+    // Verify ownership
+    if (jobData.posterId !== contractorId) {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+
+    // Get all quotes for this job
+    const quotesSnapshot = await adminDb.collection('quotes').where('jobId', '==', jobId).get();
+    if (quotesSnapshot.empty) {
+      return res.json({ success: true, data: { job: jobData, quotes: [], analysis: null, message: 'No quotes received for this project yet.' } });
+    }
+
+    const quotes = quotesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+    // Enrich with designer profiles
+    for (let i = 0; i < quotes.length; i++) {
+      try {
+        if (quotes[i].designerId) {
+          const designerDoc = await adminDb.collection('users').doc(quotes[i].designerId).get();
+          if (designerDoc.exists) {
+            const d = designerDoc.data();
+            quotes[i].designerProfile = {
+              name: d.name || quotes[i].designerName,
+              email: d.email || '',
+              skills: d.skills || [],
+              experience: d.experience || '',
+              education: d.education || '',
+              specializations: d.specializations || [],
+              bio: d.bio || '',
+              hourlyRate: d.hourlyRate || null,
+              profileStatus: d.profileStatus || 'incomplete',
+              resume: d.resume ? { filename: d.resume.filename, size: d.resume.size } : null,
+              certificates: (d.certificates || []).map(c => ({ filename: c.filename, size: c.size }))
+            };
+          }
+        }
+      } catch (e) {
+        console.error(`Profile enrichment error for ${quotes[i].designerId}:`, e.message);
+      }
+    }
+
+    // --- ANALYSIS ENGINE ---
+    const amounts = quotes.map(q => parseFloat(q.quoteAmount) || 0).filter(a => a > 0);
+    const timelines = quotes.map(q => parseInt(q.timeline) || 0).filter(t => t > 0);
+
+    // Price statistics
+    const priceStats = {
+      min: amounts.length ? Math.min(...amounts) : 0,
+      max: amounts.length ? Math.max(...amounts) : 0,
+      avg: amounts.length ? Math.round(amounts.reduce((s, a) => s + a, 0) / amounts.length) : 0,
+      median: amounts.length ? amounts.sort((a, b) => a - b)[Math.floor(amounts.length / 2)] : 0,
+      range: amounts.length >= 2 ? Math.max(...amounts) - Math.min(...amounts) : 0,
+      count: amounts.length
+    };
+
+    // Timeline statistics
+    const timelineStats = {
+      min: timelines.length ? Math.min(...timelines) : 0,
+      max: timelines.length ? Math.max(...timelines) : 0,
+      avg: timelines.length ? Math.round(timelines.reduce((s, t) => s + t, 0) / timelines.length) : 0,
+      count: timelines.length
+    };
+
+    // Score each quote (0-100)
+    const scoredQuotes = quotes.map(q => {
+      const amount = parseFloat(q.quoteAmount) || 0;
+      const timeline = parseInt(q.timeline) || 0;
+      const dp = q.designerProfile || {};
+
+      // Price score: lower price = higher score (0-35 points)
+      let priceScore = 0;
+      if (amount > 0 && priceStats.range > 0) {
+        priceScore = Math.round(((priceStats.max - amount) / priceStats.range) * 35);
+      } else if (amount > 0) {
+        priceScore = 25; // Only one quote or all same price
+      }
+
+      // Timeline score: shorter = higher (0-25 points)
+      let timelineScore = 0;
+      if (timeline > 0 && timelineStats.max > timelineStats.min) {
+        timelineScore = Math.round(((timelineStats.max - timeline) / (timelineStats.max - timelineStats.min)) * 25);
+      } else if (timeline > 0) {
+        timelineScore = 18;
+      }
+
+      // Profile score (0-25 points)
+      let profileScore = 0;
+      if (dp.skills?.length > 0) profileScore += Math.min(dp.skills.length * 2, 8);
+      if (dp.experience) profileScore += 5;
+      if (dp.education) profileScore += 3;
+      if (dp.bio) profileScore += 2;
+      if (dp.specializations?.length > 0) profileScore += Math.min(dp.specializations.length, 3);
+      if (dp.resume) profileScore += 2;
+      if (dp.certificates?.length > 0) profileScore += 2;
+      profileScore = Math.min(profileScore, 25);
+
+      // Attachment score (0-15 points) - having relevant docs is positive
+      const attachments = q.attachments || [];
+      let attachmentScore = 0;
+      if (attachments.length > 0) {
+        attachmentScore += Math.min(attachments.length * 3, 9);
+        const hasPdf = attachments.some(a => a.mimetype === 'application/pdf' || a.name?.endsWith('.pdf'));
+        if (hasPdf) attachmentScore += 6;
+      }
+      attachmentScore = Math.min(attachmentScore, 15);
+
+      const totalScore = priceScore + timelineScore + profileScore + attachmentScore;
+
+      // Attachment analysis
+      const attachmentAnalysis = attachments.map(a => ({
+        name: a.name || 'Unnamed file',
+        size: a.size || 0,
+        type: a.mimetype || 'unknown',
+        isPdf: (a.mimetype === 'application/pdf' || (a.name || '').toLowerCase().endsWith('.pdf')),
+        sizeFormatted: a.size ? (a.size > 1024 * 1024 ? (a.size / (1024 * 1024)).toFixed(2) + ' MB' : (a.size / 1024).toFixed(1) + ' KB') : 'Unknown'
+      }));
+
+      return {
+        quoteId: q.id,
+        designerName: q.designerName,
+        designerId: q.designerId,
+        amount,
+        timeline,
+        description: q.description,
+        status: q.status,
+        scores: { price: priceScore, timeline: timelineScore, profile: profileScore, attachment: attachmentScore, total: totalScore },
+        designerProfile: dp,
+        attachmentAnalysis,
+        totalAttachments: attachments.length,
+        pdfCount: attachmentAnalysis.filter(a => a.isPdf).length
+      };
+    });
+
+    // Sort by total score descending
+    scoredQuotes.sort((a, b) => b.scores.total - a.scores.total);
+
+    // Generate recommendations
+    const bestValue = scoredQuotes[0] || null;
+    const cheapest = [...scoredQuotes].sort((a, b) => (a.amount || Infinity) - (b.amount || Infinity))[0] || null;
+    const fastest = [...scoredQuotes].sort((a, b) => (a.timeline || Infinity) - (b.timeline || Infinity))[0] || null;
+    const mostExperienced = [...scoredQuotes].sort((a, b) => b.scores.profile - a.scores.profile)[0] || null;
+
+    const analysis = {
+      totalQuotes: quotes.length,
+      priceStats,
+      timelineStats,
+      scoredQuotes,
+      recommendations: {
+        bestValue: bestValue ? { designerName: bestValue.designerName, quoteId: bestValue.quoteId, score: bestValue.scores.total, amount: bestValue.amount, reason: 'Best overall value combining price, timeline, designer experience, and documentation' } : null,
+        cheapest: cheapest ? { designerName: cheapest.designerName, quoteId: cheapest.quoteId, amount: cheapest.amount, reason: 'Lowest quoted price' } : null,
+        fastest: fastest && fastest.timeline > 0 ? { designerName: fastest.designerName, quoteId: fastest.quoteId, timeline: fastest.timeline, reason: 'Shortest delivery timeline' } : null,
+        mostExperienced: mostExperienced ? { designerName: mostExperienced.designerName, quoteId: mostExperienced.quoteId, profileScore: mostExperienced.scores.profile, reason: 'Most detailed profile and credentials' } : null
+      },
+      summary: `${quotes.length} quote${quotes.length > 1 ? 's' : ''} received. Price range: $${priceStats.min.toLocaleString()} - $${priceStats.max.toLocaleString()} (avg $${priceStats.avg.toLocaleString()}).${timelineStats.count > 0 ? ` Timeline range: ${timelineStats.min} - ${timelineStats.max} days (avg ${timelineStats.avg} days).` : ''}`
+    };
+
+    res.json({ success: true, data: { job: jobData, analysis } });
+  } catch (error) {
+    console.error('Error analyzing quotes:', error);
+    res.status(500).json({ success: false, message: 'Error analyzing quotes' });
+  }
+});
+
 // GET a single quote by its ID
 router.get('/:id', authenticateToken, getQuoteById);
 

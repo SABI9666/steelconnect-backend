@@ -4,8 +4,8 @@ import { uploadMultipleFilesToFirebase, validateFileUpload, deleteFileFromFireba
 
 // File upload configuration
 const FILE_UPLOAD_CONFIG = {
-    maxFileSize: 15 * 1024 * 1024, // 15MB per file
-    maxFiles: 10, // Maximum 10 files
+    maxFileSize: 25 * 1024 * 1024, // 25MB per file (supports large PDF invoices)
+    maxFiles: 20, // Maximum 20 files (for bulk invoice/project file uploads)
     fieldSize: 1024 * 1024, // 1MB for form fields
     fieldNameSize: 100, // Field name size limit
     fields: 20 // Maximum number of non-file fields
@@ -35,6 +35,7 @@ export const upload = multer({
         const isEstimationUpload = req.originalUrl.includes('/estimation');
         const isJobUpload = req.originalUrl.includes('/jobs');
         const isProfileUpload = req.originalUrl.includes('/profile');
+        const isMessageUpload = req.originalUrl.includes('/messages');
         
         // Define allowed file types based on context
         let allowedMimeTypes;
@@ -96,6 +97,24 @@ export const upload = multer({
             allowedExtensions = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'];
             routeDescription = 'PDF, DOC, DOCX, JPG, PNG';
             maxFilesForRoute = 5;
+        } else if (isMessageUpload) {
+            // Messages: PDFs, documents, images, spreadsheets for invoices and project files
+            allowedMimeTypes = [
+                'application/pdf',
+                'application/msword',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'image/jpeg',
+                'image/jpg',
+                'image/png',
+                'application/vnd.ms-excel',
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'text/plain',
+                'application/zip',
+                'application/x-zip-compressed'
+            ];
+            allowedExtensions = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'xls', 'xlsx', 'txt', 'zip'];
+            routeDescription = 'PDF, DOC, DOCX, JPG, PNG, XLS, XLSX, TXT, ZIP';
+            maxFilesForRoute = 20;
         } else {
             // Default: Conservative file types
             allowedMimeTypes = [

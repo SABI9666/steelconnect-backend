@@ -7,6 +7,8 @@ import {
 } from '../controllers/messageController.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { adminDb } from '../config/firebase.js';
+import { upload, handleUploadError } from '../middleware/upload.js';
+import { uploadMultipleFilesToFirebase } from '../utils/firebaseStorage.js';
 
 const router = express.Router();
 
@@ -260,21 +262,23 @@ router.get('/', getConversations);
 router.post('/find', findOrCreateConversation);
 router.get('/:conversationId/messages', getMessages);
 
-// ENHANCED MESSAGE SENDING with working notification system
-router.post('/:conversationId/messages', checkUserBlocked, async (req, res, next) => {
+// ENHANCED MESSAGE SENDING with working notification system and file attachments
+router.post('/:conversationId/messages', checkUserBlocked, upload.array('attachments', 20), handleUploadError, async (req, res, next) => {
     try {
         const { conversationId } = req.params;
         const { text } = req.body;
         const senderId = req.user.userId || req.user.id;
 
         console.log(`[MESSAGE-ROUTE] Sending message: User ${senderId} (${req.user.name}) in conversation ${conversationId}`);
+        console.log(`[MESSAGE-ROUTE] Files attached: ${req.files?.length || 0}`);
 
-        // Validate input
-        if (!text || typeof text !== 'string' || text.trim().length === 0) {
-            console.log(`[MESSAGE-ROUTE] Invalid text input:`, text);
-            return res.status(400).json({ 
-                success: false, 
-                message: 'Message text is required and cannot be empty' 
+        // Validate input - text is required unless files are attached
+        const hasFiles = req.files && req.files.length > 0;
+        const hasText = text && typeof text === 'string' && text.trim().length > 0;
+        if (!hasText && !hasFiles) {
+            return res.status(400).json({
+                success: false,
+                message: 'Message text or file attachment is required'
             });
         }
 
@@ -294,24 +298,52 @@ router.post('/:conversationId/messages', checkUserBlocked, async (req, res, next
             return res.status(403).json({ success: false, message: 'Not authorized to send messages here.' });
         }
 
+        // Upload files if attached
+        let attachments = [];
+        if (req.files && req.files.length > 0) {
+            console.log(`[MESSAGE-ROUTE] Uploading ${req.files.length} file(s) to Firebase Storage...`);
+            try {
+                const uploadedFiles = await uploadMultipleFilesToFirebase(
+                    req.files,
+                    `messages/${conversationId}`,
+                    senderId
+                );
+                attachments = uploadedFiles.map(f => ({
+                    name: f.name || f.originalName || 'file',
+                    url: f.url || f.publicUrl,
+                    path: f.path || f.storagePath || '',
+                    size: f.size || 0,
+                    type: f.contentType || f.mimetype || 'application/octet-stream'
+                }));
+                console.log(`[MESSAGE-ROUTE] ${attachments.length} file(s) uploaded successfully`);
+            } catch (uploadError) {
+                console.error('[MESSAGE-ROUTE] File upload failed:', uploadError);
+                return res.status(500).json({ success: false, message: 'Failed to upload file attachments.' });
+            }
+        }
+
         // Create message object with proper timestamp
         const messageTimestamp = new Date();
         const newMessage = {
-            text: text.trim(),
+            text: hasText ? text.trim() : '',
             senderId,
             senderName: req.user.name,
-            createdAt: messageTimestamp.toISOString()
+            createdAt: messageTimestamp.toISOString(),
+            ...(attachments.length > 0 && { attachments })
         };
-        
+
         console.log(`[MESSAGE-ROUTE] Saving message to subcollection...`);
-        
+
         // Save message to subcollection
         const messagesCollectionRef = convoRef.collection('messages');
         const messageRef = await messagesCollectionRef.add(newMessage);
 
         // Update conversation metadata
-        await convoRef.update({ 
-            lastMessage: text.trim().substring(0, 100),
+        const lastMsgPreview = hasText
+            ? text.trim().substring(0, 100)
+            : `${attachments.length} file(s) attached`;
+        await convoRef.update({
+            lastMessage: lastMsgPreview,
             updatedAt: messageTimestamp.toISOString(),
             lastMessageBy: req.user.name
         });

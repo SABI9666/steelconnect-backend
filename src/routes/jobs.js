@@ -129,6 +129,41 @@ router.get('/:id', getJobById);
 // Protected routes
 router.get('/user/:userId', authenticateToken, getJobsByUserId);
 
+// Designer assigned projects - returns all jobs where this designer is assigned
+router.get('/assigned/:userId', authenticateToken, async (req, res) => {
+    try {
+        const { userId } = req.params;
+        if (req.user.userId !== userId) {
+            return res.status(403).json({ success: false, message: 'Not authorized.' });
+        }
+        const jobsSnapshot = await adminDb.collection('jobs')
+            .where('assignedTo', '==', userId)
+            .orderBy('createdAt', 'desc')
+            .get();
+        const jobs = [];
+        for (const doc of jobsSnapshot.docs) {
+            const jobData = { id: doc.id, ...doc.data() };
+            // Include poster (contractor) email for invoice sending
+            if (jobData.posterId) {
+                try {
+                    const posterDoc = await adminDb.collection('users').doc(jobData.posterId).get();
+                    if (posterDoc.exists) {
+                        const posterData = posterDoc.data();
+                        jobData.posterEmail = posterData.email || '';
+                        jobData.posterName = posterData.name || 'Client';
+                        jobData.posterCompany = posterData.companyName || posterData.company || '';
+                    }
+                } catch (e) { /* skip */ }
+            }
+            jobs.push(jobData);
+        }
+        res.status(200).json({ success: true, data: jobs });
+    } catch (error) {
+        console.error('Error fetching assigned jobs:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch assigned projects.' });
+    }
+});
+
 // Enhanced job creation with multiple file support
 router.post(
   '/', 

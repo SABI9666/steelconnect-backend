@@ -5,11 +5,11 @@ import { authenticateToken } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
-// Configure multer for file uploads
+// Configure multer for file uploads (large PDF support)
 const upload = multer({
     storage: multer.memoryStorage(),
-    limits: { 
-        fileSize: 10 * 1024 * 1024 // 10MB limit
+    limits: {
+        fileSize: 50 * 1024 * 1024 // 50MB limit (large drawings/blueprints)
     },
     fileFilter: (req, file, cb) => {
         if (file.mimetype === 'application/pdf') {
@@ -24,9 +24,9 @@ const upload = multer({
 const handleMulterError = (err, req, res, next) => {
     if (err instanceof multer.MulterError) {
         if (err.code === 'LIMIT_FILE_SIZE') {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'File too large. Maximum size is 10MB.' 
+            return res.status(400).json({
+                success: false,
+                message: 'File too large. Maximum size is 50MB.'
             });
         }
     } else if (err.message === 'Only PDF files are allowed') {

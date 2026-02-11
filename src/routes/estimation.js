@@ -20,12 +20,12 @@ import { sendEstimationResultNotification } from '../utils/emailService.js';
 
 const router = express.Router();
 
-// Enhanced multer configuration for multiple PDF uploads
+// Enhanced multer configuration for multiple PDF uploads (large files + high qty)
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: FILE_UPLOAD_CONFIG.maxFileSize, // 15MB per file
-    files: FILE_UPLOAD_CONFIG.maxFiles, // Maximum 10 files
+    fileSize: FILE_UPLOAD_CONFIG.maxFileSize, // 50MB per file (large drawings/blueprints)
+    files: FILE_UPLOAD_CONFIG.maxFiles, // Maximum 20 files (bulk estimation support)
     fieldSize: 1024 * 1024 // 1MB for form fields
   },
   fileFilter: (req, file, cb) => {
@@ -86,7 +86,7 @@ router.get('/', authenticateToken, isAdmin, async (req, res) => {
 });
 
 // Enhanced estimation submission with multiple PDF support and secure upload
-router.post('/contractor/submit', authenticateToken, isContractor, upload.array('files', 10), async (req, res) => {
+router.post('/contractor/submit', authenticateToken, isContractor, upload.array('files', 20), async (req, res) => {
   try {
     console.log('[CONTRACTOR] Estimation submission by:', req.user?.email);
     console.log('[CONTRACTOR] Files received:', req.files?.length || 0);
@@ -1242,7 +1242,7 @@ router.use((error, req, res, next) => {
     if (error.code === 'LIMIT_FILE_SIZE') {
       return res.status(400).json({
         success: false,
-        message: 'File size too large. Maximum 15MB per file allowed.',
+        message: 'File size too large. Maximum 50MB per file allowed.',
         errorCode: 'FILE_TOO_LARGE'
       });
     }

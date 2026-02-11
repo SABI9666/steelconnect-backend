@@ -4,6 +4,7 @@ import multer from 'multer';
 import { authenticateToken, isAdmin } from '../middleware/authMiddleware.js';
 import { adminDb, admin, uploadToFirebaseStorage, generateSignedUrl, deleteFileFromFirebase } from '../config/firebase.js';
 import { sendEstimationResultNotification, sendProfileReviewNotification } from '../utils/emailService.js';
+import { NotificationService } from '../services/NotificationService.js';
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -66,6 +67,21 @@ router.get('/dashboard', async (req, res) => {
             }
         });
 
+        // Community Posts stats
+        let communityStats = { total: 0, pending: 0, approved: 0, rejected: 0 };
+        try {
+            const communitySnapshot = await adminDb.collection('community_posts').get();
+            communitySnapshot.forEach(doc => {
+                const data = doc.data();
+                communityStats.total++;
+                if (data.status === 'pending') communityStats.pending++;
+                else if (data.status === 'approved') communityStats.approved++;
+                else if (data.status === 'rejected') communityStats.rejected++;
+            });
+        } catch (e) {
+            console.warn('Community stats query failed:', e.message);
+        }
+
         res.json({
             success: true,
             stats: {
@@ -83,7 +99,11 @@ router.get('/dashboard', async (req, res) => {
                 completedAnalysisRequests: analysisStats.completed,
                 totalBusinessAnalyticsRequests: analysisStats.total,
                 pendingBusinessAnalyticsRequests: analysisStats.pending,
-                completedBusinessAnalyticsRequests: analysisStats.completed
+                completedBusinessAnalyticsRequests: analysisStats.completed,
+                pendingCommunityPosts: communityStats.pending,
+                totalCommunityPosts: communityStats.total,
+                approvedCommunityPosts: communityStats.approved,
+                rejectedCommunityPosts: communityStats.rejected
             }
         });
     } catch (error) {
@@ -2548,6 +2568,201 @@ router.post('/system-admin/permanent-delete/:collectionKey/:docId', async (req, 
     } catch (error) {
         console.error('System admin permanent delete error:', error);
         res.status(500).json({ success: false, message: 'Error permanently deleting item' });
+    }
+});
+
+// --- COMMUNITY FEED MODERATION ---
+
+// GET /api/admin/community-posts - List all posts for moderation
+router.get('/community-posts', async (req, res) => {
+    try {
+        const statusFilter = req.query.status;
+
+        let query = adminDb.collection('community_posts')
+            .orderBy('createdAt', 'desc');
+
+        if (statusFilter) {
+            query = adminDb.collection('community_posts')
+                .where('status', '==', statusFilter)
+                .orderBy('createdAt', 'desc');
+        }
+
+        const snapshot = await query.get();
+        const posts = [];
+
+        for (const doc of snapshot.docs) {
+            const data = doc.data();
+            // Refresh image URLs
+            const images = [];
+            if (data.images && data.images.length > 0) {
+                for (const img of data.images) {
+                    if (typeof img === 'object' && img.path) {
+                        try {
+                            const freshUrl = await generateSignedUrl(img.path, 60);
+                            images.push({ ...img, url: freshUrl });
+                        } catch (e) {
+                            images.push(img);
+                        }
+                    } else {
+                        images.push(img);
+                    }
+                }
+            }
+            posts.push({ _id: doc.id, ...data, images });
+        }
+
+        const pendingCount = posts.filter(p => p.status === 'pending').length;
+        const approvedCount = posts.filter(p => p.status === 'approved').length;
+        const rejectedCount = posts.filter(p => p.status === 'rejected').length;
+
+        res.json({
+            success: true,
+            posts,
+            stats: {
+                total: posts.length,
+                pending: pendingCount,
+                approved: approvedCount,
+                rejected: rejectedCount
+            }
+        });
+    } catch (error) {
+        console.error('[ADMIN-COMMUNITY] Error fetching posts:', error);
+        res.status(500).json({ success: false, message: 'Error fetching community posts' });
+    }
+});
+
+// POST /api/admin/community-posts/:postId/approve - Approve a post
+router.post('/community-posts/:postId/approve', async (req, res) => {
+    try {
+        const { postId } = req.params;
+        const { adminComments } = req.body;
+
+        const postRef = adminDb.collection('community_posts').doc(postId);
+        const postDoc = await postRef.get();
+
+        if (!postDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Post not found.' });
+        }
+
+        const postData = postDoc.data();
+
+        await postRef.update({
+            status: 'approved',
+            adminReviewedBy: req.user.email,
+            adminReviewedAt: new Date().toISOString(),
+            adminComments: adminComments || null,
+            updatedAt: new Date().toISOString()
+        });
+
+        // Notify the post author
+        try {
+            await NotificationService.createNotification(
+                postData.authorId,
+                'Community Post Approved!',
+                'Your community post has been approved and is now visible in the feed.',
+                'community',
+                {
+                    action: 'community_post_approved',
+                    postId: postId,
+                    adminComments: adminComments || null
+                }
+            );
+        } catch (e) {
+            console.error('[ADMIN-COMMUNITY] Failed to notify author:', e);
+        }
+
+        console.log(`[ADMIN-COMMUNITY] Post ${postId} approved by ${req.user.email}`);
+        res.json({ success: true, message: 'Post approved and now visible in the community feed.' });
+    } catch (error) {
+        console.error('[ADMIN-COMMUNITY] Error approving post:', error);
+        res.status(500).json({ success: false, message: 'Error approving post' });
+    }
+});
+
+// POST /api/admin/community-posts/:postId/reject - Reject a post
+router.post('/community-posts/:postId/reject', async (req, res) => {
+    try {
+        const { postId } = req.params;
+        const { reason, adminComments } = req.body;
+
+        if (!reason) {
+            return res.status(400).json({ success: false, message: 'Rejection reason is required.' });
+        }
+
+        const postRef = adminDb.collection('community_posts').doc(postId);
+        const postDoc = await postRef.get();
+
+        if (!postDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Post not found.' });
+        }
+
+        const postData = postDoc.data();
+        const fullComment = adminComments
+            ? `${reason}\n\nAdditional Comments: ${adminComments}`
+            : reason;
+
+        await postRef.update({
+            status: 'rejected',
+            adminReviewedBy: req.user.email,
+            adminReviewedAt: new Date().toISOString(),
+            adminComments: fullComment,
+            updatedAt: new Date().toISOString()
+        });
+
+        // Notify the post author
+        try {
+            await NotificationService.createNotification(
+                postData.authorId,
+                'Community Post Needs Changes',
+                `Your community post was not approved. Reason: ${reason}`,
+                'community',
+                {
+                    action: 'community_post_rejected',
+                    postId: postId,
+                    reason: reason,
+                    adminComments: adminComments || null
+                }
+            );
+        } catch (e) {
+            console.error('[ADMIN-COMMUNITY] Failed to notify author:', e);
+        }
+
+        console.log(`[ADMIN-COMMUNITY] Post ${postId} rejected by ${req.user.email}`);
+        res.json({ success: true, message: 'Post rejected. Author has been notified.' });
+    } catch (error) {
+        console.error('[ADMIN-COMMUNITY] Error rejecting post:', error);
+        res.status(500).json({ success: false, message: 'Error rejecting post' });
+    }
+});
+
+// DELETE /api/admin/community-posts/:postId - Admin delete a post
+router.delete('/community-posts/:postId', async (req, res) => {
+    try {
+        const { postId } = req.params;
+        const postRef = adminDb.collection('community_posts').doc(postId);
+        const postDoc = await postRef.get();
+
+        if (!postDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Post not found.' });
+        }
+
+        // Move to trash
+        await adminDb.collection('_trash').add({
+            originalCollection: 'community_posts',
+            originalId: postId,
+            data: postDoc.data(),
+            deletedBy: req.user.email,
+            deletedAt: new Date().toISOString(),
+            reason: 'admin_deleted'
+        });
+
+        await postRef.delete();
+
+        console.log(`[ADMIN-COMMUNITY] Post ${postId} deleted by ${req.user.email}`);
+        res.json({ success: true, message: 'Post deleted by admin.' });
+    } catch (error) {
+        console.error('[ADMIN-COMMUNITY] Error deleting post:', error);
+        res.status(500).json({ success: false, message: 'Error deleting post' });
     }
 });
 

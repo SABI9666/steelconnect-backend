@@ -458,4 +458,46 @@ router.post('/posts/:id/comments', async (req, res) => {
     }
 });
 
+// ==========================================
+// DELETE /posts/:id/comments/:commentId - Delete own comment
+// ==========================================
+router.delete('/posts/:id/comments/:commentId', async (req, res) => {
+    try {
+        const { id, commentId } = req.params;
+        const userId = req.user.userId;
+
+        const postRef = adminDb.collection('community_posts').doc(id);
+        const postDoc = await postRef.get();
+
+        if (!postDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Post not found.' });
+        }
+
+        const postData = postDoc.data();
+        const comments = postData.comments || [];
+        const comment = comments.find(c => c.id === commentId);
+
+        if (!comment) {
+            return res.status(404).json({ success: false, message: 'Comment not found.' });
+        }
+
+        // Allow deletion by comment author or post author
+        if (comment.authorId !== userId && postData.authorId !== userId) {
+            return res.status(403).json({ success: false, message: 'You can only delete your own comments.' });
+        }
+
+        const updatedComments = comments.filter(c => c.id !== commentId);
+
+        await postRef.update({
+            comments: updatedComments,
+            updatedAt: new Date().toISOString()
+        });
+
+        res.json({ success: true, message: 'Comment deleted.' });
+    } catch (error) {
+        console.error('[COMMUNITY] Error deleting comment:', error);
+        res.status(500).json({ success: false, message: 'Failed to delete comment.' });
+    }
+});
+
 export default router;

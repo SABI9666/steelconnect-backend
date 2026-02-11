@@ -72,6 +72,17 @@ try {
 // NEW: Import analysis routes
 import analysisRoutes from './src/routes/analysis.js';
 
+// NEW: Import community routes
+let communityRoutes;
+try {
+    const communityModule = await import('./src/routes/community.js');
+    communityRoutes = communityModule.default;
+    console.log('✅ Community routes imported successfully');
+} catch (error) {
+    console.warn('⚠️ Community routes not available:', error.message);
+    console.warn('🔧 Community feed will not work');
+}
+
 dotenv.config();
 
 const app = express();
@@ -514,6 +525,19 @@ if (estimationRoutes) {
 app.use('/api/analysis', analysisRoutes);
 console.log('📊 Analysis routes registered at /api/analysis');
 console.log('   • User analytics and reporting');
+
+// NEW: Community routes
+if (communityRoutes) {
+    app.use('/api/community', communityRoutes);
+    console.log('✅ Community routes registered at /api/community');
+    console.log('💬 Community Feed: ENABLED');
+    console.log('   • Community post CRUD');
+    console.log('   • Like and comment system');
+    console.log('   • Admin approval workflow');
+    console.log('   • Image uploads to GCS');
+} else {
+    console.warn('⚠️ Community routes unavailable - community feed disabled');
+}
 
 console.log('📦 Route registration completed');
 

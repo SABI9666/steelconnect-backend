@@ -148,8 +148,8 @@ export async function uploadMultipleFilesToFirebase(files, basePath, userId = nu
  * @param {number} maxFiles - Maximum number of files allowed
  * @returns {boolean} - Returns true if valid, throws error if invalid
  */
-export function validateFileUpload(files, maxFiles = 10) {
-    const maxSize = 15 * 1024 * 1024; // 15MB
+export function validateFileUpload(files, maxFiles = 20) {
+    const maxSize = 50 * 1024 * 1024; // 50MB
     const allowedTypes = [
         'application/pdf',
         'application/msword',
@@ -175,7 +175,7 @@ export function validateFileUpload(files, maxFiles = 10) {
         }
         
         if (file.size > maxSize) {
-            throw new Error(`File size exceeds maximum allowed size of 15MB. File "${file.originalname || 'unknown'}" size: ${(file.size / (1024 * 1024)).toFixed(2)}MB`);
+            throw new Error(`File size exceeds maximum allowed size of 50MB. File "${file.originalname || 'unknown'}" size: ${(file.size / (1024 * 1024)).toFixed(2)}MB`);
         }
         
         // FIXED: Handle missing MIME type

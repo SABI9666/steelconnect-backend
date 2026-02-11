@@ -44,15 +44,15 @@ export const storage = getStorage();
 
 // File upload configuration
 export const FILE_UPLOAD_CONFIG = {
-    maxFileSize: 15 * 1024 * 1024, // 15MB per file
-    maxFiles: 10, // Maximum 10 files per upload
+    maxFileSize: 50 * 1024 * 1024, // 50MB per file (supports large PDF drawings/blueprints)
+    maxFiles: 20, // Maximum 20 files per upload (bulk estimation support)
     allowedMimeTypes: ['application/pdf'], // For estimations - strict PDF only
     allowedExtensions: ['.pdf'], // For estimations - strict PDF only
     storagePath: 'uploads/',
-    
+
     // Additional configs for different upload types
     quotesConfig: {
-        maxFileSize: 15 * 1024 * 1024,
+        maxFileSize: 50 * 1024 * 1024,
         maxFiles: 5,
         allowedMimeTypes: [
             'application/pdf',
@@ -67,7 +67,7 @@ export const FILE_UPLOAD_CONFIG = {
     },
     
     jobsConfig: {
-        maxFileSize: 15 * 1024 * 1024,
+        maxFileSize: 50 * 1024 * 1024,
         maxFiles: 10,
         allowedMimeTypes: [
             'application/pdf',

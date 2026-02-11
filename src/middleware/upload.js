@@ -4,8 +4,8 @@ import { uploadMultipleFilesToFirebase, validateFileUpload, deleteFileFromFireba
 
 // File upload configuration
 const FILE_UPLOAD_CONFIG = {
-    maxFileSize: 25 * 1024 * 1024, // 25MB per file (supports large PDF invoices)
-    maxFiles: 20, // Maximum 20 files (for bulk invoice/project file uploads)
+    maxFileSize: 50 * 1024 * 1024, // 50MB per file (supports large PDF drawings/blueprints)
+    maxFiles: 20, // Maximum 20 files (for bulk estimation/project file uploads)
     fieldSize: 1024 * 1024, // 1MB for form fields
     fieldNameSize: 100, // Field name size limit
     fields: 20 // Maximum number of non-file fields
@@ -44,11 +44,11 @@ export const upload = multer({
         let maxFilesForRoute;
         
         if (isEstimationUpload) {
-            // Estimation: PDF only for accuracy
+            // Estimation: PDF only for accuracy - supports large qty and size
             allowedMimeTypes = ['application/pdf'];
             allowedExtensions = ['pdf'];
             routeDescription = 'PDF files only';
-            maxFilesForRoute = 10;
+            maxFilesForRoute = 20;
         } else if (isQuoteUpload) {
             // Quotes: Extended file types for proposals
             allowedMimeTypes = [

@@ -1015,7 +1015,18 @@ router.get('/estimations', async (req, res) => {
     try {
         console.log('Fetching estimations with user details...');
 
-        const snapshot = await adminDb.collection('estimations').orderBy('createdAt', 'desc').get();
+        // Helper to normalize Firestore timestamps to ISO strings
+        const normalizeDate = (val) => {
+            if (!val) return null;
+            if (typeof val === 'string') return val;
+            if (val.toDate && typeof val.toDate === 'function') return val.toDate().toISOString();
+            if (typeof val._seconds === 'number') return new Date(val._seconds * 1000).toISOString();
+            if (typeof val.seconds === 'number') return new Date(val.seconds * 1000).toISOString();
+            if (val instanceof Date) return val.toISOString();
+            return String(val);
+        };
+
+        const snapshot = await adminDb.collection('estimations').get();
         const estimations = [];
 
         for (const doc of snapshot.docs) {
@@ -1073,20 +1084,31 @@ router.get('/estimations', async (req, res) => {
             const estimation = {
                 _id: doc.id,
                 projectName: data.projectTitle || data.projectName,
+                projectTitle: data.projectTitle || data.projectName,
                 projectDescription: data.description || data.projectDescription,
                 userEmail: data.contractorEmail,
                 userName: data.contractorName,
+                contractorName: data.contractorName,
+                contractorEmail: data.contractorEmail,
                 user: user,
                 status: data.status || 'pending',
                 uploadedFiles: data.uploadedFiles || [],
                 resultFile: data.resultFile,
-                createdAt: data.createdAt,
-                completedAt: data.completedAt,
+                createdAt: normalizeDate(data.createdAt),
+                updatedAt: normalizeDate(data.updatedAt),
+                completedAt: normalizeDate(data.completedAt),
                 description: data.description
             };
 
             estimations.push(estimation);
         }
+
+        // Sort by createdAt descending (in memory, avoids composite index requirement)
+        estimations.sort((a, b) => {
+            const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return dateB - dateA;
+        });
 
         console.log(`Returning ${estimations.length} estimations with user details`);
         res.json({ success: true, estimations });

@@ -29,44 +29,82 @@ const upload = multer({
     fieldSize: 1024 * 1024 // 1MB for form fields
   },
   fileFilter: (req, file, cb) => {
-    // Only allow PDF files for estimations
-    if (!FILE_UPLOAD_CONFIG.allowedMimeTypes.includes(file.mimetype)) {
-      return cb(new Error(`Only PDF files are allowed. Received: ${file.mimetype}`), false);
-    }
-    
-    // Check file extension as additional validation
+    // Accept application/pdf and application/octet-stream (some browsers send PDFs as octet-stream)
+    const allowedMimes = ['application/pdf', 'application/octet-stream'];
+
+    // Check file extension first - must be .pdf
     const ext = file.originalname.toLowerCase().split('.').pop();
     if (ext !== 'pdf') {
       return cb(new Error(`Only PDF files are allowed. File extension: .${ext}`), false);
     }
-    
+
+    // Accept if MIME is pdf OR octet-stream (with pdf extension already confirmed above)
+    if (!allowedMimes.includes(file.mimetype)) {
+      return cb(new Error(`Only PDF files are allowed. Received: ${file.mimetype}`), false);
+    }
+
+    // Force correct MIME type for downstream processing
+    if (file.mimetype === 'application/octet-stream') {
+      file.mimetype = 'application/pdf';
+    }
+
     cb(null, true);
   }
 });
+
+// Safe multer wrapper - handles upload errors inline via promise
+const safeEstimationUpload = (req, res) => {
+  return new Promise((resolve, reject) => {
+    upload.array('files', 20)(req, res, (err) => {
+      if (err) return reject(err);
+      resolve();
+    });
+  });
+};
+
+// Helper to normalize Firestore timestamps to ISO strings
+const normalizeDate = (val) => {
+  if (!val) return null;
+  if (typeof val === 'string') return val;
+  if (val.toDate && typeof val.toDate === 'function') return val.toDate().toISOString();
+  if (typeof val._seconds === 'number') return new Date(val._seconds * 1000).toISOString();
+  if (typeof val.seconds === 'number') return new Date(val.seconds * 1000).toISOString();
+  if (val instanceof Date) return val.toISOString();
+  return String(val);
+};
 
 // Get all estimations (Admin only)
 router.get('/', authenticateToken, isAdmin, async (req, res) => {
   try {
     console.log('[ADMIN] Estimations list requested by:', req.user?.email);
-    
-    const snapshot = await adminDb.collection('estimations')
-      .orderBy('createdAt', 'desc')
-      .get();
-    
+
+    const snapshot = await adminDb.collection('estimations').get();
+
     const estimations = snapshot.docs.map(doc => {
       const data = doc.data();
       return {
         _id: doc.id,
         id: doc.id,
         ...data,
+        // Normalize all date fields to ISO strings
+        createdAt: normalizeDate(data.createdAt),
+        updatedAt: normalizeDate(data.updatedAt),
+        completedAt: normalizeDate(data.completedAt),
         // Add file statistics
         fileCount: data.uploadedFiles ? data.uploadedFiles.length : 0,
-        totalFileSize: data.uploadedFiles ? 
+        totalFileSize: data.uploadedFiles ?
           data.uploadedFiles.reduce((sum, file) => sum + (file.size || 0), 0) : 0,
         // Add convenience flags
         hasResult: !!(data.resultFile && data.resultFile.path),
         hasFiles: !!(data.uploadedFiles && data.uploadedFiles.length > 0)
       };
+    });
+
+    // Sort by createdAt descending (in memory)
+    estimations.sort((a, b) => {
+      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return dateB - dateA;
     });
     
     console.log(`[ADMIN] Found ${estimations.length} estimations`);
@@ -86,11 +124,29 @@ router.get('/', authenticateToken, isAdmin, async (req, res) => {
 });
 
 // Enhanced estimation submission with multiple PDF support and secure upload
-router.post('/contractor/submit', authenticateToken, isContractor, upload.array('files', 20), async (req, res) => {
+router.post('/contractor/submit', authenticateToken, isContractor, async (req, res) => {
   try {
+    // Parse multipart upload safely (handles multer errors inline)
+    try {
+      await safeEstimationUpload(req, res);
+    } catch (uploadErr) {
+      console.error('[CONTRACTOR] Multer error:', uploadErr.message);
+      const isFileType = uploadErr.message.includes('Only PDF') || uploadErr.message.includes('File extension');
+      const isSize = uploadErr.code === 'LIMIT_FILE_SIZE';
+      const isCount = uploadErr.code === 'LIMIT_FILE_COUNT';
+      return res.status(400).json({
+        success: false,
+        message: isSize ? 'File size too large. Maximum 50MB per file allowed.'
+               : isCount ? `Too many files. Maximum ${FILE_UPLOAD_CONFIG.maxFiles} files allowed.`
+               : isFileType ? uploadErr.message
+               : `Upload error: ${uploadErr.message}`,
+        errorCode: isSize ? 'FILE_TOO_LARGE' : isCount ? 'TOO_MANY_FILES' : isFileType ? 'INVALID_FILE_TYPE' : 'UPLOAD_ERROR'
+      });
+    }
+
     console.log('[CONTRACTOR] Estimation submission by:', req.user?.email);
     console.log('[CONTRACTOR] Files received:', req.files?.length || 0);
-    
+
     const { projectTitle, description, contractorName, contractorEmail } = req.body;
     const files = req.files;
 
@@ -236,9 +292,9 @@ router.get('/contractor/:contractorEmail', authenticateToken, async (req, res) =
       });
     }
 
+    // Query without orderBy to avoid composite index requirement
     const snapshot = await adminDb.collection('estimations')
       .where('contractorEmail', '==', contractorEmail)
-      .orderBy('createdAt', 'desc')
       .get();
 
     const estimations = snapshot.docs.map(doc => {
@@ -258,19 +314,26 @@ router.get('/contractor/:contractorEmail', authenticateToken, async (req, res) =
         resultFile: data.resultFile || null,
         estimatedAmount: data.estimatedAmount || null,
         notes: data.notes || '',
-        createdAt: data.createdAt,
-        updatedAt: data.updatedAt,
-        completedAt: data.completedAt,
+        createdAt: normalizeDate(data.createdAt),
+        updatedAt: normalizeDate(data.updatedAt),
+        completedAt: normalizeDate(data.completedAt),
         completedBy: data.completedBy,
         // Add convenience flags for frontend
         hasResult: !!(data.resultFile && data.resultFile.path),
         resultAvailable: !!(data.resultFile && data.resultFile.path && data.status === 'completed'),
         fileCount: data.uploadedFiles ? data.uploadedFiles.length : 0,
-        totalFileSize: data.uploadedFiles ? 
+        totalFileSize: data.uploadedFiles ?
           data.uploadedFiles.reduce((sum, file) => sum + (file.size || 0), 0) : 0,
-        totalFileSizeMB: data.uploadedFiles ? 
+        totalFileSizeMB: data.uploadedFiles ?
           (data.uploadedFiles.reduce((sum, file) => sum + (file.size || 0), 0) / (1024 * 1024)).toFixed(2) : '0.00'
       };
+    });
+
+    // Sort by createdAt descending (in memory, avoids composite index)
+    estimations.sort((a, b) => {
+      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return dateB - dateA;
     });
 
     console.log(`[CONTRACTOR] Found ${estimations.length} estimations for contractor ${contractorEmail}`);

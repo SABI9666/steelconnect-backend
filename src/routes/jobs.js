@@ -136,9 +136,9 @@ router.get('/assigned/:userId', authenticateToken, async (req, res) => {
         if (req.user.userId !== userId) {
             return res.status(403).json({ success: false, message: 'Not authorized.' });
         }
+        // Query without orderBy to avoid needing a composite Firestore index
         const jobsSnapshot = await adminDb.collection('jobs')
             .where('assignedTo', '==', userId)
-            .orderBy('createdAt', 'desc')
             .get();
         const jobs = [];
         for (const doc of jobsSnapshot.docs) {
@@ -157,6 +157,12 @@ router.get('/assigned/:userId', authenticateToken, async (req, res) => {
             }
             jobs.push(jobData);
         }
+        // Sort by createdAt descending in JS
+        jobs.sort((a, b) => {
+            const dateA = a.createdAt ? new Date(a.createdAt) : new Date(0);
+            const dateB = b.createdAt ? new Date(b.createdAt) : new Date(0);
+            return dateB - dateA;
+        });
         res.status(200).json({ success: true, data: jobs });
     } catch (error) {
         console.error('Error fetching assigned jobs:', error);

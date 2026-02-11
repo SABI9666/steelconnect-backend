@@ -262,15 +262,36 @@ router.get('/', getConversations);
 router.post('/find', findOrCreateConversation);
 router.get('/:conversationId/messages', getMessages);
 
+// Safe multer wrapper - handles upload errors inline instead of relying on error middleware chain
+const safeUpload = (req, res) => {
+    return new Promise((resolve, reject) => {
+        upload.array('attachments', 20)(req, res, (err) => {
+            if (err) return reject(err);
+            resolve();
+        });
+    });
+};
+
 // ENHANCED MESSAGE SENDING with working notification system and file attachments
-router.post('/:conversationId/messages', checkUserBlocked, upload.array('attachments', 20), handleUploadError, async (req, res, next) => {
+router.post('/:conversationId/messages', checkUserBlocked, async (req, res, next) => {
     try {
+        // Parse multipart upload first (handles both FormData and JSON gracefully)
+        try {
+            await safeUpload(req, res);
+        } catch (uploadErr) {
+            console.error('[MESSAGE-ROUTE] Multer upload error:', uploadErr);
+            return res.status(400).json({ success: false, message: uploadErr.message || 'File upload failed.' });
+        }
+
         const { conversationId } = req.params;
         const { text } = req.body;
         const senderId = req.user.userId || req.user.id;
 
         console.log(`[MESSAGE-ROUTE] Sending message: User ${senderId} (${req.user.name}) in conversation ${conversationId}`);
         console.log(`[MESSAGE-ROUTE] Files attached: ${req.files?.length || 0}`);
+        if (req.files?.length > 0) {
+            console.log(`[MESSAGE-ROUTE] File names: ${req.files.map(f => f.originalname).join(', ')}`);
+        }
 
         // Validate input - text is required unless files are attached
         const hasFiles = req.files && req.files.length > 0;
@@ -308,14 +329,18 @@ router.post('/:conversationId/messages', checkUserBlocked, upload.array('attachm
                     `messages/${conversationId}`,
                     senderId
                 );
-                attachments = uploadedFiles.map(f => ({
-                    name: f.name || f.originalName || 'file',
-                    url: f.url || f.publicUrl,
-                    path: f.path || f.storagePath || '',
-                    size: f.size || 0,
-                    type: f.contentType || f.mimetype || 'application/octet-stream'
-                }));
-                console.log(`[MESSAGE-ROUTE] ${attachments.length} file(s) uploaded successfully`);
+                attachments = uploadedFiles.map(f => {
+                    const att = {
+                        name: f.name || f.originalname || f.originalName || 'file',
+                        url: f.url || f.publicUrl || f.downloadURL || '',
+                        path: f.path || f.storagePath || f.filename || '',
+                        size: f.size || 0,
+                        type: f.type || f.contentType || f.mimetype || 'application/octet-stream'
+                    };
+                    console.log(`[MESSAGE-ROUTE] Mapped attachment: name=${att.name}, url=${att.url ? att.url.substring(0, 60) + '...' : 'EMPTY'}, size=${att.size}`);
+                    return att;
+                });
+                console.log(`[MESSAGE-ROUTE] ${attachments.length} file(s) uploaded and mapped successfully`);
             } catch (uploadError) {
                 console.error('[MESSAGE-ROUTE] File upload failed:', uploadError);
                 return res.status(500).json({ success: false, message: 'Failed to upload file attachments.' });
@@ -329,8 +354,9 @@ router.post('/:conversationId/messages', checkUserBlocked, upload.array('attachm
             senderId,
             senderName: req.user.name,
             createdAt: messageTimestamp.toISOString(),
-            ...(attachments.length > 0 && { attachments })
+            attachments: attachments.length > 0 ? attachments : []
         };
+        console.log(`[MESSAGE-ROUTE] Message object: text="${newMessage.text ? newMessage.text.substring(0, 30) : ''}", attachments=${newMessage.attachments.length}`);
 
         console.log(`[MESSAGE-ROUTE] Saving message to subcollection...`);
 

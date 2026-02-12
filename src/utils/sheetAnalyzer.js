@@ -1,37 +1,43 @@
 // src/utils/sheetAnalyzer.js
-// Advanced Google Sheet Fetcher + Intelligent Dashboard Auto-Generator
-// Fetches data from Google Sheets URL, parses spreadsheets, and builds rich analytics dashboards
+// Advanced Sheet Fetcher + Intelligent Dashboard Auto-Generator
+// Supports: Google Sheets, SharePoint/OneDrive, and direct file uploads
+// Auto-sync: Re-fetches linked sheets on schedule to keep dashboards up-to-date
 
 import * as XLSX from 'xlsx';
 
 // =====================================================================
-// GOOGLE SHEET FETCHER - Downloads sheet data from a shared Google Sheet URL
+// LINK TYPE DETECTION - Identify Google Sheets vs SharePoint vs OneDrive
 // =====================================================================
 
 /**
- * Extract Google Sheet ID from various URL formats
+ * Detect the type of link provided
+ * Returns: 'google' | 'sharepoint' | 'onedrive' | 'unknown'
  */
+export function detectLinkType(url) {
+    if (!url || typeof url !== 'string') return 'unknown';
+    const u = url.toLowerCase().trim();
+    if (u.includes('docs.google.com/spreadsheets')) return 'google';
+    if (u.includes('.sharepoint.com')) return 'sharepoint';
+    if (u.includes('onedrive.live.com') || u.includes('1drv.ms')) return 'onedrive';
+    if (u.includes('office.com') || u.includes('office365.com')) return 'sharepoint';
+    return 'unknown';
+}
+
+// =====================================================================
+// GOOGLE SHEET FETCHER
+// =====================================================================
+
 function extractSheetId(url) {
-    // Handle formats:
-    // https://docs.google.com/spreadsheets/d/SHEET_ID/edit...
-    // https://docs.google.com/spreadsheets/d/SHEET_ID/gviz/tq?...
-    // https://docs.google.com/spreadsheets/d/SHEET_ID
     const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
     return match ? match[1] : null;
 }
 
-/**
- * Fetch and parse data from a Google Sheet URL
- * Google Sheets can be exported as XLSX when shared publicly
- * Returns: { sheets: {sheetName: [rows]}, sheetNames: [] }
- */
-export async function fetchGoogleSheetData(googleSheetUrl) {
+async function fetchGoogleSheet(googleSheetUrl) {
     const sheetId = extractSheetId(googleSheetUrl);
     if (!sheetId) {
         throw new Error('Invalid Google Sheet URL. Please provide a valid Google Sheets link.');
     }
 
-    // Try multiple export formats for robustness
     const exportUrls = [
         `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=xlsx`,
         `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`,
@@ -44,25 +50,21 @@ export async function fetchGoogleSheetData(googleSheetUrl) {
         try {
             const response = await fetch(exportUrl, {
                 redirect: 'follow',
-                headers: {
-                    'User-Agent': 'SteelConnect-Analytics/1.0'
-                }
+                headers: { 'User-Agent': 'SteelConnect-Analytics/1.0' }
             });
 
             if (!response.ok) {
-                console.log(`[SHEET-FETCH] ${format} export failed (${response.status}), trying next...`);
+                console.log(`[SHEET-FETCH] Google ${format} export failed (${response.status}), trying next...`);
                 format = 'csv';
                 continue;
             }
 
             const contentType = response.headers.get('content-type') || '';
-            // Check for HTML error pages (sheet not shared publicly)
             if (contentType.includes('text/html')) {
                 const text = await response.text();
                 if (text.includes('signin') || text.includes('ServiceLogin') || text.includes('accounts.google')) {
                     throw new Error('Google Sheet is not publicly shared. Please set sharing to "Anyone with the link can view".');
                 }
-                // Might be a redirect page
                 console.log(`[SHEET-FETCH] Got HTML response for ${format}, trying next...`);
                 format = 'csv';
                 continue;
@@ -70,20 +72,190 @@ export async function fetchGoogleSheetData(googleSheetUrl) {
 
             const arrayBuffer = await response.arrayBuffer();
             buffer = Buffer.from(arrayBuffer);
-            console.log(`[SHEET-FETCH] Successfully downloaded ${format} (${buffer.length} bytes)`);
+            console.log(`[SHEET-FETCH] Google Sheet downloaded (${buffer.length} bytes)`);
             break;
         } catch (fetchError) {
             if (fetchError.message.includes('not publicly shared')) throw fetchError;
-            console.log(`[SHEET-FETCH] Fetch attempt failed:`, fetchError.message);
+            console.log(`[SHEET-FETCH] Google fetch attempt failed:`, fetchError.message);
             format = 'csv';
         }
     }
 
     if (!buffer || buffer.length === 0) {
-        throw new Error('Could not download data from Google Sheet. Make sure the sheet is shared publicly ("Anyone with the link can view").');
+        throw new Error('Could not download Google Sheet. Make sure it is shared publicly ("Anyone with the link can view").');
+    }
+    return buffer;
+}
+
+// =====================================================================
+// SHAREPOINT / ONEDRIVE FETCHER
+// =====================================================================
+
+/**
+ * Convert a SharePoint sharing link to a direct download URL
+ * SharePoint sharing links come in many formats:
+ * - https://{tenant}.sharepoint.com/:x:/g/personal/{user}/{token}
+ * - https://{tenant}.sharepoint.com/:x:/r/personal/{user}/Documents/{file}
+ * - https://{tenant}.sharepoint.com/sites/{site}/_layouts/15/Doc.aspx?sourcedoc={id}
+ * - https://{tenant}-my.sharepoint.com/personal/{user}/_layouts/15/guestaccess.aspx?share={token}
+ * - https://{tenant}.sharepoint.com/:x:/s/{site}/{token}
+ * OneDrive links:
+ * - https://onedrive.live.com/edit.aspx?resid={id}
+ * - https://1drv.ms/{shortcode}
+ */
+function buildSharePointDownloadUrl(url) {
+    const u = url.trim();
+
+    // Pattern 1: /:x:/g/ or /:x:/s/ or /:x:/r/ sharing links
+    // These can be downloaded by appending ?download=1
+    if (/\/:x:\/[gsr]\//.test(u)) {
+        const separator = u.includes('?') ? '&' : '?';
+        return u + separator + 'download=1';
     }
 
-    // Parse the downloaded file
+    // Pattern 2: _layouts/15/Doc.aspx?sourcedoc= → convert to download
+    if (u.includes('_layouts/15/Doc.aspx') && u.includes('sourcedoc=')) {
+        return u.replace('Doc.aspx', 'download.aspx') + '&action=download';
+    }
+
+    // Pattern 3: _layouts/15/guestaccess.aspx?share=
+    if (u.includes('guestaccess.aspx') && u.includes('share=')) {
+        return u + '&download=1';
+    }
+
+    // Pattern 4: OneDrive live.com links
+    if (u.includes('onedrive.live.com')) {
+        return u.replace('/edit.aspx', '/download.aspx').replace('/view.aspx', '/download.aspx');
+    }
+
+    // Pattern 5: 1drv.ms short links — follow redirect then try download
+    if (u.includes('1drv.ms')) {
+        return u; // Will be followed via redirect
+    }
+
+    // Pattern 6: Direct .xlsx/.xls/.csv link on SharePoint
+    if (/\.(xlsx|xls|csv)(\?|$)/i.test(u)) {
+        return u;
+    }
+
+    // Default: try appending download=1
+    const separator = u.includes('?') ? '&' : '?';
+    return u + separator + 'download=1';
+}
+
+async function fetchSharePointSheet(sharePointUrl) {
+    const downloadUrl = buildSharePointDownloadUrl(sharePointUrl);
+    console.log(`[SHEET-FETCH] SharePoint download URL: ${downloadUrl}`);
+
+    // Try download with multiple approaches
+    const attempts = [
+        { url: downloadUrl, label: 'direct download' },
+        { url: sharePointUrl + (sharePointUrl.includes('?') ? '&' : '?') + 'download=1', label: 'download=1' },
+        { url: sharePointUrl, label: 'original URL' },
+    ];
+
+    // Deduplicate URLs
+    const seen = new Set();
+    const uniqueAttempts = attempts.filter(a => {
+        if (seen.has(a.url)) return false;
+        seen.add(a.url);
+        return true;
+    });
+
+    let buffer = null;
+
+    for (const attempt of uniqueAttempts) {
+        try {
+            console.log(`[SHEET-FETCH] Trying SharePoint (${attempt.label})...`);
+            const response = await fetch(attempt.url, {
+                redirect: 'follow',
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Accept': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel, text/csv, */*'
+                }
+            });
+
+            if (!response.ok) {
+                console.log(`[SHEET-FETCH] SharePoint ${attempt.label} returned ${response.status}`);
+                continue;
+            }
+
+            const contentType = response.headers.get('content-type') || '';
+
+            // Check if we got an HTML login/error page instead of a file
+            if (contentType.includes('text/html')) {
+                const text = await response.text();
+                if (text.includes('login') || text.includes('signin') || text.includes('Sign in') ||
+                    text.includes('microsoftonline.com') || text.includes('federation')) {
+                    throw new Error('SharePoint file requires authentication. Please set the file sharing to "Anyone with the link can view" or "Anyone with the link can edit".');
+                }
+                // Some SharePoint pages embed the download link
+                const downloadMatch = text.match(/href="([^"]+download[^"]+)"/i) ||
+                                     text.match(/data-url="([^"]+)"/i);
+                if (downloadMatch) {
+                    console.log(`[SHEET-FETCH] Found embedded download link, retrying...`);
+                    const innerResponse = await fetch(downloadMatch[1], { redirect: 'follow' });
+                    if (innerResponse.ok) {
+                        const arrayBuffer = await innerResponse.arrayBuffer();
+                        buffer = Buffer.from(arrayBuffer);
+                        if (buffer.length > 0) break;
+                    }
+                }
+                console.log(`[SHEET-FETCH] Got HTML response from SharePoint, trying next...`);
+                continue;
+            }
+
+            const arrayBuffer = await response.arrayBuffer();
+            buffer = Buffer.from(arrayBuffer);
+
+            if (buffer.length > 0) {
+                console.log(`[SHEET-FETCH] SharePoint file downloaded (${buffer.length} bytes) via ${attempt.label}`);
+                break;
+            }
+        } catch (fetchError) {
+            if (fetchError.message.includes('requires authentication')) throw fetchError;
+            console.log(`[SHEET-FETCH] SharePoint ${attempt.label} failed:`, fetchError.message);
+        }
+    }
+
+    if (!buffer || buffer.length === 0) {
+        throw new Error('Could not download file from SharePoint/OneDrive. Please ensure:\n1. The file is shared with "Anyone with the link"\n2. The link is a direct sharing link to an Excel file (.xlsx, .xls) or CSV');
+    }
+    return buffer;
+}
+
+// =====================================================================
+// UNIFIED SHEET DATA FETCHER - Google Sheets + SharePoint + OneDrive
+// =====================================================================
+
+/**
+ * Fetch sheet data from any supported link type
+ * Returns: { sheets: {sheetName: [rows]}, sheetNames: [], source: 'google'|'sharepoint' }
+ */
+export async function fetchSheetData(url) {
+    const linkType = detectLinkType(url);
+    console.log(`[SHEET-FETCH] Detected link type: ${linkType} for URL: ${url.substring(0, 80)}...`);
+
+    let buffer;
+    if (linkType === 'google') {
+        buffer = await fetchGoogleSheet(url);
+    } else if (linkType === 'sharepoint' || linkType === 'onedrive') {
+        buffer = await fetchSharePointSheet(url);
+    } else {
+        // Try as generic URL — attempt direct download
+        try {
+            console.log(`[SHEET-FETCH] Unknown link type, attempting direct download...`);
+            const response = await fetch(url, { redirect: 'follow' });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const arrayBuffer = await response.arrayBuffer();
+            buffer = Buffer.from(arrayBuffer);
+            if (!buffer || buffer.length === 0) throw new Error('Empty response');
+        } catch (e) {
+            throw new Error('Unsupported link type. Please provide a Google Sheets URL or SharePoint/OneDrive sharing link.');
+        }
+    }
+
+    // Parse the downloaded buffer
     try {
         const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
         const sheets = {};
@@ -97,15 +269,21 @@ export async function fetchGoogleSheetData(googleSheetUrl) {
 
         const sheetNames = Object.keys(sheets);
         if (sheetNames.length === 0) {
-            throw new Error('No valid data found in the Google Sheet. Make sure it contains data with headers.');
+            throw new Error('No valid data found in the sheet. Make sure it contains data with headers.');
         }
 
         console.log(`[SHEET-FETCH] Parsed ${sheetNames.length} sheet(s): ${sheetNames.join(', ')}`);
-        return { sheets, sheetNames };
+        return { sheets, sheetNames, source: linkType };
     } catch (parseError) {
         if (parseError.message.includes('No valid data')) throw parseError;
-        throw new Error('Failed to parse Google Sheet data. Please ensure the sheet contains valid tabular data.');
+        if (parseError.message.includes('requires authentication')) throw parseError;
+        throw new Error('Failed to parse the downloaded file. Please ensure it is a valid Excel (.xlsx, .xls) or CSV file.');
     }
+}
+
+// Backward-compatible alias
+export async function fetchGoogleSheetData(url) {
+    return fetchSheetData(url);
 }
 
 // =====================================================================

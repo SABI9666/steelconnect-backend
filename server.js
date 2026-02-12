@@ -526,6 +526,11 @@ app.use('/api/analysis', analysisRoutes);
 console.log('📊 Analysis routes registered at /api/analysis');
 console.log('   • User analytics and reporting');
 
+// Start dashboard auto-sync scheduler
+import { startAutoSync } from './src/services/dashboardSyncService.js';
+startAutoSync();
+console.log('🔄 Dashboard auto-sync scheduler started');
+
 // NEW: Community routes
 if (communityRoutes) {
     app.use('/api/community', communityRoutes);

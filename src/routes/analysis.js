@@ -329,4 +329,74 @@ router.get('/history', async (req, res) => {
     }
 });
 
+// === CLIENT DASHBOARD ENDPOINTS ===
+
+// GET /api/analysis/dashboards - Get all approved dashboards for the logged-in contractor
+router.get('/dashboards', async (req, res) => {
+    try {
+        const userEmail = req.user.email;
+        if (!userEmail) return res.status(400).json({ success: false, message: 'User email not found' });
+
+        const snapshot = await adminDb.collection('dashboards')
+            .where('contractorEmail', '==', userEmail)
+            .where('status', '==', 'approved')
+            .get();
+
+        const dashboards = snapshot.docs.map(doc => {
+            const d = doc.data();
+            return {
+                _id: doc.id,
+                title: d.title,
+                description: d.description,
+                frequency: d.frequency,
+                charts: d.charts,
+                sheetNames: d.sheetNames,
+                createdAt: d.createdAt,
+                approvedAt: d.approvedAt
+            };
+        });
+
+        dashboards.sort((a, b) => new Date(b.approvedAt || b.createdAt) - new Date(a.approvedAt || a.createdAt));
+
+        res.json({ success: true, dashboards });
+    } catch (error) {
+        console.error('[ANALYSIS] Error fetching client dashboards:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch dashboards' });
+    }
+});
+
+// GET /api/analysis/dashboards/:id - Get single dashboard full data
+router.get('/dashboards/:id', async (req, res) => {
+    try {
+        const userEmail = req.user.email;
+        const doc = await adminDb.collection('dashboards').doc(req.params.id).get();
+        if (!doc.exists) return res.status(404).json({ success: false, message: 'Dashboard not found' });
+
+        const data = doc.data();
+        if (data.contractorEmail !== userEmail) {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
+        if (data.status !== 'approved') {
+            return res.status(403).json({ success: false, message: 'Dashboard not yet approved' });
+        }
+
+        res.json({
+            success: true,
+            dashboard: {
+                _id: doc.id,
+                title: data.title,
+                description: data.description,
+                frequency: data.frequency,
+                charts: data.charts,
+                sheetNames: data.sheetNames,
+                createdAt: data.createdAt,
+                approvedAt: data.approvedAt
+            }
+        });
+    } catch (error) {
+        console.error('[ANALYSIS] Error fetching dashboard:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch dashboard' });
+    }
+});
+
 export default router;

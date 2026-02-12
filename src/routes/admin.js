@@ -2756,6 +2756,7 @@ router.get('/dashboards', async (req, res) => {
                 frequency: d.frequency,
                 fileName: d.fileName,
                 fileSize: d.fileSize,
+                googleSheetUrl: d.googleSheetUrl || null,
                 sheetNames: d.sheetNames,
                 status: d.status,
                 chartCount: (d.charts || []).length,

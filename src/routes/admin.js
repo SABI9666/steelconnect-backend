@@ -2757,6 +2757,7 @@ router.get('/dashboards', async (req, res) => {
                 fileName: d.fileName,
                 fileSize: d.fileSize,
                 googleSheetUrl: d.googleSheetUrl || null,
+                manualDashboardUrl: d.manualDashboardUrl || null,
                 sheetNames: d.sheetNames,
                 status: d.status,
                 chartCount: (d.charts || []).length,
@@ -2790,18 +2791,27 @@ router.get('/dashboards/:id', async (req, res) => {
 });
 
 // POST /api/admin/dashboards/:id/approve - Approve dashboard for client viewing
+// If manualDashboardUrl is provided, client sees that link instead of auto-generated dashboard
 router.post('/dashboards/:id/approve', async (req, res) => {
     try {
         const docRef = adminDb.collection('dashboards').doc(req.params.id);
         const doc = await docRef.get();
         if (!doc.exists) return res.status(404).json({ success: false, message: 'Dashboard not found' });
 
-        await docRef.update({
+        const { manualDashboardUrl } = req.body;
+        const updateData = {
             status: 'approved',
             approvedAt: new Date().toISOString(),
             approvedBy: req.user.email,
             updatedAt: new Date().toISOString()
-        });
+        };
+
+        // If admin provides a manual link, store it - this overrides auto-generated dashboard
+        if (manualDashboardUrl && manualDashboardUrl.trim()) {
+            updateData.manualDashboardUrl = manualDashboardUrl.trim();
+        }
+
+        await docRef.update(updateData);
 
         // Notify the contractor
         const data = doc.data();

@@ -191,6 +191,7 @@ router.get('/my-dashboards', async (req, res) => {
                 frequency: d.frequency,
                 fileName: d.fileName,
                 googleSheetUrl: d.googleSheetUrl || null,
+                manualDashboardUrl: d.manualDashboardUrl || null,
                 status: d.status,
                 chartsCount: (d.charts || []).length,
                 charts: d.status === 'approved' ? d.charts : null,
@@ -429,6 +430,7 @@ router.get('/dashboards', async (req, res) => {
             return {
                 _id: doc.id, title: d.title, description: d.description,
                 frequency: d.frequency, charts: d.charts, sheetNames: d.sheetNames,
+                manualDashboardUrl: d.manualDashboardUrl || null,
                 createdAt: d.createdAt, approvedAt: d.approvedAt
             };
         });
@@ -457,6 +459,7 @@ router.get('/dashboards/:id', async (req, res) => {
             dashboard: {
                 _id: doc.id, title: data.title, description: data.description,
                 frequency: data.frequency, charts: data.charts, sheetNames: data.sheetNames,
+                manualDashboardUrl: data.manualDashboardUrl || null,
                 createdAt: data.createdAt, approvedAt: data.approvedAt
             }
         });

@@ -6,6 +6,14 @@
 import * as XLSX from 'xlsx';
 
 // =====================================================================
+// DATA LIMITS — Prevent Firestore 1MB document size limit issues
+// =====================================================================
+const MAX_ROWS_FOR_CHARTS = 500;       // Max rows stored in chart datasets
+const MAX_ROWS_FOR_ANALYSIS = 500;     // Max rows for predictive analysis
+const MAX_SHEETS = 10;                 // Max sheets to process
+const MAX_LABEL_LENGTH = 60;           // Truncate long labels
+
+// =====================================================================
 // LINK TYPE DETECTION - Identify Google Sheets vs SharePoint vs OneDrive
 // =====================================================================
 
@@ -259,11 +267,13 @@ export async function fetchSheetData(url) {
     try {
         const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
         const sheets = {};
-        for (const sheetName of workbook.SheetNames) {
+        const sheetsToProcess = workbook.SheetNames.slice(0, MAX_SHEETS);
+        for (const sheetName of sheetsToProcess) {
             const ws = workbook.Sheets[sheetName];
             const jsonData = XLSX.utils.sheet_to_json(ws, { defval: '' });
             if (jsonData.length > 0) {
-                sheets[sheetName] = jsonData;
+                // Cap rows to prevent oversized Firestore documents
+                sheets[sheetName] = jsonData.slice(0, MAX_ROWS_FOR_CHARTS);
             }
         }
 
@@ -293,11 +303,13 @@ export async function fetchGoogleSheetData(url) {
 export function parseSpreadsheet(buffer, originalname) {
     const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
     const sheets = {};
-    for (const sheetName of workbook.SheetNames) {
+    const sheetsToProcess = workbook.SheetNames.slice(0, MAX_SHEETS);
+    for (const sheetName of sheetsToProcess) {
         const ws = workbook.Sheets[sheetName];
         const jsonData = XLSX.utils.sheet_to_json(ws, { defval: '' });
         if (jsonData.length > 0) {
-            sheets[sheetName] = jsonData;
+            // Cap rows to prevent oversized Firestore documents
+            sheets[sheetName] = jsonData.slice(0, MAX_ROWS_FOR_CHARTS);
         }
     }
     return sheets;
@@ -797,12 +809,14 @@ export function generatePredictiveAnalysis(sheets, charts) {
 
     for (const [sheetName, rows] of Object.entries(sheets)) {
         if (rows.length < 3) continue;
-        const headers = Object.keys(rows[0]);
+        // Limit rows for analysis to prevent oversized documents
+        const analysisRows = rows.slice(0, MAX_ROWS_FOR_ANALYSIS);
+        const headers = Object.keys(analysisRows[0]);
         const numericCols = [];
         const labelCols = [];
 
         for (const h of headers) {
-            const info = classifyColumn(h, rows);
+            const info = classifyColumn(h, analysisRows);
             if (info.category === 'numeric') numericCols.push(h);
             else labelCols.push(h);
         }
@@ -810,11 +824,11 @@ export function generatePredictiveAnalysis(sheets, charts) {
         if (numericCols.length === 0) continue;
 
         const labelCol = labelCols[0] || headers[0];
-        const labels = rows.map(r => String(r[labelCol] || ''));
+        const labels = analysisRows.map(r => String(r[labelCol] || ''));
 
         // Per-column analysis
         for (const col of numericCols.slice(0, 6)) {
-            const values = rows.map(r => parseFloat(String(r[col]).replace(/[$,₹€£]/g, '')) || 0);
+            const values = analysisRows.map(r => parseFloat(String(r[col]).replace(/[$,₹€£]/g, '')) || 0);
 
             // Linear regression + forecast
             const reg = linearRegression(values);
@@ -827,15 +841,22 @@ export function generatePredictiveAnalysis(sheets, charts) {
                 });
             }
 
-            // Moving averages
+            // Moving averages — store only summary (last 50 points) to save Firestore space
             const ma3 = movingAverage(values, 3);
             const ma5 = values.length >= 5 ? movingAverage(values, 5) : null;
-            analysis.movingAverages[`${sheetName}:${col}`] = { ma3, ma5, original: values.map(v => Math.round(v * 100) / 100) };
+            const tail = Math.min(50, values.length);
+            analysis.movingAverages[`${sheetName}:${col}`] = {
+                ma3: ma3.slice(-tail),
+                ma5: ma5 ? ma5.slice(-tail) : null,
+                original: values.slice(-tail).map(v => Math.round(v * 100) / 100),
+                totalPoints: values.length
+            };
 
             // Anomalies
             const colAnomalies = detectAnomalies(values, labels);
             if (colAnomalies.length > 0) {
-                analysis.anomalies.push({ sheet: sheetName, column: col, anomalies: colAnomalies });
+                // Store at most 20 anomalies per column
+                analysis.anomalies.push({ sheet: sheetName, column: col, anomalies: colAnomalies.slice(0, 20) });
             }
 
             // Seasonality (only first col)
@@ -846,7 +867,7 @@ export function generatePredictiveAnalysis(sheets, charts) {
 
         // Correlation matrix
         if (numericCols.length >= 2 && !analysis.correlations) {
-            analysis.correlations = buildCorrelationMatrix(rows, numericCols);
+            analysis.correlations = buildCorrelationMatrix(analysisRows, numericCols);
         }
     }
 
@@ -914,11 +935,12 @@ export function autoGenerateDashboardConfig(sheets, frequency) {
 
         const labelInfo = columnInfo[labelCol] || { type: 'text', category: 'label' };
 
-        // Generate labels
+        // Generate labels (truncate long strings to save Firestore space)
         const labels = rows.map(r => {
             const val = r[labelCol];
             if (val instanceof Date) return val.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
-            return String(val || '');
+            const str = String(val || '');
+            return str.length > MAX_LABEL_LENGTH ? str.substring(0, MAX_LABEL_LENGTH) + '...' : str;
         });
 
         // Build datasets

@@ -9,6 +9,88 @@ import { forceSyncDashboard } from '../services/dashboardSyncService.js';
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
+// Firestore max document size is ~1MB. We aim to stay well under that.
+const FIRESTORE_DOC_LIMIT = 900 * 1024; // 900KB safety margin
+
+function estimateJsonSize(obj) {
+    try {
+        return Buffer.byteLength(JSON.stringify(obj), 'utf8');
+    } catch {
+        return Infinity;
+    }
+}
+
+/**
+ * Progressively trim dashboard data to fit under Firestore's document limit.
+ * Removes secondary charts, then trims datasets, then trims predictive analysis.
+ */
+function trimToFit(dashboardData, limit) {
+    let size = estimateJsonSize(dashboardData);
+    if (size <= limit) return dashboardData;
+
+    // Step 1: Remove secondary/extra charts (keep only primary per sheet)
+    if (dashboardData.charts && dashboardData.charts.length > 1) {
+        dashboardData.charts = dashboardData.charts.filter(c => !c.isSecondary);
+        size = estimateJsonSize(dashboardData);
+        if (size <= limit) return dashboardData;
+    }
+
+    // Step 2: Trim dataset rows in charts (keep first 200 data points)
+    if (dashboardData.charts) {
+        for (const chart of dashboardData.charts) {
+            if (chart.labels && chart.labels.length > 200) {
+                chart.labels = chart.labels.slice(0, 200);
+            }
+            if (chart.datasets) {
+                for (const ds of chart.datasets) {
+                    if (ds.data && ds.data.length > 200) {
+                        ds.data = ds.data.slice(0, 200);
+                    }
+                }
+            }
+            chart.rowCount = Math.min(chart.rowCount || 0, 200);
+        }
+        size = estimateJsonSize(dashboardData);
+        if (size <= limit) return dashboardData;
+    }
+
+    // Step 3: Strip moving averages from predictive analysis
+    if (dashboardData.predictiveAnalysis && dashboardData.predictiveAnalysis.movingAverages) {
+        dashboardData.predictiveAnalysis.movingAverages = {};
+        size = estimateJsonSize(dashboardData);
+        if (size <= limit) return dashboardData;
+    }
+
+    // Step 4: Strip full predictive analysis, keep only insights
+    if (dashboardData.predictiveAnalysis) {
+        dashboardData.predictiveAnalysis = {
+            forecasts: (dashboardData.predictiveAnalysis.forecasts || []).slice(0, 3),
+            correlations: null,
+            anomalies: [],
+            insights: (dashboardData.predictiveAnalysis.insights || []).slice(0, 10),
+            movingAverages: {},
+            seasonality: dashboardData.predictiveAnalysis.seasonality || null
+        };
+        size = estimateJsonSize(dashboardData);
+        if (size <= limit) return dashboardData;
+    }
+
+    // Step 5: Further trim chart data to 100 rows
+    if (dashboardData.charts) {
+        for (const chart of dashboardData.charts) {
+            if (chart.labels && chart.labels.length > 100) chart.labels = chart.labels.slice(0, 100);
+            if (chart.datasets) {
+                for (const ds of chart.datasets) {
+                    if (ds.data && ds.data.length > 100) ds.data = ds.data.slice(0, 100);
+                }
+            }
+            if (chart.kpis && chart.kpis.length > 4) chart.kpis = chart.kpis.slice(0, 4);
+        }
+    }
+
+    return dashboardData;
+}
+
 // Protect all routes with authentication
 router.use(authenticateToken);
 
@@ -86,7 +168,7 @@ router.post('/upload-sheet', upload.single('spreadsheet'), async (req, res) => {
         }
 
         // Store in Firestore 'dashboards' collection with status 'pending' for admin approval
-        const dashboardData = {
+        let dashboardData = {
             title: title || (hasFile ? `Dashboard - ${fileName}` : 'Dashboard - Google Sheet'),
             description: description || '',
             dataType: dataType || 'Production Update',
@@ -112,6 +194,11 @@ router.post('/upload-sheet', upload.single('spreadsheet'), async (req, res) => {
             approvedBy: null
         };
 
+        // Trim data to fit within Firestore's 1MB document size limit
+        dashboardData = trimToFit(dashboardData, FIRESTORE_DOC_LIMIT);
+        const estimatedSize = estimateJsonSize(dashboardData);
+        console.log(`[ANALYSIS] Dashboard data size: ~${(estimatedSize / 1024).toFixed(1)}KB (limit: ${(FIRESTORE_DOC_LIMIT / 1024).toFixed(0)}KB)`);
+
         const docRef = await adminDb.collection('dashboards').add(dashboardData);
         console.log(`[ANALYSIS] Contractor ${userEmail} uploaded ${hasFile ? 'file' : ''}${hasFile && hasLink ? ' + ' : ''}${hasLink ? 'Google Sheet link' : ''} -> Dashboard ${docRef.id} created (pending approval)`);
 
@@ -128,12 +215,18 @@ router.post('/upload-sheet', upload.single('spreadsheet'), async (req, res) => {
         });
 
     } catch (error) {
-        console.error('[ANALYSIS] Sheet upload error:', error);
-        const msg = error.message || '';
-        if (msg.includes('exceeds the maximum allowed size') || msg.includes('INVALID_ARGUMENT') || msg.includes('too large')) {
+        console.error('[ANALYSIS] Sheet upload error:', error.message, error.stack);
+        const msg = (error.message || '').toLowerCase();
+        if (msg.includes('exceeds the maximum allowed size') || msg.includes('invalid_argument') || msg.includes('too large') || msg.includes('document size')) {
             res.status(400).json({ success: false, message: 'Your data is too large. Try uploading a smaller spreadsheet or fewer sheets.' });
+        } else if (msg.includes('cfb') || msg.includes('corrupted') || msg.includes('unsupported') || msg.includes('file type')) {
+            res.status(400).json({ success: false, message: 'Could not read this file. Please ensure it is a valid .xlsx, .xls, or .csv file.' });
+        } else if (msg.includes('timeout') || msg.includes('abort') || msg.includes('econnreset')) {
+            res.status(504).json({ success: false, message: 'The request timed out while processing your data. Try a smaller file or fewer sheets.' });
+        } else if (msg.includes('not publicly shared') || msg.includes('requires authentication') || msg.includes('permission')) {
+            res.status(400).json({ success: false, message: error.message });
         } else {
-            res.status(500).json({ success: false, message: 'Failed to process your data. Please try again.' });
+            res.status(500).json({ success: false, message: 'Failed to process your data. Please try again or upload a smaller file.' });
         }
     }
 });

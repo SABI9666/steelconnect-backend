@@ -3,7 +3,8 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { adminDb } from '../config/firebase.js';
-import { sendLoginNotification } from '../utils/emailService.js';
+import crypto from 'crypto';
+import { sendLoginNotification, sendPasswordResetEmail } from '../utils/emailService.js';
 
 const router = express.Router();
 
@@ -438,5 +439,166 @@ router.post('/create-admin', async (req, res) => {
     }
 });
 
+// Forgot password - send reset code via email
+router.post('/forgot-password', async (req, res) => {
+    try {
+        const { email } = req.body;
+
+        if (!email) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email is required'
+            });
+        }
+
+        const normalizedEmail = email.toLowerCase().trim();
+
+        // Find user by email
+        const userQuery = await adminDb.collection('users')
+            .where('email', '==', normalizedEmail)
+            .get();
+
+        // Always return success to prevent email enumeration
+        if (userQuery.empty) {
+            console.log(`Forgot password: No user found for ${normalizedEmail}`);
+            return res.json({
+                success: true,
+                message: 'If an account with that email exists, a reset code has been sent.'
+            });
+        }
+
+        const userDoc = userQuery.docs[0];
+        const userData = userDoc.data();
+        const userId = userDoc.id;
+
+        // Generate 6-digit reset code
+        const resetCode = crypto.randomInt(100000, 999999).toString();
+        const resetExpiry = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 minutes
+
+        // Store reset code in Firestore
+        await adminDb.collection('users').doc(userId).update({
+            resetCode: resetCode,
+            resetCodeExpiry: resetExpiry,
+            updatedAt: new Date().toISOString()
+        });
+
+        console.log(`Password reset code generated for: ${normalizedEmail}`);
+
+        // Send reset email
+        if (process.env.RESEND_API_KEY) {
+            sendPasswordResetEmail(
+                { name: userData.name, email: userData.email },
+                resetCode
+            ).then((result) => {
+                if (result && result.success) {
+                    console.log(`✅ Password reset email sent to ${normalizedEmail}`);
+                } else {
+                    console.error(`❌ Failed to send reset email to ${normalizedEmail}:`, result?.error);
+                }
+            }).catch(error => {
+                console.error(`❌ Reset email error for ${normalizedEmail}:`, error?.message || error);
+            });
+        } else {
+            console.log('⚠️ RESEND_API_KEY not configured - reset code:', resetCode);
+        }
+
+        res.json({
+            success: true,
+            message: 'If an account with that email exists, a reset code has been sent.'
+        });
+
+    } catch (error) {
+        console.error('Forgot password error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error'
+        });
+    }
+});
+
+// Reset password - verify code and set new password
+router.post('/reset-password', async (req, res) => {
+    try {
+        const { email, code, newPassword } = req.body;
+
+        if (!email || !code || !newPassword) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email, verification code, and new password are required'
+            });
+        }
+
+        if (newPassword.length < 6) {
+            return res.status(400).json({
+                success: false,
+                message: 'Password must be at least 6 characters long'
+            });
+        }
+
+        const normalizedEmail = email.toLowerCase().trim();
+
+        // Find user
+        const userQuery = await adminDb.collection('users')
+            .where('email', '==', normalizedEmail)
+            .get();
+
+        if (userQuery.empty) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid email or verification code'
+            });
+        }
+
+        const userDoc = userQuery.docs[0];
+        const userData = userDoc.data();
+        const userId = userDoc.id;
+
+        // Verify reset code
+        if (!userData.resetCode || userData.resetCode !== code.trim()) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid verification code'
+            });
+        }
+
+        // Check expiry
+        if (!userData.resetCodeExpiry || new Date(userData.resetCodeExpiry) < new Date()) {
+            // Clear expired code
+            await adminDb.collection('users').doc(userId).update({
+                resetCode: null,
+                resetCodeExpiry: null
+            });
+            return res.status(400).json({
+                success: false,
+                message: 'Verification code has expired. Please request a new one.'
+            });
+        }
+
+        // Hash new password and update
+        const hashedPassword = await bcrypt.hash(newPassword, 12);
+
+        await adminDb.collection('users').doc(userId).update({
+            password: hashedPassword,
+            resetCode: null,
+            resetCodeExpiry: null,
+            updatedAt: new Date().toISOString()
+        });
+
+        console.log(`Password reset successful for: ${normalizedEmail}`);
+
+        res.json({
+            success: true,
+            message: 'Password has been reset successfully. You can now log in with your new password.'
+        });
+
+    } catch (error) {
+        console.error('Reset password error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error'
+        });
+    }
+});
+
 export default router;
-        
+

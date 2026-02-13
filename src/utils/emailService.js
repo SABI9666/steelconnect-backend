@@ -407,8 +407,92 @@ export async function sendProfileReviewNotification(user, status, reason = null)
     }
 }
 
+// Send password reset email
+export async function sendPasswordResetEmail(user, resetToken, resetUrl) {
+    try {
+        console.log(`Attempting to send password reset email to: ${user.email}`);
+
+        const emailContent = `
+            <h2 style="color: #1e293b; margin-top: 0;">Password Reset Request</h2>
+
+            <div class="alert-box">
+                <h3 style="margin: 0 0 10px 0; color: #1e3a8a;">Reset Your Password</h3>
+                <p style="margin: 0;">Hello <strong>${user.name}</strong>, we received a request to reset your SteelConnect account password.</p>
+            </div>
+
+            <p style="color: #475569; font-size: 16px;">
+                Use the verification code below to reset your password. This code will expire in <strong>15 minutes</strong>.
+            </p>
+
+            <div style="text-align: center; margin: 30px 0;">
+                <div style="display: inline-block; background: linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%); border: 2px dashed #2563eb; border-radius: 12px; padding: 20px 40px;">
+                    <p style="margin: 0 0 5px 0; font-size: 13px; color: #475569; text-transform: uppercase; letter-spacing: 1px;">Verification Code</p>
+                    <p style="margin: 0; font-size: 36px; font-weight: 700; color: #1e3a8a; letter-spacing: 8px;">${resetToken}</p>
+                </div>
+            </div>
+
+            <div class="info-box">
+                <h4 style="margin-top: 0; color: #1e293b;">Request Details</h4>
+                <div class="detail-row">
+                    <span class="detail-label">Account:</span>
+                    <span class="detail-value">${user.email}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Requested At:</span>
+                    <span class="detail-value">${new Date().toLocaleString()}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Expires In:</span>
+                    <span class="detail-value">15 minutes</span>
+                </div>
+            </div>
+
+            <div class="security-notice">
+                <strong>⚠️ Security Notice:</strong> If you did not request a password reset, please ignore this email. Your account remains secure and no changes have been made.
+            </div>
+        `;
+
+        const emailHTML = getEmailTemplate('Password Reset - SteelConnect', emailContent);
+
+        const emailData = {
+            from: `SteelConnect <${FROM_EMAIL}>`,
+            to: user.email,
+            subject: `🔑 Password Reset Code - ${COMPANY_NAME}`,
+            html: emailHTML
+        };
+
+        console.log(`Sending password reset email from: ${FROM_EMAIL} to: ${user.email}`);
+
+        const response = await resend.emails.send(emailData);
+
+        if (response.error) {
+            console.error('Resend API error:', response.error);
+            return {
+                success: false,
+                error: response.error
+            };
+        }
+
+        console.log(`✅ Password reset email sent successfully. Message ID: ${response.data?.id || 'N/A'}`);
+
+        return {
+            success: true,
+            messageId: response.data?.id,
+            message: 'Password reset email sent successfully'
+        };
+
+    } catch (error) {
+        console.error('Password reset email error:', error);
+        return {
+            success: false,
+            error: error.message || 'Failed to send password reset email'
+        };
+    }
+}
+
 export default {
     sendLoginNotification,
     sendEstimationResultNotification,
-    sendProfileReviewNotification
+    sendProfileReviewNotification,
+    sendPasswordResetEmail
 };

@@ -353,7 +353,25 @@ router.get('/profile-reviews', async (req, res) => {
                     company: userData?.companyName || '',
                     address: userData?.address || '',
                     adminComments: userData?.adminComments || null,
-                    documents: documents
+                    documents: documents,
+                    // Designer fields
+                    skills: userData?.skills || [],
+                    experience: userData?.experience || '',
+                    education: userData?.education || '',
+                    specializations: userData?.specializations || [],
+                    bio: userData?.bio || '',
+                    hourlyRate: userData?.hourlyRate || null,
+                    linkedinProfile: userData?.linkedinProfile || '',
+                    // Contractor fields
+                    companyName: userData?.companyName || '',
+                    companyWebsite: userData?.companyWebsite || '',
+                    businessType: userData?.businessType || '',
+                    yearEstablished: userData?.yearEstablished || null,
+                    companySize: userData?.companySize || '',
+                    description: userData?.description || '',
+                    // Metadata
+                    createdAt: userData?.createdAt || '',
+                    submittedAt: userData?.submittedAt || reviewData.createdAt || ''
                 }
             };
 

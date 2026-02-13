@@ -74,7 +74,6 @@ async function syncDashboard(docId, dashboardData) {
         if (dataChanged) {
             updateData.charts = newCharts;
             updateData.sheetNames = result.sheetNames;
-            updateData.rawData = result.sheets;
             try {
                 updateData.predictiveAnalysis = generatePredictiveAnalysis(result.sheets, newCharts);
             } catch (e) { console.error(`[SYNC] Predictive analysis error for ${docId}:`, e.message); }

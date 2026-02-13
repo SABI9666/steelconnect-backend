@@ -103,7 +103,6 @@ router.post('/upload-sheet', upload.single('spreadsheet'), async (req, res) => {
             sheetNames,
             charts: dashboardCharts,
             predictiveAnalysis: predictiveAnalysis || null,
-            rawData: (hasFile || hasLink) ? sheets : null,
             status: 'pending',
             uploadedBy: 'contractor',
             createdBy: userEmail,
@@ -130,7 +129,12 @@ router.post('/upload-sheet', upload.single('spreadsheet'), async (req, res) => {
 
     } catch (error) {
         console.error('[ANALYSIS] Sheet upload error:', error);
-        res.status(500).json({ success: false, message: 'Failed to process your data. Please try again.' });
+        const msg = error.message || '';
+        if (msg.includes('exceeds the maximum allowed size') || msg.includes('INVALID_ARGUMENT') || msg.includes('too large')) {
+            res.status(400).json({ success: false, message: 'Your data is too large. Try uploading a smaller spreadsheet or fewer sheets.' });
+        } else {
+            res.status(500).json({ success: false, message: 'Failed to process your data. Please try again.' });
+        }
     }
 });
 

@@ -2680,7 +2680,6 @@ router.post('/dashboards/upload', upload.single('spreadsheet'), async (req, res)
             sheetNames,
             charts: dashboardCharts,
             predictiveAnalysis: predictiveAnalysis || null,
-            rawData: (hasFile || hasLink) ? sheets : null,
             status: 'pending',
             uploadedBy: 'admin',
             createdBy: req.user.email,

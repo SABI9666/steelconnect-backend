@@ -166,8 +166,9 @@ router.post('/upload-sheet', upload.single('spreadsheet'), async (req, res) => {
         let dashboardCharts = [];
         let fileName = '';
         let fileSize = 0;
+        let chartsGenerated = 0;
 
-        // Process uploaded file if present
+        // ── FILE UPLOAD PATH: parse, generate charts, store lightweight in Firestore ──
         if (hasFile) {
             sheets = parseSpreadsheet(req.file.buffer, req.file.originalname);
             sheetNames = Object.keys(sheets);
@@ -183,108 +184,130 @@ router.post('/upload-sheet', upload.single('spreadsheet'), async (req, res) => {
             if (dashboardCharts.length === 0) {
                 return res.status(400).json({ success: false, message: 'Could not extract numeric data from the spreadsheet. Ensure columns have numeric values.' });
             }
-        } else if (hasLink) {
-            // Fetch data from linked sheet URL (Google Sheets, SharePoint, OneDrive)
+
+            chartsGenerated = dashboardCharts.length;
+
+            // Upload original file to Firebase Storage for safekeeping
+            let storagePath = null;
             try {
-                const linkType = detectLinkType(googleSheetUrl.trim());
-                console.log(`[ANALYSIS] Fetching ${linkType} sheet data from: ${googleSheetUrl.trim().substring(0, 80)}...`);
-                const result = await fetchSheetData(googleSheetUrl.trim());
-                sheets = result.sheets;
+                storagePath = await uploadSpreadsheetToStorage(req.file.buffer, req.file.originalname, userEmail);
+            } catch (e) { /* non-fatal */ }
+
+            // Generate lightweight predictive analysis
+            let predictiveForStorage = null;
+            try {
+                const pa = generatePredictiveAnalysis(sheets, dashboardCharts);
+                predictiveForStorage = {
+                    forecasts: (pa.forecasts || []).slice(0, 5),
+                    correlations: pa.correlations || null,
+                    anomalies: (pa.anomalies || []).slice(0, 5),
+                    insights: (pa.insights || []).slice(0, 15),
+                    movingAverages: {},
+                    seasonality: pa.seasonality || null
+                };
+            } catch (paErr) {
+                console.error('[ANALYSIS] Predictive analysis error (non-fatal):', paErr.message);
+            }
+
+            let dashboardData = {
+                title: title || `Dashboard - ${fileName}`,
+                description: description || '',
+                dataType: dataType || 'Production Update',
+                contractorEmail: userEmail,
+                contractorName: userName,
+                frequency: frequency || 'daily',
+                fileName, fileSize,
+                storagePath: storagePath || null,
+                googleSheetUrl: null, linkType: null,
+                syncInterval: 'manual', lastSyncedAt: null, lastSyncStatus: null,
+                sheetNames,
+                charts: createLightweightCharts(dashboardCharts, 100),
+                totalChartsGenerated: chartsGenerated,
+                predictiveAnalysis: predictiveForStorage,
+                dataSource: 'file',
+                status: 'pending', uploadedBy: 'contractor', createdBy: userEmail,
+                createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+                approvedAt: null, approvedBy: null
+            };
+
+            dashboardData = trimToFit(dashboardData, FIRESTORE_DOC_LIMIT);
+            const estimatedSize = estimateJsonSize(dashboardData);
+            console.log(`[ANALYSIS] File dashboard size: ~${(estimatedSize / 1024).toFixed(1)}KB`);
+
+            const docRef = await adminDb.collection('dashboards').add(dashboardData);
+            console.log(`[ANALYSIS] Contractor ${userEmail} uploaded file -> Dashboard ${docRef.id} (pending)`);
+
+            return res.json({
+                success: true,
+                message: `Dashboard auto-generated with ${chartsGenerated} charts from uploaded file! Sent to admin for approval.`,
+                dashboardId: docRef.id,
+                chartsGenerated,
+                sheetsProcessed: sheetNames.length
+            });
+        }
+
+        // ── LINK UPLOAD PATH: validate link, store ONLY metadata (no chart data) ──
+        // Sheet data is fetched on-demand via /live-data endpoint to avoid Firestore size limits
+        if (hasLink) {
+            const trimmedUrl = googleSheetUrl.trim();
+            const linkType = detectLinkType(trimmedUrl);
+            console.log(`[ANALYSIS] Link upload (${linkType}): ${trimmedUrl.substring(0, 80)}...`);
+
+            // Quick validation: try to fetch the sheet to confirm the link works
+            try {
+                const result = await fetchSheetData(trimmedUrl);
                 sheetNames = result.sheetNames;
+                // Count how many charts would be generated (for the response message)
+                const previewCharts = autoGenerateDashboardConfig(result.sheets, frequency || 'daily');
+                chartsGenerated = previewCharts.length;
                 fileName = linkType === 'google' ? 'Google Sheet' : linkType === 'sharepoint' ? 'SharePoint File' : 'Linked Sheet';
 
-                dashboardCharts = autoGenerateDashboardConfig(sheets, frequency || 'daily');
-                console.log(`[ANALYSIS] Auto-generated ${dashboardCharts.length} charts from ${linkType} sheet`);
-
-                if (dashboardCharts.length === 0) {
+                if (chartsGenerated === 0) {
                     return res.status(400).json({ success: false, message: 'Could not extract numeric data from the linked sheet. Ensure it contains columns with numeric values.' });
                 }
+                console.log(`[ANALYSIS] Link validated: ${sheetNames.length} sheets, ${chartsGenerated} charts possible`);
             } catch (sheetError) {
                 console.error('[ANALYSIS] Sheet fetch error:', sheetError.message);
                 return res.status(400).json({ success: false, message: sheetError.message });
             }
-        }
 
-        // Upload file to Firebase Storage (so original data is preserved and can be re-processed)
-        let storagePath = null;
-        if (hasFile) {
-            storagePath = await uploadSpreadsheetToStorage(req.file.buffer, req.file.originalname, userEmail);
-        }
-
-        // Generate predictive analysis (forecasts, correlations, anomalies, insights)
-        let predictiveAnalysis = null;
-        try {
-            predictiveAnalysis = generatePredictiveAnalysis(sheets, dashboardCharts);
-            console.log(`[ANALYSIS] Predictive analysis: ${predictiveAnalysis.forecasts.length} forecasts, ${predictiveAnalysis.anomalies.length} anomaly groups, ${predictiveAnalysis.insights.length} insights`);
-        } catch (paErr) {
-            console.error('[ANALYSIS] Predictive analysis error (non-fatal):', paErr.message);
-        }
-
-        // For Firestore: store lightweight charts (limited data) to stay under 1MB doc limit.
-        // Full data is available from the link (re-fetch) or Firebase Storage (file).
-        const chartsForStorage = createLightweightCharts(dashboardCharts, hasLink ? 50 : 100);
-
-        // Lightweight predictive: keep only insights + forecasts, drop heavy arrays
-        let predictiveForStorage = null;
-        if (predictiveAnalysis) {
-            predictiveForStorage = {
-                forecasts: (predictiveAnalysis.forecasts || []).slice(0, 5),
-                correlations: predictiveAnalysis.correlations || null,
-                anomalies: (predictiveAnalysis.anomalies || []).slice(0, 5),
-                insights: (predictiveAnalysis.insights || []).slice(0, 15),
-                movingAverages: {},
-                seasonality: predictiveAnalysis.seasonality || null
+            // Store ONLY metadata + link in Firestore (tiny document, never exceeds size limit)
+            const dashboardData = {
+                title: title || `Dashboard - ${fileName}`,
+                description: description || '',
+                dataType: dataType || 'Production Update',
+                contractorEmail: userEmail,
+                contractorName: userName,
+                frequency: frequency || 'daily',
+                fileName, fileSize: 0,
+                storagePath: null,
+                googleSheetUrl: trimmedUrl,
+                linkType,
+                syncInterval: syncInterval || 'daily',
+                lastSyncedAt: new Date().toISOString(),
+                lastSyncStatus: 'success',
+                sheetNames,
+                charts: [],
+                totalChartsGenerated: chartsGenerated,
+                predictiveAnalysis: null,
+                dataSource: 'link',
+                status: 'pending', uploadedBy: 'contractor', createdBy: userEmail,
+                createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+                approvedAt: null, approvedBy: null
             };
+
+            const docRef = await adminDb.collection('dashboards').add(dashboardData);
+            console.log(`[ANALYSIS] Contractor ${userEmail} linked ${linkType} sheet -> Dashboard ${docRef.id} (pending, data on-demand)`);
+
+            const syncMsg = syncInterval !== 'manual' ? ` Auto-sync: ${syncInterval}.` : '';
+            return res.json({
+                success: true,
+                message: `Dashboard linked with ${chartsGenerated} charts from ${fileName}! Sent to admin for approval.${syncMsg}`,
+                dashboardId: docRef.id,
+                chartsGenerated,
+                sheetsProcessed: sheetNames.length
+            });
         }
-
-        // Store in Firestore 'dashboards' collection with status 'pending' for admin approval
-        let dashboardData = {
-            title: title || (hasFile ? `Dashboard - ${fileName}` : 'Dashboard - Google Sheet'),
-            description: description || '',
-            dataType: dataType || 'Production Update',
-            contractorEmail: userEmail,
-            contractorName: userName,
-            frequency: frequency || 'daily',
-            fileName: fileName || null,
-            fileSize: fileSize || 0,
-            storagePath: storagePath || null,
-            googleSheetUrl: hasLink ? googleSheetUrl.trim() : null,
-            linkType: hasLink ? detectLinkType(googleSheetUrl.trim()) : null,
-            syncInterval: hasLink ? (syncInterval || 'daily') : 'manual',
-            lastSyncedAt: hasLink ? new Date().toISOString() : null,
-            lastSyncStatus: hasLink ? 'success' : null,
-            sheetNames,
-            charts: chartsForStorage,
-            totalChartsGenerated: dashboardCharts.length,
-            predictiveAnalysis: predictiveForStorage,
-            status: 'pending',
-            uploadedBy: 'contractor',
-            createdBy: userEmail,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            approvedAt: null,
-            approvedBy: null
-        };
-
-        // Final safety net: trim data to fit within Firestore's 1MB document size limit
-        dashboardData = trimToFit(dashboardData, FIRESTORE_DOC_LIMIT);
-        const estimatedSize = estimateJsonSize(dashboardData);
-        console.log(`[ANALYSIS] Dashboard data size: ~${(estimatedSize / 1024).toFixed(1)}KB (limit: ${(FIRESTORE_DOC_LIMIT / 1024).toFixed(0)}KB)`);
-
-        const docRef = await adminDb.collection('dashboards').add(dashboardData);
-        console.log(`[ANALYSIS] Contractor ${userEmail} uploaded ${hasFile ? 'file' : ''}${hasFile && hasLink ? ' + ' : ''}${hasLink ? 'Google Sheet link' : ''} -> Dashboard ${docRef.id} created (pending approval)`);
-
-        const linkLabel = hasLink ? (detectLinkType(googleSheetUrl.trim()) === 'sharepoint' ? 'SharePoint' : 'linked sheet') : 'uploaded file';
-        const syncMsg = hasLink && syncInterval !== 'manual' ? ` Auto-sync: ${syncInterval}.` : '';
-        const message = `Dashboard auto-generated with ${dashboardCharts.length} charts from ${hasFile ? 'uploaded file' : linkLabel}! Sent to admin for approval.${syncMsg}`;
-
-        res.json({
-            success: true,
-            message,
-            dashboardId: docRef.id,
-            chartsGenerated: dashboardCharts.length,
-            sheetsProcessed: sheetNames.length
-        });
 
     } catch (error) {
         console.error('[ANALYSIS] Sheet upload error:', error.message, error.stack);
@@ -328,8 +351,9 @@ router.get('/my-dashboards', async (req, res) => {
                 lastSyncedAt: d.lastSyncedAt || null,
                 lastSyncStatus: d.lastSyncStatus || null,
                 manualDashboardUrl: d.manualDashboardUrl || null,
+                dataSource: d.dataSource || (d.googleSheetUrl ? 'link' : 'file'),
                 status: d.status,
-                chartsCount: (d.charts || []).length,
+                chartsCount: d.totalChartsGenerated || (d.charts || []).length,
                 charts: d.status === 'approved' ? d.charts : null,
                 predictiveAnalysis: d.status === 'approved' ? (d.predictiveAnalysis || null) : null,
                 sheetNames: d.sheetNames,
@@ -391,6 +415,44 @@ router.delete('/dashboard/:id', async (req, res) => {
     } catch (error) {
         console.error('[ANALYSIS] Error deleting dashboard:', error);
         res.status(500).json({ success: false, message: 'Failed to delete dashboard' });
+    }
+});
+
+// GET /api/analysis/dashboard/:id/live-data - Fetch fresh chart data from a linked sheet on-demand
+// This avoids storing large datasets in Firestore; data is fetched directly from the source link
+router.get('/dashboard/:id/live-data', async (req, res) => {
+    try {
+        const userEmail = req.user.email;
+        const doc = await adminDb.collection('dashboards').doc(req.params.id).get();
+        if (!doc.exists) return res.status(404).json({ success: false, message: 'Dashboard not found' });
+
+        const data = doc.data();
+        if (data.contractorEmail !== userEmail) {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
+        if (!data.googleSheetUrl) {
+            return res.status(400).json({ success: false, message: 'Dashboard has no linked sheet URL' });
+        }
+
+        console.log(`[ANALYSIS] Fetching live data for dashboard ${req.params.id} from: ${data.googleSheetUrl.substring(0, 60)}...`);
+        const result = await fetchSheetData(data.googleSheetUrl);
+        const charts = autoGenerateDashboardConfig(result.sheets, data.frequency || 'daily');
+
+        let predictiveAnalysis = null;
+        try {
+            predictiveAnalysis = generatePredictiveAnalysis(result.sheets, charts);
+        } catch (e) { /* non-fatal */ }
+
+        res.json({
+            success: true,
+            charts,
+            sheetNames: result.sheetNames,
+            predictiveAnalysis,
+            fetchedAt: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('[ANALYSIS] Live data fetch error:', error.message);
+        res.status(500).json({ success: false, message: error.message || 'Failed to fetch live data from sheet' });
     }
 });
 
@@ -622,6 +684,8 @@ router.get('/dashboards/:id', async (req, res) => {
                 frequency: data.frequency, charts: data.charts, sheetNames: data.sheetNames,
                 manualDashboardUrl: data.manualDashboardUrl || null,
                 predictiveAnalysis: data.predictiveAnalysis || null,
+                dataSource: data.dataSource || (data.googleSheetUrl ? 'link' : 'file'),
+                googleSheetUrl: data.googleSheetUrl || null,
                 linkType: data.linkType || null,
                 syncInterval: data.syncInterval || 'manual',
                 lastSyncedAt: data.lastSyncedAt || null,

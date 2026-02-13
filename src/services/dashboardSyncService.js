@@ -37,6 +37,28 @@ function needsSync(dashboard) {
     return (now - lastSynced) >= intervalMs;
 }
 
+// Firestore doc size limit — keep synced data lightweight
+const FIRESTORE_DOC_LIMIT = 800 * 1024;
+const SYNC_MAX_ROWS = 50; // Lightweight chart data for synced dashboards
+
+function estimateJsonSize(obj) {
+    try { return Buffer.byteLength(JSON.stringify(obj), 'utf8'); }
+    catch { return Infinity; }
+}
+
+function createLightweightCharts(charts, maxRows) {
+    return charts.map(chart => ({
+        ...chart,
+        labels: chart.labels ? chart.labels.slice(0, maxRows) : [],
+        datasets: chart.datasets ? chart.datasets.map(ds => ({
+            label: ds.label,
+            data: ds.data ? ds.data.slice(0, maxRows) : []
+        })) : [],
+        rowCount: Math.min(chart.rowCount || 0, maxRows),
+        isLightweight: true
+    }));
+}
+
 /**
  * Sync a single dashboard — re-fetch data from its linked sheet
  * Returns true if data was updated, false if no changes
@@ -72,13 +94,33 @@ async function syncDashboard(docId, dashboardData) {
         };
 
         if (dataChanged) {
-            updateData.charts = newCharts;
+            // Store lightweight charts to stay under Firestore 1MB doc limit
+            updateData.charts = createLightweightCharts(newCharts, SYNC_MAX_ROWS);
+            updateData.totalChartsGenerated = newCharts.length;
             updateData.sheetNames = result.sheetNames;
             try {
-                updateData.predictiveAnalysis = generatePredictiveAnalysis(result.sheets, newCharts);
+                const pa = generatePredictiveAnalysis(result.sheets, newCharts);
+                // Store only lightweight predictive analysis
+                updateData.predictiveAnalysis = {
+                    forecasts: (pa.forecasts || []).slice(0, 5),
+                    correlations: pa.correlations || null,
+                    anomalies: (pa.anomalies || []).slice(0, 5),
+                    insights: (pa.insights || []).slice(0, 15),
+                    movingAverages: {},
+                    seasonality: pa.seasonality || null
+                };
             } catch (e) { console.error(`[SYNC] Predictive analysis error for ${docId}:`, e.message); }
             updateData.syncDataChanged = true;
-            console.log(`[SYNC] Dashboard ${docId} data CHANGED — updated ${newCharts.length} charts`);
+
+            // Verify size before writing
+            const size = estimateJsonSize(updateData);
+            if (size > FIRESTORE_DOC_LIMIT) {
+                console.warn(`[SYNC] Update data too large (${(size/1024).toFixed(1)}KB), stripping predictive analysis`);
+                updateData.predictiveAnalysis = null;
+                updateData.charts = createLightweightCharts(newCharts.filter(c => !c.isSecondary), 30);
+            }
+
+            console.log(`[SYNC] Dashboard ${docId} data CHANGED — updated ${newCharts.length} charts (stored lightweight)`);
         } else {
             updateData.syncDataChanged = false;
             console.log(`[SYNC] Dashboard ${docId} data unchanged`);
@@ -89,11 +131,15 @@ async function syncDashboard(docId, dashboardData) {
 
     } catch (error) {
         console.error(`[SYNC] Failed to sync dashboard ${docId}:`, error.message);
-        await adminDb.collection('dashboards').doc(docId).update({
-            lastSyncedAt: new Date().toISOString(),
-            lastSyncStatus: 'error',
-            lastSyncError: error.message
-        });
+        try {
+            await adminDb.collection('dashboards').doc(docId).update({
+                lastSyncedAt: new Date().toISOString(),
+                lastSyncStatus: 'error',
+                lastSyncError: error.message
+            });
+        } catch (updateErr) {
+            console.error(`[SYNC] Failed to update error status for ${docId}:`, updateErr.message);
+        }
         return false;
     }
 }

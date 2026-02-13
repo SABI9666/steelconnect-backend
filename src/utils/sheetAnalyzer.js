@@ -863,6 +863,8 @@ export function generatePredictiveAnalysis(sheets, charts) {
 
     return analysis;
 }
+
+/**
  * MAIN: Auto-generate intelligent dashboard config from parsed sheet data
  * Creates multiple chart types, deep KPIs, and secondary analysis charts
  */

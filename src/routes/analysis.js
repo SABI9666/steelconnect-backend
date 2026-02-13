@@ -654,6 +654,9 @@ router.get('/dashboards', async (req, res) => {
                 frequency: d.frequency, charts: d.charts, sheetNames: d.sheetNames,
                 predictiveAnalysis: d.predictiveAnalysis || null,
                 manualDashboardUrl: d.manualDashboardUrl || null,
+                googleSheetUrl: d.googleSheetUrl || null,
+                dataSource: d.dataSource || (d.googleSheetUrl ? 'link' : 'file'),
+                totalChartsGenerated: d.totalChartsGenerated || (d.charts || []).length,
                 createdAt: d.createdAt, approvedAt: d.approvedAt
             };
         });

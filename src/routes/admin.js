@@ -2729,7 +2729,7 @@ router.get('/dashboards', async (req, res) => {
                 manualDashboardUrl: d.manualDashboardUrl || null,
                 sheetNames: d.sheetNames,
                 status: d.status,
-                chartCount: (d.charts || []).length,
+                chartCount: d.totalChartsGenerated || (d.charts || []).length,
                 createdBy: d.createdBy,
                 createdAt: d.createdAt,
                 approvedAt: d.approvedAt,
@@ -2756,6 +2756,40 @@ router.get('/dashboards/:id', async (req, res) => {
     } catch (error) {
         console.error('[DASHBOARD] Get error:', error);
         res.status(500).json({ success: false, message: 'Failed to get dashboard' });
+    }
+});
+
+// GET /api/admin/dashboards/:id/live-data - Fetch fresh chart data from a linked sheet (admin version)
+// Used by admin preview to show charts for link-based dashboards that store no chart data
+router.get('/dashboards/:id/live-data', async (req, res) => {
+    try {
+        const doc = await adminDb.collection('dashboards').doc(req.params.id).get();
+        if (!doc.exists) return res.status(404).json({ success: false, message: 'Dashboard not found' });
+
+        const data = doc.data();
+        if (!data.googleSheetUrl) {
+            return res.status(400).json({ success: false, message: 'Dashboard has no linked sheet URL' });
+        }
+
+        console.log(`[ADMIN] Fetching live data for dashboard ${req.params.id} from: ${data.googleSheetUrl.substring(0, 60)}...`);
+        const result = await fetchSheetData(data.googleSheetUrl);
+        const charts = autoGenerateUtil(result.sheets, data.frequency || 'daily');
+
+        let predictiveAnalysis = null;
+        try {
+            predictiveAnalysis = generatePredictiveAnalysis(result.sheets, charts);
+        } catch (e) { /* non-fatal */ }
+
+        res.json({
+            success: true,
+            charts,
+            sheetNames: result.sheetNames,
+            predictiveAnalysis,
+            fetchedAt: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('[ADMIN] Live data fetch error:', error.message);
+        res.status(500).json({ success: false, message: error.message || 'Failed to fetch live data from sheet' });
     }
 });
 

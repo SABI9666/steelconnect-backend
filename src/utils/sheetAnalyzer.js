@@ -571,7 +571,298 @@ function generateSecondaryCharts(sheetName, rows, labelCol, numericCols, labelIn
     return secondary;
 }
 
+// =====================================================================
+// PREDICTIVE ANALYSIS ENGINE
+// Linear regression, moving averages, forecasting, anomaly detection,
+// correlation analysis, seasonality detection
+// =====================================================================
+
 /**
+ * Simple Linear Regression — returns slope, intercept, r-squared
+ */
+function linearRegression(values) {
+    const n = values.length;
+    if (n < 3) return null;
+    let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0, sumY2 = 0;
+    for (let i = 0; i < n; i++) {
+        sumX += i; sumY += values[i];
+        sumXY += i * values[i];
+        sumX2 += i * i; sumY2 += values[i] * values[i];
+    }
+    const denom = (n * sumX2 - sumX * sumX);
+    if (denom === 0) return null;
+    const slope = (n * sumXY - sumX * sumY) / denom;
+    const intercept = (sumY - slope * sumX) / n;
+    // R-squared
+    const denomR = Math.sqrt((n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY));
+    const r = denomR === 0 ? 0 : (n * sumXY - sumX * sumY) / denomR;
+    const rSquared = r * r;
+    return { slope: Math.round(slope * 1000) / 1000, intercept: Math.round(intercept * 100) / 100, rSquared: Math.round(rSquared * 1000) / 1000 };
+}
+
+/**
+ * Moving Average computation
+ */
+function movingAverage(values, window = 3) {
+    if (values.length < window) return values.map(v => Math.round(v * 100) / 100);
+    const result = [];
+    for (let i = 0; i < values.length; i++) {
+        if (i < window - 1) { result.push(null); continue; }
+        let sum = 0;
+        for (let j = i - window + 1; j <= i; j++) sum += values[j];
+        result.push(Math.round((sum / window) * 100) / 100);
+    }
+    return result;
+}
+
+/**
+ * Forecast future values using linear regression
+ */
+function forecast(values, periods = 3) {
+    const reg = linearRegression(values);
+    if (!reg) return [];
+    const n = values.length;
+    const predictions = [];
+    for (let i = 0; i < periods; i++) {
+        const val = reg.slope * (n + i) + reg.intercept;
+        predictions.push(Math.round(val * 100) / 100);
+    }
+    return predictions;
+}
+
+/**
+ * Detect anomalies using Z-score method (|z| > 2 = anomaly)
+ */
+function detectAnomalies(values, labels) {
+    const n = values.length;
+    if (n < 5) return [];
+    const mean = values.reduce((a, b) => a + b, 0) / n;
+    const stdDev = Math.sqrt(values.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / n);
+    if (stdDev === 0) return [];
+    const anomalies = [];
+    for (let i = 0; i < n; i++) {
+        const z = (values[i] - mean) / stdDev;
+        if (Math.abs(z) > 2) {
+            anomalies.push({
+                index: i,
+                label: labels[i] || `Row ${i + 1}`,
+                value: Math.round(values[i] * 100) / 100,
+                zScore: Math.round(z * 100) / 100,
+                type: z > 0 ? 'high' : 'low',
+                deviation: Math.round(Math.abs(z) * stdDev * 100) / 100
+            });
+        }
+    }
+    return anomalies;
+}
+
+/**
+ * Compute Pearson correlation coefficient between two arrays
+ */
+function pearsonCorrelation(x, y) {
+    const n = Math.min(x.length, y.length);
+    if (n < 3) return 0;
+    let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0, sumY2 = 0;
+    for (let i = 0; i < n; i++) {
+        sumX += x[i]; sumY += y[i];
+        sumXY += x[i] * y[i];
+        sumX2 += x[i] * x[i]; sumY2 += y[i] * y[i];
+    }
+    const denom = Math.sqrt((n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY));
+    if (denom === 0) return 0;
+    return Math.round(((n * sumXY - sumX * sumY) / denom) * 1000) / 1000;
+}
+
+/**
+ * Build correlation matrix for all numeric columns
+ */
+function buildCorrelationMatrix(rows, numericCols) {
+    if (numericCols.length < 2) return null;
+    const cols = numericCols.slice(0, 8);
+    const data = {};
+    for (const col of cols) {
+        data[col] = rows.map(r => parseFloat(String(r[col]).replace(/[$,₹€£]/g, '')) || 0);
+    }
+    const matrix = [];
+    for (let i = 0; i < cols.length; i++) {
+        const row = [];
+        for (let j = 0; j < cols.length; j++) {
+            row.push(i === j ? 1 : pearsonCorrelation(data[cols[i]], data[cols[j]]));
+        }
+        matrix.push(row);
+    }
+    // Find strongest correlations (excluding self)
+    const insights = [];
+    for (let i = 0; i < cols.length; i++) {
+        for (let j = i + 1; j < cols.length; j++) {
+            const corr = matrix[i][j];
+            if (Math.abs(corr) >= 0.6) {
+                insights.push({
+                    col1: cols[i], col2: cols[j], correlation: corr,
+                    strength: Math.abs(corr) >= 0.85 ? 'very strong' : Math.abs(corr) >= 0.7 ? 'strong' : 'moderate',
+                    direction: corr > 0 ? 'positive' : 'negative'
+                });
+            }
+        }
+    }
+    insights.sort((a, b) => Math.abs(b.correlation) - Math.abs(a.correlation));
+    return { columns: cols, matrix, insights };
+}
+
+/**
+ * Detect seasonality pattern via autocorrelation
+ */
+function detectSeasonality(values) {
+    const n = values.length;
+    if (n < 8) return null;
+    const mean = values.reduce((a, b) => a + b, 0) / n;
+    const variance = values.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / n;
+    if (variance === 0) return null;
+
+    let bestLag = 0, bestCorr = 0;
+    for (let lag = 2; lag <= Math.min(Math.floor(n / 2), 12); lag++) {
+        let autoCorr = 0;
+        for (let i = 0; i < n - lag; i++) {
+            autoCorr += (values[i] - mean) * (values[i + lag] - mean);
+        }
+        autoCorr /= (n * variance);
+        if (autoCorr > bestCorr) {
+            bestCorr = autoCorr;
+            bestLag = lag;
+        }
+    }
+    if (bestCorr < 0.3) return null;
+    return { period: bestLag, strength: Math.round(bestCorr * 100) / 100, label: bestLag <= 4 ? 'quarterly' : bestLag <= 7 ? 'weekly' : 'monthly' };
+}
+
+/**
+ * Generate AI-like insights text from the data
+ */
+function generateInsights(kpis, correlationData, anomalies, forecastData, seasonality) {
+    const insights = [];
+
+    // Trend insights
+    for (const kpi of kpis.slice(0, 4)) {
+        if (kpi.trend > 10) insights.push({ type: 'positive', icon: 'trending_up', text: `${kpi.label} is trending UP by ${kpi.trend}% — strong growth pattern detected.` });
+        else if (kpi.trend < -10) insights.push({ type: 'warning', icon: 'trending_down', text: `${kpi.label} is declining by ${Math.abs(kpi.trend)}% — needs attention.` });
+        if (kpi.stdDev > kpi.avg * 0.5) insights.push({ type: 'info', icon: 'show_chart', text: `${kpi.label} shows HIGH variability (StdDev: ${kpi.stdDev}) — consider risk mitigation.` });
+    }
+
+    // Correlation insights
+    if (correlationData && correlationData.insights.length > 0) {
+        const top = correlationData.insights[0];
+        insights.push({ type: top.direction === 'positive' ? 'positive' : 'info', icon: 'link',
+            text: `${top.strength.charAt(0).toUpperCase() + top.strength.slice(1)} ${top.direction} correlation (r=${top.correlation}) between "${top.col1}" and "${top.col2}".` });
+    }
+
+    // Anomaly insights
+    if (anomalies.length > 0) {
+        const highAnom = anomalies.filter(a => a.type === 'high');
+        const lowAnom = anomalies.filter(a => a.type === 'low');
+        if (highAnom.length > 0) insights.push({ type: 'warning', icon: 'error_outline', text: `${highAnom.length} unusually HIGH value(s) detected — potential outlier(s) at: ${highAnom.map(a => a.label).join(', ')}.` });
+        if (lowAnom.length > 0) insights.push({ type: 'warning', icon: 'error_outline', text: `${lowAnom.length} unusually LOW value(s) detected at: ${lowAnom.map(a => a.label).join(', ')}.` });
+    }
+
+    // Forecast insights
+    if (forecastData && forecastData.length > 0) {
+        const lastForecast = forecastData[forecastData.length - 1];
+        if (lastForecast.values.length > 0) {
+            const nextVal = lastForecast.values[0];
+            const direction = lastForecast.regression.slope > 0 ? 'increase' : 'decrease';
+            insights.push({ type: lastForecast.regression.slope > 0 ? 'positive' : 'info', icon: 'psychology',
+                text: `Predictive model forecasts "${lastForecast.column}" will ${direction} — next projected value: ${formatNum(nextVal)} (R²=${lastForecast.regression.rSquared}).` });
+        }
+    }
+
+    // Seasonality
+    if (seasonality) {
+        insights.push({ type: 'info', icon: 'date_range', text: `Seasonality detected: ${seasonality.label} cycle (period: ${seasonality.period}, strength: ${seasonality.strength}).` });
+    }
+
+    return insights;
+}
+
+function formatNum(v) {
+    if (Math.abs(v) >= 1000000) return (v / 1000000).toFixed(1) + 'M';
+    if (Math.abs(v) >= 1000) return (v / 1000).toFixed(1) + 'K';
+    return v.toFixed(2);
+}
+
+/**
+ * MAIN PREDICTIVE ANALYSIS — Runs all analysis on the parsed data
+ * Returns enriched analytics object to be stored alongside charts
+ */
+export function generatePredictiveAnalysis(sheets, charts) {
+    const analysis = { forecasts: [], correlations: null, anomalies: [], insights: [], movingAverages: {}, seasonality: null };
+
+    for (const [sheetName, rows] of Object.entries(sheets)) {
+        if (rows.length < 3) continue;
+        const headers = Object.keys(rows[0]);
+        const numericCols = [];
+        const labelCols = [];
+
+        for (const h of headers) {
+            const info = classifyColumn(h, rows);
+            if (info.category === 'numeric') numericCols.push(h);
+            else labelCols.push(h);
+        }
+
+        if (numericCols.length === 0) continue;
+
+        const labelCol = labelCols[0] || headers[0];
+        const labels = rows.map(r => String(r[labelCol] || ''));
+
+        // Per-column analysis
+        for (const col of numericCols.slice(0, 6)) {
+            const values = rows.map(r => parseFloat(String(r[col]).replace(/[$,₹€£]/g, '')) || 0);
+
+            // Linear regression + forecast
+            const reg = linearRegression(values);
+            if (reg && reg.rSquared > 0.1) {
+                const predicted = forecast(values, Math.min(5, Math.max(3, Math.floor(values.length * 0.2))));
+                analysis.forecasts.push({
+                    sheet: sheetName, column: col, regression: reg,
+                    values: predicted,
+                    forecastLabels: predicted.map((_, i) => `Forecast ${i + 1}`)
+                });
+            }
+
+            // Moving averages
+            const ma3 = movingAverage(values, 3);
+            const ma5 = values.length >= 5 ? movingAverage(values, 5) : null;
+            analysis.movingAverages[`${sheetName}:${col}`] = { ma3, ma5, original: values.map(v => Math.round(v * 100) / 100) };
+
+            // Anomalies
+            const colAnomalies = detectAnomalies(values, labels);
+            if (colAnomalies.length > 0) {
+                analysis.anomalies.push({ sheet: sheetName, column: col, anomalies: colAnomalies });
+            }
+
+            // Seasonality (only first col)
+            if (!analysis.seasonality) {
+                analysis.seasonality = detectSeasonality(values);
+            }
+        }
+
+        // Correlation matrix
+        if (numericCols.length >= 2 && !analysis.correlations) {
+            analysis.correlations = buildCorrelationMatrix(rows, numericCols);
+        }
+    }
+
+    // Generate insights from all charts' KPIs + analysis
+    const allKpis = [];
+    (charts || []).forEach(c => { if (c.kpis) allKpis.push(...c.kpis); });
+    analysis.insights = generateInsights(
+        allKpis,
+        analysis.correlations,
+        analysis.anomalies.flatMap(a => a.anomalies),
+        analysis.forecasts,
+        analysis.seasonality
+    );
+
+    return analysis;
+}
  * MAIN: Auto-generate intelligent dashboard config from parsed sheet data
  * Creates multiple chart types, deep KPIs, and secondary analysis charts
  */

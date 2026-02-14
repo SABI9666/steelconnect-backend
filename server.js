@@ -72,6 +72,16 @@ try {
 // NEW: Import analysis routes
 import analysisRoutes from './src/routes/analysis.js';
 
+// NEW: Import announcements routes
+let announcementsRoutes;
+try {
+    const announcementsModule = await import('./src/routes/announcements.js');
+    announcementsRoutes = announcementsModule.default;
+    console.log('✅ Announcements routes imported successfully');
+} catch (error) {
+    console.warn('⚠️ Announcements routes not available:', error.message);
+}
+
 // NEW: Import community routes
 let communityRoutes;
 try {
@@ -530,6 +540,15 @@ console.log('   • User analytics and reporting');
 import { startAutoSync } from './src/services/dashboardSyncService.js';
 startAutoSync();
 console.log('🔄 Dashboard auto-sync scheduler started');
+
+// NEW: Announcements routes (public for portal users)
+if (announcementsRoutes) {
+    app.use('/api/announcements', announcementsRoutes);
+    console.log('✅ Announcements routes registered at /api/announcements');
+    console.log('📢 Public announcements: ENABLED');
+} else {
+    console.warn('⚠️ Announcements routes unavailable');
+}
 
 // NEW: Community routes
 if (communityRoutes) {

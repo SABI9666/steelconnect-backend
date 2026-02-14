@@ -3141,4 +3141,119 @@ router.delete('/community-posts/:postId', async (req, res) => {
     }
 });
 
+// ==========================================
+// NEWS & ANNOUNCEMENTS MANAGEMENT
+// ==========================================
+
+// GET /api/admin/announcements - Get all announcements
+router.get('/announcements', async (req, res) => {
+    try {
+        const snapshot = await adminDb.collection('announcements')
+            .orderBy('createdAt', 'desc')
+            .get();
+
+        const announcements = [];
+        snapshot.forEach(doc => {
+            announcements.push({ id: doc.id, ...doc.data() });
+        });
+
+        res.json({ success: true, data: announcements });
+    } catch (error) {
+        console.error('[ADMIN-ANNOUNCEMENTS] Error fetching:', error);
+        res.status(500).json({ success: false, message: 'Error fetching announcements' });
+    }
+});
+
+// POST /api/admin/announcements - Create new announcement
+router.post('/announcements', async (req, res) => {
+    try {
+        const { title, content, type, priority, targetAudience, expiresAt } = req.body;
+
+        if (!title || !content || !type) {
+            return res.status(400).json({ success: false, message: 'Title, content, and type are required' });
+        }
+
+        const validTypes = ['offer', 'maintenance', 'update', 'general', 'alert'];
+        if (!validTypes.includes(type)) {
+            return res.status(400).json({ success: false, message: `Invalid type. Must be one of: ${validTypes.join(', ')}` });
+        }
+
+        const announcement = {
+            title: title.trim(),
+            content: content.trim(),
+            type,
+            priority: priority || 'normal',
+            targetAudience: targetAudience || 'all',
+            status: 'active',
+            createdBy: req.user.email,
+            createdByName: req.user.name || 'Admin',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            expiresAt: expiresAt || null,
+            views: 0
+        };
+
+        const docRef = await adminDb.collection('announcements').add(announcement);
+
+        console.log(`[ADMIN-ANNOUNCEMENTS] Created announcement "${title}" by ${req.user.email}`);
+        res.status(201).json({ success: true, data: { id: docRef.id, ...announcement }, message: 'Announcement created successfully' });
+    } catch (error) {
+        console.error('[ADMIN-ANNOUNCEMENTS] Error creating:', error);
+        res.status(500).json({ success: false, message: 'Error creating announcement' });
+    }
+});
+
+// PUT /api/admin/announcements/:id - Update announcement
+router.put('/announcements/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { title, content, type, priority, targetAudience, status, expiresAt } = req.body;
+
+        const docRef = adminDb.collection('announcements').doc(id);
+        const doc = await docRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ success: false, message: 'Announcement not found' });
+        }
+
+        const updates = { updatedAt: new Date().toISOString() };
+        if (title) updates.title = title.trim();
+        if (content) updates.content = content.trim();
+        if (type) updates.type = type;
+        if (priority) updates.priority = priority;
+        if (targetAudience) updates.targetAudience = targetAudience;
+        if (status) updates.status = status;
+        if (expiresAt !== undefined) updates.expiresAt = expiresAt;
+
+        await docRef.update(updates);
+
+        console.log(`[ADMIN-ANNOUNCEMENTS] Updated announcement ${id} by ${req.user.email}`);
+        res.json({ success: true, data: { id, ...doc.data(), ...updates }, message: 'Announcement updated' });
+    } catch (error) {
+        console.error('[ADMIN-ANNOUNCEMENTS] Error updating:', error);
+        res.status(500).json({ success: false, message: 'Error updating announcement' });
+    }
+});
+
+// DELETE /api/admin/announcements/:id - Delete announcement
+router.delete('/announcements/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const docRef = adminDb.collection('announcements').doc(id);
+        const doc = await docRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ success: false, message: 'Announcement not found' });
+        }
+
+        await docRef.delete();
+
+        console.log(`[ADMIN-ANNOUNCEMENTS] Deleted announcement ${id} by ${req.user.email}`);
+        res.json({ success: true, message: 'Announcement deleted' });
+    } catch (error) {
+        console.error('[ADMIN-ANNOUNCEMENTS] Error deleting:', error);
+        res.status(500).json({ success: false, message: 'Error deleting announcement' });
+    }
+});
+
 export default router;

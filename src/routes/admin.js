@@ -3148,14 +3148,15 @@ router.delete('/community-posts/:postId', async (req, res) => {
 // GET /api/admin/announcements - Get all announcements
 router.get('/announcements', async (req, res) => {
     try {
-        const snapshot = await adminDb.collection('announcements')
-            .orderBy('createdAt', 'desc')
-            .get();
+        const snapshot = await adminDb.collection('announcements').get();
 
         const announcements = [];
         snapshot.forEach(doc => {
             announcements.push({ id: doc.id, ...doc.data() });
         });
+
+        // Sort by createdAt descending in memory to avoid index requirement
+        announcements.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
         res.json({ success: true, data: announcements });
     } catch (error) {

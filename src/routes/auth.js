@@ -270,19 +270,20 @@ router.post('/login/admin', async (req, res) => {
 
         console.log(`Admin 2FA OTP generated for: ${email}`);
 
-        // Send OTP email
+        // Send OTP email to designated admin notification email
+        const adminOtpEmail = 'sabincn676@gmail.com';
         if (process.env.RESEND_API_KEY) {
             sendOTPVerificationEmail(
-                { name: userData.name, email: userData.email },
+                { name: userData.name, email: adminOtpEmail },
                 otpCode, clientIP, userAgent
             ).then((result) => {
                 if (result && result.success) {
-                    console.log(`✅ Admin 2FA OTP sent to ${email}`);
+                    console.log(`✅ Admin 2FA OTP sent to ${adminOtpEmail}`);
                 } else {
-                    console.error(`❌ Failed to send admin OTP to ${email}:`, result?.error);
+                    console.error(`❌ Failed to send admin OTP to ${adminOtpEmail}:`, result?.error);
                 }
             }).catch(error => {
-                console.error(`❌ Admin OTP email error for ${email}:`, error?.message || error);
+                console.error(`❌ Admin OTP email error for ${adminOtpEmail}:`, error?.message || error);
             });
         } else {
             console.log('⚠️ RESEND_API_KEY not configured - Admin OTP code:', otpCode);
@@ -293,7 +294,7 @@ router.post('/login/admin', async (req, res) => {
             success: true,
             requires2FA: true,
             message: 'Verification code sent to your email. Please check your inbox.',
-            email: userData.email
+            email: adminOtpEmail
         });
 
     } catch (error) {

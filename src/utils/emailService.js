@@ -490,9 +490,84 @@ export async function sendPasswordResetEmail(user, resetToken, resetUrl) {
     }
 }
 
+// Send 2FA OTP verification email
+export async function sendOTPVerificationEmail(user, otpCode, clientIP, userAgent) {
+    try {
+        console.log(`Attempting to send 2FA OTP email to: ${user.email}`);
+
+        const emailContent = `
+            <h2 style="color: #1e293b; margin-top: 0;">Login Verification Code</h2>
+
+            <div class="alert-box">
+                <h3 style="margin: 0 0 10px 0; color: #1e3a8a;">Verify Your Identity</h3>
+                <p style="margin: 0;">Hello <strong>${user.name}</strong>, a login attempt was made on your SteelConnect account. Enter the code below to complete sign-in.</p>
+            </div>
+
+            <div style="text-align: center; margin: 30px 0;">
+                <div style="display: inline-block; background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%); border-radius: 16px; padding: 25px 50px; box-shadow: 0 8px 25px rgba(37, 99, 235, 0.3);">
+                    <p style="margin: 0 0 8px 0; font-size: 12px; color: rgba(255,255,255,0.8); text-transform: uppercase; letter-spacing: 2px;">Your Verification Code</p>
+                    <p style="margin: 0; font-size: 42px; font-weight: 800; color: #ffffff; letter-spacing: 12px;">${otpCode}</p>
+                </div>
+            </div>
+
+            <p style="color: #475569; font-size: 14px; text-align: center;">
+                This code expires in <strong>5 minutes</strong>. Do not share this code with anyone.
+            </p>
+
+            <div class="info-box">
+                <h4 style="margin-top: 0; color: #1e293b;">Login Attempt Details</h4>
+                <div class="detail-row">
+                    <span class="detail-label">Account:</span>
+                    <span class="detail-value">${user.email}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Time:</span>
+                    <span class="detail-value">${new Date().toLocaleString()}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">IP Address:</span>
+                    <span class="detail-value">${clientIP || 'Unknown'}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Device:</span>
+                    <span class="detail-value">${(userAgent || 'Unknown').substring(0, 60)}...</span>
+                </div>
+            </div>
+
+            <div class="security-notice">
+                <strong>⚠️ Security Notice:</strong> If you did not attempt to log in, your password may be compromised. Please change your password immediately and contact support.
+            </div>
+        `;
+
+        const emailHTML = getEmailTemplate('Login Verification - SteelConnect', emailContent);
+
+        const emailData = {
+            from: `SteelConnect <${FROM_EMAIL}>`,
+            to: user.email,
+            subject: `🔐 ${otpCode} - Your SteelConnect Login Code`,
+            html: emailHTML
+        };
+
+        const response = await resend.emails.send(emailData);
+
+        if (response.error) {
+            console.error('Resend API error:', response.error);
+            return { success: false, error: response.error };
+        }
+
+        console.log(`✅ 2FA OTP email sent to ${user.email}. Message ID: ${response.data?.id || 'N/A'}`);
+        return { success: true, messageId: response.data?.id };
+
+    } catch (error) {
+        console.error('OTP email error:', error);
+        return { success: false, error: error.message || 'Failed to send OTP email' };
+    }
+}
+
 export default {
     sendLoginNotification,
     sendEstimationResultNotification,
     sendProfileReviewNotification,
-    sendPasswordResetEmail
+    sendPasswordResetEmail,
+    sendOTPVerificationEmail
 };

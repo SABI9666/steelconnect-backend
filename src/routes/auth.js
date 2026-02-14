@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { adminDb } from '../config/firebase.js';
 import crypto from 'crypto';
-import { sendLoginNotification, sendPasswordResetEmail } from '../utils/emailService.js';
+import { sendLoginNotification, sendPasswordResetEmail, sendOTPVerificationEmail } from '../utils/emailService.js';
 
 const router = express.Router();
 
@@ -88,7 +88,7 @@ router.post('/register', async (req, res) => {
     }
 });
 
-// Regular user login
+// Regular user login - Step 1: Verify credentials and send OTP
 router.post('/login', async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -133,7 +133,7 @@ router.post('/login', async (req, res) => {
 
         // Verify password
         const isValidPassword = await bcrypt.compare(password, userData.password);
-        
+
         if (!isValidPassword) {
             console.log(`Login failed: Invalid password for email ${email}`);
             return res.status(401).json({
@@ -151,59 +151,45 @@ router.post('/login', async (req, res) => {
             });
         }
 
-        // Generate JWT token
-        const token = jwt.sign(
-            { 
-                userId: userId, 
-                email: userData.email, 
-                type: userData.type 
-            },
-            process.env.JWT_SECRET,
-            { expiresIn: '7d' }
-        );
+        // Generate 6-digit OTP for 2FA
+        const otpCode = crypto.randomInt(100000, 999999).toString();
+        const otpExpiry = new Date(Date.now() + 5 * 60 * 1000).toISOString(); // 5 minutes
 
-        // Update last login
+        // Store OTP in Firestore
         await adminDb.collection('users').doc(userId).update({
-            lastLogin: new Date().toISOString(),
-            lastLoginIP: clientIP
+            loginOtp: otpCode,
+            loginOtpExpiry: otpExpiry,
+            loginOtpAttempts: 0,
+            pendingLoginIP: clientIP,
+            pendingLoginAgent: userAgent
         });
 
-        // Prepare user response (exclude password)
-        const { password: _, ...userResponse } = userData;
-        const responseUser = {
-            ...userResponse,
-            id: userId
-        };
+        console.log(`2FA OTP generated for: ${email}`);
 
-        console.log(`Login successful for: ${email} (${userData.type})`);
-
-        // Send login notification email with verified domain
+        // Send OTP email
         if (process.env.RESEND_API_KEY) {
-            console.log(`Attempting to send email to: ${email}`);
-            console.log(`Subject: Login Notification - SteelConnect`);
-            
-            // Send notification asynchronously - don't wait for it
-            sendLoginNotification(responseUser, new Date().toISOString(), clientIP, userAgent)
-                .then((result) => {
-                    if (result && result.success) {
-                        console.log(`✅ Login notification sent successfully to ${email}`);
-                        console.log(`📧 Email sent from verified domain: steelconnectapp.com`);
-                    } else {
-                        console.error(`❌ Failed to send login notification to ${email}:`, result?.error || 'Unknown error');
-                    }
-                })
-                .catch(error => {
-                    console.error(`❌ Failed to send login notification email to ${email}:`, error?.message || error);
-                });
+            sendOTPVerificationEmail(
+                { name: userData.name, email: userData.email },
+                otpCode, clientIP, userAgent
+            ).then((result) => {
+                if (result && result.success) {
+                    console.log(`✅ 2FA OTP sent to ${email}`);
+                } else {
+                    console.error(`❌ Failed to send OTP to ${email}:`, result?.error);
+                }
+            }).catch(error => {
+                console.error(`❌ OTP email error for ${email}:`, error?.message || error);
+            });
         } else {
-            console.log('⚠️ RESEND_API_KEY not configured - skipping login notification email');
+            console.log('⚠️ RESEND_API_KEY not configured - OTP code:', otpCode);
         }
 
+        // Return requires2FA flag - do NOT send token yet
         res.json({
             success: true,
-            message: 'Login successful',
-            token: token,
-            user: responseUser
+            requires2FA: true,
+            message: 'Verification code sent to your email. Please check your inbox.',
+            email: userData.email
         });
 
     } catch (error) {
@@ -215,7 +201,7 @@ router.post('/login', async (req, res) => {
     }
 });
 
-// Admin login route
+// Admin login route - Step 1: Verify credentials and send OTP
 router.post('/login/admin', async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -252,7 +238,7 @@ router.post('/login/admin', async (req, res) => {
 
         // Verify password
         const isValidPassword = await bcrypt.compare(password, userData.password);
-        
+
         if (!isValidPassword) {
             console.log(`Admin login failed: Invalid password for email ${email}`);
             return res.status(401).json({
@@ -269,60 +255,45 @@ router.post('/login/admin', async (req, res) => {
             });
         }
 
-        // Generate JWT token with admin role
-        const token = jwt.sign(
-            { 
-                userId: userId, 
-                email: userData.email, 
-                type: 'admin',
-                role: 'admin'
-            },
-            process.env.JWT_SECRET,
-            { expiresIn: '24h' } // Shorter expiry for admin tokens
-        );
+        // Generate 6-digit OTP for 2FA
+        const otpCode = crypto.randomInt(100000, 999999).toString();
+        const otpExpiry = new Date(Date.now() + 5 * 60 * 1000).toISOString(); // 5 minutes
 
-        // Update last login
+        // Store OTP in Firestore
         await adminDb.collection('users').doc(userId).update({
-            lastLogin: new Date().toISOString(),
-            lastLoginIP: clientIP,
-            lastAdminLogin: new Date().toISOString()
+            loginOtp: otpCode,
+            loginOtpExpiry: otpExpiry,
+            loginOtpAttempts: 0,
+            pendingLoginIP: clientIP,
+            pendingLoginAgent: userAgent
         });
 
-        // Prepare admin response (exclude password)
-        const { password: _, ...adminResponse } = userData;
-        const responseAdmin = {
-            ...adminResponse,
-            id: userId
-        };
+        console.log(`Admin 2FA OTP generated for: ${email}`);
 
-        console.log(`Admin login successful for: ${email}`);
-
-        // Send admin login notification with verified domain
+        // Send OTP email
         if (process.env.RESEND_API_KEY) {
-            console.log(`Attempting to send admin email to: ${email}`);
-            console.log(`Subject: Admin Login Notification - SteelConnect`);
-            
-            sendLoginNotification(responseAdmin, new Date().toISOString(), clientIP, userAgent)
-                .then((result) => {
-                    if (result && result.success) {
-                        console.log(`✅ Admin login notification sent successfully to ${email}`);
-                        console.log(`📧 Email sent from verified domain: steelconnectapp.com`);
-                    } else {
-                        console.error(`❌ Failed to send admin login notification to ${email}:`, result?.error || 'Unknown error');
-                    }
-                })
-                .catch(error => {
-                    console.error(`❌ Failed to send admin login notification email to ${email}:`, error?.message || error);
-                });
+            sendOTPVerificationEmail(
+                { name: userData.name, email: userData.email },
+                otpCode, clientIP, userAgent
+            ).then((result) => {
+                if (result && result.success) {
+                    console.log(`✅ Admin 2FA OTP sent to ${email}`);
+                } else {
+                    console.error(`❌ Failed to send admin OTP to ${email}:`, result?.error);
+                }
+            }).catch(error => {
+                console.error(`❌ Admin OTP email error for ${email}:`, error?.message || error);
+            });
         } else {
-            console.log('⚠️ RESEND_API_KEY not configured - skipping admin login notification email');
+            console.log('⚠️ RESEND_API_KEY not configured - Admin OTP code:', otpCode);
         }
 
+        // Return requires2FA flag
         res.json({
             success: true,
-            message: 'Admin login successful',
-            token: token,
-            user: responseAdmin
+            requires2FA: true,
+            message: 'Verification code sent to your email. Please check your inbox.',
+            email: userData.email
         });
 
     } catch (error) {
@@ -331,6 +302,211 @@ router.post('/login/admin', async (req, res) => {
             success: false,
             message: 'Internal server error during admin login'
         });
+    }
+});
+
+// Step 2: Verify OTP and complete login (for both user and admin)
+router.post('/verify-otp', async (req, res) => {
+    try {
+        const { email, otp, loginType } = req.body;
+        const clientIP = getClientIP(req);
+        const userAgent = req.headers['user-agent'] || 'Unknown';
+
+        if (!email || !otp) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email and verification code are required'
+            });
+        }
+
+        const normalizedEmail = email.toLowerCase().trim();
+        const isAdmin = loginType === 'admin';
+
+        // Find user
+        let userQuery;
+        if (isAdmin) {
+            userQuery = await adminDb.collection('users')
+                .where('email', '==', normalizedEmail)
+                .where('type', '==', 'admin')
+                .get();
+        } else {
+            userQuery = await adminDb.collection('users')
+                .where('email', '==', normalizedEmail)
+                .get();
+        }
+
+        if (userQuery.empty) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid credentials'
+            });
+        }
+
+        const userDoc = userQuery.docs[0];
+        const userData = userDoc.data();
+        const userId = userDoc.id;
+
+        // Check OTP attempts (max 5)
+        if (userData.loginOtpAttempts >= 5) {
+            await adminDb.collection('users').doc(userId).update({
+                loginOtp: null,
+                loginOtpExpiry: null,
+                loginOtpAttempts: 0
+            });
+            return res.status(429).json({
+                success: false,
+                message: 'Too many failed attempts. Please login again to get a new code.'
+            });
+        }
+
+        // Verify OTP code
+        if (!userData.loginOtp || userData.loginOtp !== otp.trim()) {
+            // Increment attempts
+            await adminDb.collection('users').doc(userId).update({
+                loginOtpAttempts: (userData.loginOtpAttempts || 0) + 1
+            });
+            const remaining = 5 - ((userData.loginOtpAttempts || 0) + 1);
+            return res.status(400).json({
+                success: false,
+                message: `Invalid verification code. ${remaining} attempt${remaining !== 1 ? 's' : ''} remaining.`
+            });
+        }
+
+        // Check OTP expiry
+        if (!userData.loginOtpExpiry || new Date(userData.loginOtpExpiry) < new Date()) {
+            await adminDb.collection('users').doc(userId).update({
+                loginOtp: null,
+                loginOtpExpiry: null,
+                loginOtpAttempts: 0
+            });
+            return res.status(400).json({
+                success: false,
+                message: 'Verification code has expired. Please login again to get a new code.'
+            });
+        }
+
+        // OTP verified - clear OTP data and generate JWT
+        const tokenPayload = isAdmin
+            ? { userId, email: userData.email, type: 'admin', role: 'admin' }
+            : { userId, email: userData.email, type: userData.type };
+        const tokenExpiry = isAdmin ? '24h' : '7d';
+
+        const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, { expiresIn: tokenExpiry });
+
+        // Update user document
+        const updateData = {
+            loginOtp: null,
+            loginOtpExpiry: null,
+            loginOtpAttempts: 0,
+            pendingLoginIP: null,
+            pendingLoginAgent: null,
+            lastLogin: new Date().toISOString(),
+            lastLoginIP: clientIP
+        };
+        if (isAdmin) {
+            updateData.lastAdminLogin = new Date().toISOString();
+        }
+        await adminDb.collection('users').doc(userId).update(updateData);
+
+        // Prepare response (exclude password and OTP fields)
+        const { password: _, loginOtp: _o, loginOtpExpiry: _e, loginOtpAttempts: _a, ...safeUserData } = userData;
+        const responseUser = { ...safeUserData, id: userId };
+
+        console.log(`2FA verified - ${isAdmin ? 'Admin' : 'User'} login complete for: ${normalizedEmail}`);
+
+        // Send login notification
+        if (process.env.RESEND_API_KEY) {
+            sendLoginNotification(responseUser, new Date().toISOString(), clientIP, userAgent)
+                .then((result) => {
+                    if (result && result.success) {
+                        console.log(`✅ Login notification sent to ${normalizedEmail}`);
+                    }
+                })
+                .catch(error => {
+                    console.error(`❌ Login notification error:`, error?.message || error);
+                });
+        }
+
+        res.json({
+            success: true,
+            message: isAdmin ? 'Admin login successful' : 'Login successful',
+            token: token,
+            user: responseUser
+        });
+
+    } catch (error) {
+        console.error('OTP verification error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error during verification'
+        });
+    }
+});
+
+// Resend OTP code
+router.post('/resend-otp', async (req, res) => {
+    try {
+        const { email, loginType } = req.body;
+        const clientIP = getClientIP(req);
+        const userAgent = req.headers['user-agent'] || 'Unknown';
+
+        if (!email) {
+            return res.status(400).json({ success: false, message: 'Email is required' });
+        }
+
+        const normalizedEmail = email.toLowerCase().trim();
+        const isAdmin = loginType === 'admin';
+
+        let userQuery;
+        if (isAdmin) {
+            userQuery = await adminDb.collection('users')
+                .where('email', '==', normalizedEmail)
+                .where('type', '==', 'admin')
+                .get();
+        } else {
+            userQuery = await adminDb.collection('users')
+                .where('email', '==', normalizedEmail)
+                .get();
+        }
+
+        if (userQuery.empty) {
+            return res.status(400).json({ success: false, message: 'Invalid request' });
+        }
+
+        const userDoc = userQuery.docs[0];
+        const userData = userDoc.data();
+        const userId = userDoc.id;
+
+        // Generate new OTP
+        const otpCode = crypto.randomInt(100000, 999999).toString();
+        const otpExpiry = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+
+        await adminDb.collection('users').doc(userId).update({
+            loginOtp: otpCode,
+            loginOtpExpiry: otpExpiry,
+            loginOtpAttempts: 0
+        });
+
+        // Send OTP email
+        if (process.env.RESEND_API_KEY) {
+            sendOTPVerificationEmail(
+                { name: userData.name, email: userData.email },
+                otpCode, clientIP, userAgent
+            ).catch(error => {
+                console.error(`Resend OTP email error:`, error?.message || error);
+            });
+        }
+
+        console.log(`OTP resent for: ${normalizedEmail}`);
+
+        res.json({
+            success: true,
+            message: 'A new verification code has been sent to your email.'
+        });
+
+    } catch (error) {
+        console.error('Resend OTP error:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 });
 

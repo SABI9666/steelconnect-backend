@@ -217,9 +217,11 @@ app.use((req, res, next) => {
     console.log(`${timestamp} - ${method} ${url}`);
     
     if (process.env.NODE_ENV !== 'production' && method !== 'GET') {
-        const bodyStr = JSON.stringify(req.body, null, 2);
-        if (bodyStr.length < 500) {
-            console.log(`🔍 Body:`, bodyStr);
+        if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
+            const bodyStr = JSON.stringify(req.body, null, 2);
+            if (bodyStr && bodyStr.length < 500) {
+                console.log(`🔍 Body:`, bodyStr);
+            }
         }
     }
     

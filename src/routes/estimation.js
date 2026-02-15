@@ -1844,44 +1844,133 @@ router.post('/ai/questions', authenticateToken, async (req, res) => {
     }
 });
 
-// POST /estimation/ai/generate - Generate full AI estimate from answers
+// POST /estimation/ai/generate - Generate full AI estimate from answers (with file upload support)
 router.post('/ai/generate', authenticateToken, async (req, res) => {
     try {
+        // Parse multipart upload if files are included
+        try {
+            await safeEstimationUpload(req, res);
+        } catch (uploadErr) {
+            console.warn('[AI-ESTIMATION] File upload skipped or failed:', uploadErr.message);
+            // Continue without files - AI estimation can still proceed
+        }
+
         const { estimationId, projectTitle, description, designStandard, projectType, region, totalArea, answers, fileNames } = req.body;
 
-        if (!projectTitle || !answers) {
+        // Parse answers if sent as string (FormData sends strings)
+        let parsedAnswers = answers;
+        if (typeof answers === 'string') {
+            try { parsedAnswers = JSON.parse(answers); } catch (e) { parsedAnswers = {}; }
+        }
+
+        // Parse fileNames if sent as string
+        let parsedFileNames = fileNames;
+        if (typeof fileNames === 'string') {
+            try { parsedFileNames = JSON.parse(fileNames); } catch (e) { parsedFileNames = []; }
+        }
+
+        if (!projectTitle || !parsedAnswers) {
             return res.status(400).json({ success: false, message: 'Project info and answers are required' });
         }
 
         console.log(`[AI-ESTIMATION] Generating estimate for "${projectTitle}" by ${req.user.email}`);
 
-        const estimate = await generateAIEstimate(
-            { projectTitle, description, designStandard, projectType, region, totalArea },
-            answers,
-            fileNames
-        );
-
-        // If estimationId provided, save AI result to the estimation document
-        if (estimationId) {
+        // Upload files to Firebase Storage if included
+        let uploadedFiles = [];
+        const files = req.files;
+        if (files && files.length > 0) {
             try {
-                const docRef = adminDb.collection('estimations').doc(estimationId);
-                const doc = await docRef.get();
-                if (doc.exists) {
-                    await docRef.update({
-                        aiEstimate: estimate,
-                        aiGeneratedAt: new Date().toISOString(),
-                        aiAnswers: answers,
-                        status: doc.data().status === 'pending' ? 'in-progress' : doc.data().status,
-                        updatedAt: new Date().toISOString()
-                    });
-                    console.log(`[AI-ESTIMATION] Saved AI result to estimation ${estimationId}`);
-                }
-            } catch (saveErr) {
-                console.warn('[AI-ESTIMATION] Could not save to estimation doc:', saveErr.message);
+                const uploadPromises = files.map(async (file, index) => {
+                    const timestamp = Date.now();
+                    const fileName = `${timestamp}_${index}_${file.originalname}`;
+                    const filePath = `estimation-files/${req.user.userId}/${fileName}`;
+
+                    const metadata = {
+                        contractorEmail: req.user.email,
+                        contractorId: req.user.userId,
+                        uploadedBy: req.user.userId,
+                        fileIndex: index,
+                        uploadBatch: timestamp,
+                        estimationType: 'ai-generated'
+                    };
+
+                    return uploadToFirebaseStorage(file, filePath, metadata);
+                });
+
+                uploadedFiles = await Promise.all(uploadPromises);
+                console.log(`[AI-ESTIMATION] Successfully uploaded ${uploadedFiles.length} files`);
+            } catch (uploadError) {
+                console.error('[AI-ESTIMATION] File upload failed:', uploadError);
+                // Continue without files - AI estimation can still proceed
             }
         }
 
-        res.json({ success: true, data: estimate });
+        const estimate = await generateAIEstimate(
+            { projectTitle, description, designStandard, projectType, region, totalArea },
+            parsedAnswers,
+            parsedFileNames || (uploadedFiles.length > 0 ? uploadedFiles.map(f => f.name) : [])
+        );
+
+        // Always save AI result - create new document or update existing
+        let savedEstimationId = estimationId;
+        try {
+            if (estimationId) {
+                // Update existing estimation
+                const docRef = adminDb.collection('estimations').doc(estimationId);
+                const doc = await docRef.get();
+                if (doc.exists) {
+                    const updateData = {
+                        aiEstimate: estimate,
+                        aiGeneratedAt: new Date().toISOString(),
+                        aiAnswers: parsedAnswers,
+                        status: 'completed',
+                        updatedAt: new Date().toISOString()
+                    };
+                    if (uploadedFiles.length > 0) {
+                        updateData.uploadedFiles = uploadedFiles;
+                        updateData.fileCount = uploadedFiles.length;
+                        updateData.totalFileSize = uploadedFiles.reduce((sum, f) => sum + (f.size || 0), 0);
+                    }
+                    await docRef.update(updateData);
+                    console.log(`[AI-ESTIMATION] Updated estimation ${estimationId}`);
+                }
+            } else {
+                // Create new estimation document
+                const estimationDoc = {
+                    projectTitle,
+                    description: description || '',
+                    designStandard: designStandard || '',
+                    contractorName: req.user.name || '',
+                    contractorEmail: req.user.email,
+                    contractorId: req.user.userId,
+                    uploadedFiles,
+                    fileCount: uploadedFiles.length,
+                    totalFileSize: uploadedFiles.reduce((sum, f) => sum + (f.size || 0), 0),
+                    aiEstimate: estimate,
+                    aiGeneratedAt: new Date().toISOString(),
+                    aiAnswers: parsedAnswers,
+                    estimatedAmount: estimate?.summary?.grandTotal || estimate?.summary?.totalEstimate || 0,
+                    status: 'completed',
+                    estimationType: 'ai-generated',
+                    completedAt: new Date().toISOString(),
+                    completedBy: 'AI Engine',
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString()
+                };
+                const docRef = await adminDb.collection('estimations').add(estimationDoc);
+                savedEstimationId = docRef.id;
+                console.log(`[AI-ESTIMATION] Created new estimation ${savedEstimationId}`);
+            }
+        } catch (saveErr) {
+            console.error('[AI-ESTIMATION] Could not save estimation:', saveErr.message);
+        }
+
+        res.json({
+            success: true,
+            data: estimate,
+            estimationId: savedEstimationId,
+            fileCount: uploadedFiles.length
+        });
     } catch (error) {
         console.error('[AI-ESTIMATION] Error generating estimate:', error);
         res.status(500).json({ success: false, message: error.message || 'Failed to generate AI estimate' });

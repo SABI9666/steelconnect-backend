@@ -1,21 +1,24 @@
 import express from 'express';
 import multer from 'multer';
-import { adminDb, bucket } from '../config/firebase.js';
-import { authenticateToken } from '../middleware/authMiddleware.js';
+import { adminDb, storage, uploadToFirebaseStorage, FILE_UPLOAD_CONFIG } from '../../config/firebase.js';
+import { authenticateToken } from '../../middleware/authMiddleware.js';
 
 const router = express.Router();
 
-// Configure multer for file uploads (large PDF support)
+// Configure multer for file uploads - supports all construction file types
+const allowedExtensions = ['pdf', 'dwg', 'dxf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'jpg', 'jpeg', 'png', 'tif', 'tiff', 'bmp', 'txt', 'rtf', 'zip', 'rar'];
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: {
-        fileSize: 50 * 1024 * 1024 // 50MB limit (large drawings/blueprints)
+        fileSize: 50 * 1024 * 1024, // 50MB limit (large drawings/blueprints)
+        files: 20
     },
     fileFilter: (req, file, cb) => {
-        if (file.mimetype === 'application/pdf') {
+        const ext = file.originalname.toLowerCase().split('.').pop();
+        if (allowedExtensions.includes(ext)) {
             cb(null, true);
         } else {
-            cb(new Error('Only PDF files are allowed'), false);
+            cb(new Error(`File type .${ext} is not supported. Allowed: PDF, DWG, DXF, DOC, DOCX, XLS, XLSX, CSV, JPG, PNG, TIF, TXT, ZIP, RAR`), false);
         }
     }
 });
@@ -29,20 +32,27 @@ const handleMulterError = (err, req, res, next) => {
                 message: 'File too large. Maximum size is 50MB.'
             });
         }
-    } else if (err.message === 'Only PDF files are allowed') {
-        return res.status(400).json({ 
-            success: false, 
-            message: 'Only PDF files are allowed.' 
+        if (err.code === 'LIMIT_FILE_COUNT') {
+            return res.status(400).json({
+                success: false,
+                message: 'Too many files. Maximum 20 files allowed.'
+            });
+        }
+    } else if (err.message && err.message.includes('not supported')) {
+        return res.status(400).json({
+            success: false,
+            message: err.message
         });
     }
     next(err);
 };
 
-// Submit estimation request (for contractors)
-router.post('/submit', authenticateToken, upload.single('estimationFile'), handleMulterError, async (req, res) => {
+// Submit estimation request (for contractors) - supports multiple files
+router.post('/submit', authenticateToken, upload.array('files', 20), handleMulterError, async (req, res) => {
     try {
         const { projectTitle, description } = req.body;
-        const file = req.file;
+        const files = req.files || [];
+        const file = files[0] || req.file; // backwards compat for single file
         const userId = req.user.userId;
 
         // Validate required fields
@@ -76,41 +86,30 @@ router.post('/submit', authenticateToken, upload.single('estimationFile'), handl
             });
         }
 
-        let uploadedFile = null;
-        
-        // Handle file upload if provided
-        if (file) {
+        let uploadedFiles = [];
+
+        // Handle file upload(s) if provided
+        const allFiles = files.length > 0 ? files : (file ? [file] : []);
+        if (allFiles.length > 0) {
             try {
-                const fileName = `estimations/requests/${userId}_${Date.now()}_${file.originalname}`;
-                const fileUpload = bucket.file(fileName);
-                
-                await fileUpload.save(file.buffer, {
-                    metadata: {
-                        contentType: file.mimetype,
-                        metadata: {
-                            uploadedBy: userId,
-                            uploadedAt: new Date().toISOString(),
-                            originalName: file.originalname
-                        }
-                    }
+                const uploadPromises = allFiles.map(async (f, index) => {
+                    const timestamp = Date.now();
+                    const filePath = `estimation-files/${userId}/${timestamp}_${index}_${f.originalname}`;
+                    const metadata = {
+                        contractorId: userId,
+                        uploadedBy: userId,
+                        fileIndex: index,
+                        uploadBatch: timestamp
+                    };
+                    return uploadToFirebaseStorage(f, filePath, metadata);
                 });
-                
-                // Make file publicly accessible
-                await fileUpload.makePublic();
-                const publicUrl = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
-                
-                uploadedFile = {
-                    url: publicUrl,
-                    fileName: file.originalname,
-                    path: fileName,
-                    uploadedAt: new Date().toISOString(),
-                    size: file.size
-                };
+                uploadedFiles = await Promise.all(uploadPromises);
+                console.log(`[CONTRACTOR-PORTAL] Successfully uploaded ${uploadedFiles.length} files`);
             } catch (uploadError) {
                 console.error('File upload error:', uploadError);
-                return res.status(500).json({ 
-                    success: false, 
-                    message: 'Failed to upload file. Please try again.' 
+                return res.status(500).json({
+                    success: false,
+                    message: 'Failed to upload file. Please try again.'
                 });
             }
         }
@@ -118,9 +117,14 @@ router.post('/submit', authenticateToken, upload.single('estimationFile'), handl
         // Save estimation request to Firestore
         const estimationData = {
             contractorId: userId,
+            contractorEmail: req.user.email,
+            contractorName: req.user.name || '',
             projectTitle: projectTitle.trim(),
             description: description.trim(),
-            uploadedFile,
+            uploadedFiles,
+            uploadedFile: uploadedFiles[0] || null, // backwards compat
+            fileCount: uploadedFiles.length,
+            totalFileSize: uploadedFiles.reduce((sum, f) => sum + (f.size || 0), 0),
             status: 'pending',
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
@@ -136,13 +140,14 @@ router.post('/submit', authenticateToken, upload.single('estimationFile'), handl
             timestamp: new Date().toISOString(),
             metadata: {
                 projectTitle: projectTitle.trim(),
-                hasFile: !!file
+                hasFile: allFiles.length > 0,
+                fileCount: allFiles.length
             }
         });
 
-        res.status(201).json({ 
-            success: true, 
-            message: 'Estimation request submitted successfully',
+        res.status(201).json({
+            success: true,
+            message: `Estimation request submitted successfully with ${uploadedFiles.length} file(s)`,
             estimationId: estimationRef.id,
             data: {
                 id: estimationRef.id,

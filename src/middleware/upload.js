@@ -44,10 +44,22 @@ export const upload = multer({
         let maxFilesForRoute;
         
         if (isEstimationUpload) {
-            // Estimation: PDF only for accuracy - supports large qty and size
-            allowedMimeTypes = ['application/pdf'];
-            allowedExtensions = ['pdf'];
-            routeDescription = 'PDF files only';
+            // Estimation: Supports construction/estimation file types - large qty and size
+            allowedMimeTypes = [
+                'application/pdf',
+                'application/octet-stream',
+                'application/msword',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'application/vnd.ms-excel',
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'text/csv', 'text/plain',
+                'image/jpeg', 'image/png', 'image/tiff', 'image/bmp',
+                'application/zip', 'application/x-rar-compressed',
+                'application/acad', 'application/x-acad', 'application/x-autocad',
+                'image/vnd.dwg', 'image/x-dwg'
+            ];
+            allowedExtensions = ['pdf', 'dwg', 'dxf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'jpg', 'jpeg', 'png', 'tif', 'tiff', 'bmp', 'txt', 'rtf', 'zip', 'rar'];
+            routeDescription = 'PDF, DWG, DXF, DOC, DOCX, XLS, XLSX, CSV, JPG, PNG, TIF, TXT, ZIP, RAR';
             maxFilesForRoute = 20;
         } else if (isQuoteUpload) {
             // Quotes: Extended file types for proposals
@@ -449,41 +461,32 @@ export const validatePDFFiles = (req, res, next) => {
 // ENHANCED: Strict PDF-only validation for estimation tool
 export const validatePDFFilesOnly = (req, res, next) => {
     const files = req.files;
-    
+    const allowedExtensions = ['pdf', 'dwg', 'dxf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'jpg', 'jpeg', 'png', 'tif', 'tiff', 'bmp', 'txt', 'rtf', 'zip', 'rar'];
+
     if (!files || files.length === 0) {
         return res.status(400).json({
             success: false,
-            error: 'At least one PDF file is required for estimation requests.',
+            error: 'At least one file is required for estimation requests.',
             errorCode: 'NO_FILES_PROVIDED'
         });
     }
-    
-    console.log(`📋 Strict PDF validation for ${files.length} files...`);
-    
+
+    console.log(`📋 Estimation file validation for ${files.length} files...`);
+
     for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        
-        // Check MIME type
-        if (file.mimetype !== 'application/pdf') {
-            console.log(`❌ PDF validation failed: ${file.originalname} - MIME: ${file.mimetype}`);
+
+        // Check extension
+        const ext = file.originalname.toLowerCase().split('.').pop();
+        if (!allowedExtensions.includes(ext)) {
+            console.log(`❌ File type validation failed: ${file.originalname} - ext: .${ext}`);
             return res.status(400).json({
                 success: false,
-                error: `File "${file.originalname}" is not a PDF. Only PDF files are allowed for estimation requests. Found: ${file.mimetype}`,
+                error: `File "${file.originalname}" type .${ext} is not supported. Allowed: PDF, DWG, DXF, DOC, DOCX, XLS, XLSX, CSV, JPG, PNG, TIF, TXT, ZIP, RAR`,
                 errorCode: 'INVALID_FILE_TYPE'
             });
         }
-        
-        // Check extension
-        const ext = file.originalname.toLowerCase().split('.').pop();
-        if (ext !== 'pdf') {
-            console.log(`❌ Extension validation failed: ${file.originalname} - ext: .${ext}`);
-            return res.status(400).json({
-                success: false,
-                error: `File "${file.originalname}" must have .pdf extension. Found: .${ext}`,
-                errorCode: 'INVALID_FILE_EXTENSION'
-            });
-        }
-        
+
         // Check size
         if (file.size > FILE_UPLOAD_CONFIG.maxFileSize) {
             const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
@@ -495,21 +498,21 @@ export const validatePDFFilesOnly = (req, res, next) => {
                 errorCode: 'FILE_TOO_LARGE'
             });
         }
-        
+
         // Check if file has content
         if (file.size === 0) {
             console.log(`❌ Empty file detected: ${file.originalname}`);
             return res.status(400).json({
                 success: false,
-                error: `File "${file.originalname}" is empty. Please upload a valid PDF file.`,
+                error: `File "${file.originalname}" is empty. Please upload a valid file.`,
                 errorCode: 'EMPTY_FILE'
             });
         }
-        
-        console.log(`✅ PDF validated: ${file.originalname} (${(file.size / (1024 * 1024)).toFixed(2)}MB)`);
+
+        console.log(`✅ File validated: ${file.originalname} (${(file.size / (1024 * 1024)).toFixed(2)}MB)`);
     }
-    
-    console.log('✅ All PDF files passed strict validation');
+
+    console.log('✅ All estimation files passed validation');
     next();
 };
 

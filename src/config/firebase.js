@@ -46,8 +46,20 @@ export const storage = getStorage();
 export const FILE_UPLOAD_CONFIG = {
     maxFileSize: 50 * 1024 * 1024, // 50MB per file (supports large PDF drawings/blueprints)
     maxFiles: 20, // Maximum 20 files per upload (bulk estimation support)
-    allowedMimeTypes: ['application/pdf'], // For estimations - strict PDF only
-    allowedExtensions: ['.pdf'], // For estimations - strict PDF only
+    allowedMimeTypes: [
+        'application/pdf',
+        'application/octet-stream',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'text/csv', 'text/plain',
+        'image/jpeg', 'image/png', 'image/tiff', 'image/bmp',
+        'application/zip', 'application/x-rar-compressed',
+        'application/acad', 'application/x-acad', 'application/x-autocad',
+        'image/vnd.dwg', 'image/x-dwg'
+    ],
+    allowedExtensions: ['.pdf', '.dwg', '.dxf', '.doc', '.docx', '.xls', '.xlsx', '.csv', '.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.txt', '.rtf', '.zip', '.rar'],
     storagePath: 'uploads/',
 
     // Additional configs for different upload types
@@ -258,32 +270,28 @@ export function validateFileUpload(files, maxFiles = 10) {
     if (!files || files.length === 0) {
         throw new Error('No files provided');
     }
-    
+
     if (files.length > maxFiles) {
         throw new Error(`Too many files. Maximum ${maxFiles} files allowed, received ${files.length}`);
     }
-    
+
     const maxSize = FILE_UPLOAD_CONFIG.maxFileSize;
-    const allowedTypes = FILE_UPLOAD_CONFIG.allowedMimeTypes;
-    
+    const allowedExtensions = ['pdf', 'dwg', 'dxf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'jpg', 'jpeg', 'png', 'tif', 'tiff', 'bmp', 'txt', 'rtf', 'zip', 'rar'];
+
     for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        
+
         if (file.size > maxSize) {
-            throw new Error(`File "${file.originalname}" size exceeds maximum allowed size of 15MB. File size: ${(file.size / (1024 * 1024)).toFixed(2)}MB`);
+            throw new Error(`File "${file.originalname}" size exceeds maximum allowed size of 50MB. File size: ${(file.size / (1024 * 1024)).toFixed(2)}MB`);
         }
-        
-        if (!allowedTypes.includes(file.mimetype)) {
-            throw new Error(`File "${file.originalname}" type not allowed: ${file.mimetype}. Only PDF files are allowed for estimations.`);
-        }
-        
-        // Additional extension check
+
+        // Validate by extension (browsers may send inconsistent MIME types for DWG, DXF, etc.)
         const ext = file.originalname.toLowerCase().split('.').pop();
-        if (ext !== 'pdf') {
-            throw new Error(`File "${file.originalname}" must have .pdf extension. Found: .${ext}`);
+        if (!allowedExtensions.includes(ext)) {
+            throw new Error(`File "${file.originalname}" type .${ext} is not supported. Allowed: PDF, DWG, DXF, DOC, DOCX, XLS, XLSX, CSV, JPG, PNG, TIF, TXT, ZIP, RAR`);
         }
     }
-    
+
     return true;
 }
 

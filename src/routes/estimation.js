@@ -30,23 +30,31 @@ const upload = multer({
     fieldSize: 1024 * 1024 // 1MB for form fields
   },
   fileFilter: (req, file, cb) => {
-    // Accept application/pdf and application/octet-stream (some browsers send PDFs as octet-stream)
-    const allowedMimes = ['application/pdf', 'application/octet-stream'];
+    // Accept common construction/estimation file types
+    const allowedExtensions = ['pdf', 'dwg', 'dxf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'jpg', 'jpeg', 'png', 'tif', 'tiff', 'bmp', 'txt', 'rtf', 'zip', 'rar'];
+    const allowedMimes = [
+      'application/pdf',
+      'application/octet-stream',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'text/csv', 'text/plain',
+      'image/jpeg', 'image/png', 'image/tiff', 'image/bmp',
+      'application/zip', 'application/x-rar-compressed',
+      'application/acad', 'application/x-acad', 'application/x-autocad',
+      'image/vnd.dwg', 'image/x-dwg'
+    ];
 
-    // Check file extension first - must be .pdf
     const ext = file.originalname.toLowerCase().split('.').pop();
-    if (ext !== 'pdf') {
-      return cb(new Error(`Only PDF files are allowed. File extension: .${ext}`), false);
+    if (!allowedExtensions.includes(ext)) {
+      return cb(new Error(`File type .${ext} is not supported. Allowed: PDF, DWG, DOC, DOCX, XLS, XLSX, JPG, PNG, TIF, CSV, TXT, ZIP`), false);
     }
 
-    // Accept if MIME is pdf OR octet-stream (with pdf extension already confirmed above)
+    // Accept if MIME matches or is octet-stream (browsers sometimes send unknown types as octet-stream)
     if (!allowedMimes.includes(file.mimetype)) {
-      return cb(new Error(`Only PDF files are allowed. Received: ${file.mimetype}`), false);
-    }
-
-    // Force correct MIME type for downstream processing
-    if (file.mimetype === 'application/octet-stream') {
-      file.mimetype = 'application/pdf';
+      // Still allow if extension is valid (some browsers miscategorize MIME types)
+      console.warn(`[UPLOAD] Unusual MIME ${file.mimetype} for .${ext} - allowing based on extension`);
     }
 
     cb(null, true);
@@ -1811,7 +1819,7 @@ function generateFallbackEstimation(q, title, description) {
 // POST /estimation/ai/questions - Generate smart questionnaire based on project info
 router.post('/ai/questions', authenticateToken, async (req, res) => {
     try {
-        const { projectTitle, description, fileCount, fileNames } = req.body;
+        const { projectTitle, description, designStandard, projectType, region, totalArea, fileCount, fileNames } = req.body;
 
         if (!projectTitle || !description) {
             return res.status(400).json({ success: false, message: 'Project title and description are required' });
@@ -1819,7 +1827,7 @@ router.post('/ai/questions', authenticateToken, async (req, res) => {
 
         console.log(`[AI-ESTIMATION] Generating questions for "${projectTitle}" by ${req.user.email}`);
 
-        const questions = await generateSmartQuestions({ projectTitle, description, fileCount, fileNames });
+        const questions = await generateSmartQuestions({ projectTitle, description, designStandard, projectType, region, totalArea, fileCount, fileNames });
 
         res.json({ success: true, data: questions });
     } catch (error) {
@@ -1831,7 +1839,7 @@ router.post('/ai/questions', authenticateToken, async (req, res) => {
 // POST /estimation/ai/generate - Generate full AI estimate from answers
 router.post('/ai/generate', authenticateToken, async (req, res) => {
     try {
-        const { estimationId, projectTitle, description, answers, fileNames } = req.body;
+        const { estimationId, projectTitle, description, designStandard, projectType, region, totalArea, answers, fileNames } = req.body;
 
         if (!projectTitle || !answers) {
             return res.status(400).json({ success: false, message: 'Project info and answers are required' });
@@ -1840,7 +1848,7 @@ router.post('/ai/generate', authenticateToken, async (req, res) => {
         console.log(`[AI-ESTIMATION] Generating estimate for "${projectTitle}" by ${req.user.email}`);
 
         const estimate = await generateAIEstimate(
-            { projectTitle, description },
+            { projectTitle, description, designStandard, projectType, region, totalArea },
             answers,
             fileNames
         );

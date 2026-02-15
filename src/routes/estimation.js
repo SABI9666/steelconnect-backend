@@ -132,7 +132,7 @@ router.get('/', authenticateToken, isAdmin, async (req, res) => {
   }
 });
 
-// Enhanced estimation submission with multiple PDF support and secure upload
+// Estimation submission: upload files + auto-generate AI estimate + save to Firestore
 router.post('/contractor/submit', authenticateToken, isContractor, async (req, res) => {
   try {
     // Parse multipart upload safely (handles multer errors inline)
@@ -140,38 +140,36 @@ router.post('/contractor/submit', authenticateToken, isContractor, async (req, r
       await safeEstimationUpload(req, res);
     } catch (uploadErr) {
       console.error('[CONTRACTOR] Multer error:', uploadErr.message);
-      const isFileType = uploadErr.message.includes('Only PDF') || uploadErr.message.includes('File extension');
       const isSize = uploadErr.code === 'LIMIT_FILE_SIZE';
       const isCount = uploadErr.code === 'LIMIT_FILE_COUNT';
       return res.status(400).json({
         success: false,
         message: isSize ? 'File size too large. Maximum 50MB per file allowed.'
                : isCount ? `Too many files. Maximum ${FILE_UPLOAD_CONFIG.maxFiles} files allowed.`
-               : isFileType ? uploadErr.message
                : `Upload error: ${uploadErr.message}`,
-        errorCode: isSize ? 'FILE_TOO_LARGE' : isCount ? 'TOO_MANY_FILES' : isFileType ? 'INVALID_FILE_TYPE' : 'UPLOAD_ERROR'
+        errorCode: isSize ? 'FILE_TOO_LARGE' : isCount ? 'TOO_MANY_FILES' : 'UPLOAD_ERROR'
       });
     }
 
     console.log('[CONTRACTOR] Estimation submission by:', req.user?.email);
     console.log('[CONTRACTOR] Files received:', req.files?.length || 0);
 
-    const { projectTitle, description, contractorName, contractorEmail } = req.body;
+    const { projectTitle, description, contractorName, contractorEmail, designStandard, projectType, region, totalArea, fileNames } = req.body;
     const files = req.files;
 
     // Validate required fields
-    if (!projectTitle || !description || !contractorName || !contractorEmail) {
+    if (!projectTitle || !description) {
       return res.status(400).json({
         success: false,
-        message: 'All fields are required: projectTitle, description, contractorName, contractorEmail'
+        message: 'Project title and description are required'
       });
     }
 
-    // Validate contractor email matches authenticated user
-    if (contractorEmail !== req.user.email) {
-      return res.status(403).json({
+    // Validate files
+    if (!files || files.length === 0) {
+      return res.status(400).json({
         success: false,
-        message: 'Contractor email must match your authenticated email'
+        message: 'At least one file is required'
       });
     }
 
@@ -184,23 +182,17 @@ router.post('/contractor/submit', authenticateToken, isContractor, async (req, r
         message: validationError.message
       });
     }
-    
-    console.log(`[CONTRACTOR] Processing ${files.length} PDF files for estimation`);
-    console.log('[CONTRACTOR] File details:', files.map(f => ({
-      name: f.originalname,
-      size: `${(f.size / (1024 * 1024)).toFixed(2)}MB`,
-      type: f.mimetype
-    })));
+
+    console.log(`[CONTRACTOR] Processing ${files.length} files for estimation`);
 
     // Upload files to Firebase Storage with contractor metadata for security
     let uploadedFiles = [];
     try {
-      // Add contractor metadata to each upload
       const uploadPromises = files.map(async (file, index) => {
         const timestamp = Date.now();
         const fileName = `${timestamp}_${index}_${file.originalname}`;
         const filePath = `estimation-files/${req.user.userId}/${fileName}`;
-        
+
         const metadata = {
           contractorEmail: req.user.email,
           contractorId: req.user.userId,
@@ -208,12 +200,12 @@ router.post('/contractor/submit', authenticateToken, isContractor, async (req, r
           fileIndex: index,
           uploadBatch: timestamp
         };
-        
+
         return uploadToFirebaseStorage(file, filePath, metadata);
       });
-      
+
       uploadedFiles = await Promise.all(uploadPromises);
-      console.log(`[CONTRACTOR] Successfully uploaded ${uploadedFiles.length} files with security metadata`);
+      console.log(`[CONTRACTOR] Successfully uploaded ${uploadedFiles.length} files`);
     } catch (uploadError) {
       console.error('[CONTRACTOR] File upload failed:', uploadError);
       return res.status(500).json({
@@ -223,12 +215,38 @@ router.post('/contractor/submit', authenticateToken, isContractor, async (req, r
       });
     }
 
-    // Create estimation document with enhanced metadata
+    // Parse fileNames if sent as string
+    let parsedFileNames = fileNames;
+    if (typeof fileNames === 'string') {
+      try { parsedFileNames = JSON.parse(fileNames); } catch (e) { parsedFileNames = files.map(f => f.originalname); }
+    }
+    if (!parsedFileNames) parsedFileNames = files.map(f => f.originalname);
+
+    // Auto-generate AI estimate in the background
+    let aiEstimate = null;
+    try {
+      console.log(`[CONTRACTOR] Auto-generating AI estimate for "${projectTitle}"`);
+      aiEstimate = await generateAIEstimate(
+        { projectTitle, description, designStandard: designStandard || '', projectType: projectType || '', region: region || '', totalArea: totalArea || '' },
+        {}, // No questionnaire answers in single-submit flow
+        parsedFileNames
+      );
+      console.log(`[CONTRACTOR] AI estimate generated successfully`);
+    } catch (aiError) {
+      console.error('[CONTRACTOR] AI estimate generation failed (non-blocking):', aiError.message);
+      // Non-blocking - estimation still saved without AI result
+    }
+
+    // Create estimation document with files + AI result
     const estimationData = {
       projectTitle,
       description,
-      contractorName,
-      contractorEmail,
+      designStandard: designStandard || '',
+      projectType: projectType || '',
+      region: region || '',
+      totalArea: totalArea || '',
+      contractorName: contractorName || req.user.name,
+      contractorEmail: contractorEmail || req.user.email,
       contractorId: req.user.userId,
       uploadedFiles,
       fileCount: uploadedFiles.length,
@@ -240,40 +258,35 @@ router.post('/contractor/submit', authenticateToken, isContractor, async (req, r
         userAgent: req.get('User-Agent'),
         ipAddress: req.ip,
         timestamp: new Date().toISOString(),
-        version: '2.0' // Track API version
+        version: '3.0'
       }
     };
 
+    // Attach AI estimate if generated
+    if (aiEstimate) {
+      estimationData.aiEstimate = aiEstimate;
+      estimationData.aiGeneratedAt = new Date().toISOString();
+      estimationData.estimatedAmount = aiEstimate?.summary?.grandTotal || aiEstimate?.summary?.totalEstimate || 0;
+    }
+
     const estimationRef = await adminDb.collection('estimations').add(estimationData);
-    
-    console.log(`[CONTRACTOR] Estimation created with ID: ${estimationRef.id}`);
-    
-    // Prepare secure response (don't expose file URLs/paths)
-    const responseData = {
-      id: estimationRef.id,
-      projectTitle,
-      description,
-      contractorName,
-      contractorEmail,
-      fileCount: uploadedFiles.length,
-      totalFileSize: estimationData.totalFileSize,
-      totalFileSizeMB: (estimationData.totalFileSize / (1024 * 1024)).toFixed(2),
-      uploadedFiles: uploadedFiles.map(f => ({
-        name: f.originalname || f.name,
-        size: f.size,
-        sizeMB: (f.size / (1024 * 1024)).toFixed(2),
-        type: f.mimetype,
-        uploadedAt: f.uploadedAt
-      })),
-      status: 'pending',
-      createdAt: estimationData.createdAt
-    };
-    
+
+    console.log(`[CONTRACTOR] Estimation created with ID: ${estimationRef.id}, AI estimate: ${aiEstimate ? 'yes' : 'no'}`);
+
     res.status(201).json({
       success: true,
-      message: `Estimation request submitted successfully with ${uploadedFiles.length} PDF files`,
+      message: `Estimation submitted successfully with ${uploadedFiles.length} file(s)${aiEstimate ? ' and AI estimate generated' : ''}`,
       estimationId: estimationRef.id,
-      data: responseData
+      data: {
+        id: estimationRef.id,
+        projectTitle,
+        description,
+        fileCount: uploadedFiles.length,
+        totalFileSizeMB: (estimationData.totalFileSize / (1024 * 1024)).toFixed(2),
+        hasAIEstimate: !!aiEstimate,
+        status: 'pending',
+        createdAt: estimationData.createdAt
+      }
     });
 
   } catch (error) {
@@ -321,13 +334,17 @@ router.get('/contractor/:contractorEmail', authenticateToken, async (req, res) =
         status: data.status || 'pending',
         uploadedFiles: data.uploadedFiles || [],
         resultFile: data.resultFile || null,
+        resultType: data.resultType || null,
         estimatedAmount: data.estimatedAmount || null,
+        aiEstimate: data.status === 'completed' ? (data.aiEstimate || null) : null,
+        aiGeneratedAt: data.aiGeneratedAt || null,
         notes: data.notes || '',
         createdAt: normalizeDate(data.createdAt),
         updatedAt: normalizeDate(data.updatedAt),
         completedAt: normalizeDate(data.completedAt),
         completedBy: data.completedBy,
         // Add convenience flags for frontend
+        hasAIEstimate: !!data.aiEstimate,
         hasResult: !!(data.resultFile && data.resultFile.path),
         resultAvailable: !!(data.resultFile && data.resultFile.path && data.status === 'completed'),
         fileCount: data.uploadedFiles ? data.uploadedFiles.length : 0,

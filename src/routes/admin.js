@@ -1114,6 +1114,10 @@ router.get('/estimations', async (req, res) => {
                 status: data.status || 'pending',
                 uploadedFiles: data.uploadedFiles || [],
                 resultFile: data.resultFile,
+                resultType: data.resultType || null,
+                aiEstimate: data.aiEstimate || null,
+                aiGeneratedAt: normalizeDate(data.aiGeneratedAt),
+                estimatedAmount: data.estimatedAmount || null,
                 createdAt: normalizeDate(data.createdAt),
                 updatedAt: normalizeDate(data.updatedAt),
                 completedAt: normalizeDate(data.completedAt),
@@ -1233,6 +1237,7 @@ router.post('/estimations/:estimationId/result', upload.single('resultFile'), as
         };
         const updateData = {
             resultFile: resultFileData,
+            resultType: 'manual-upload',
             status: 'completed',
             completedAt: new Date().toISOString(),
             completedBy: req.user.email
@@ -1310,6 +1315,63 @@ router.post('/estimations/:estimationId/result', upload.single('resultFile'), as
     } catch (error) {
         console.error("[ADMIN-UPLOAD] Upload Estimation Result Error:", error);
         res.status(500).json({ success: false, message: 'Error uploading result', error: error.message });
+    }
+});
+
+// Send AI-generated report to contractor (marks as completed)
+router.post('/estimations/:estimationId/send-ai-report', async (req, res) => {
+    try {
+        const estDoc = await adminDb.collection('estimations').doc(req.params.estimationId).get();
+        if (!estDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Estimation not found' });
+        }
+
+        const estData = estDoc.data();
+        if (!estData.aiEstimate) {
+            return res.status(400).json({ success: false, message: 'No AI estimate available for this estimation' });
+        }
+
+        // Update estimation status to completed
+        await adminDb.collection('estimations').doc(req.params.estimationId).update({
+            status: 'completed',
+            resultType: 'ai-report',
+            completedAt: new Date().toISOString(),
+            completedBy: req.user.email,
+            aiReportSentAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        });
+
+        console.log(`[ADMIN] AI report approved and sent for estimation ${req.params.estimationId}`);
+
+        // Send email notification to contractor
+        if (estData.contractorEmail) {
+            try {
+                const contractor = { name: estData.contractorName, email: estData.contractorEmail };
+                const estimationInfo = {
+                    _id: req.params.estimationId,
+                    projectName: estData.projectTitle || estData.projectName,
+                    projectTitle: estData.projectTitle || estData.projectName,
+                    createdAt: estData.createdAt
+                };
+                const resultFileData = {
+                    name: 'AI-Generated Estimate Report',
+                    type: 'ai-report'
+                };
+                sendEstimationResultNotification(contractor, estimationInfo, resultFileData)
+                    .then(() => console.log(`[ADMIN] AI report notification sent to ${estData.contractorEmail}`))
+                    .catch(err => console.error(`[ADMIN] Failed to send notification:`, err.message));
+            } catch (emailErr) {
+                console.error('[ADMIN] Email notification error:', emailErr.message);
+            }
+        }
+
+        res.json({
+            success: true,
+            message: 'AI estimate report approved and sent to contractor'
+        });
+    } catch (error) {
+        console.error('[ADMIN] Error sending AI report:', error);
+        res.status(500).json({ success: false, message: 'Error sending AI report', error: error.message });
     }
 });
 

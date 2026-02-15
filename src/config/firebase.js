@@ -129,7 +129,7 @@ export async function uploadToFirebaseStorage(file, path, metadata = {}) {
         }
 
         const fileRef = bucket.file(path);
-        
+
         // Create upload stream with proper metadata for access control
         const stream = fileRef.createWriteStream({
             metadata: {
@@ -143,42 +143,36 @@ export async function uploadToFirebaseStorage(file, path, metadata = {}) {
             },
             resumable: false
         });
-        
+
         return new Promise((resolve, reject) => {
+            // Timeout protection: reject if upload takes longer than 60 seconds
+            const uploadTimeout = setTimeout(() => {
+                stream.destroy();
+                reject(new Error(`Upload timed out for ${file.originalname} after 60 seconds`));
+            }, 60000);
+
             stream.on('error', (error) => {
+                clearTimeout(uploadTimeout);
                 console.error('Firebase Storage upload error:', error);
                 reject(new Error(`Failed to upload file: ${error.message}`));
             });
 
-            stream.on('finish', async () => {
-                try {
-                    console.log(`File uploaded successfully to: ${path}`);
+            stream.on('finish', () => {
+                clearTimeout(uploadTimeout);
+                console.log(`[FIREBASE-UPLOAD] File uploaded successfully to: ${path}`);
 
-                    // Try to generate a signed URL, but don't block the upload if it fails
-                    // (signed URLs are regenerated on demand for downloads anyway)
-                    let url = null;
-                    try {
-                        url = await generateSignedUrl(path, 60); // 1 hour temp URL
-                    } catch (urlError) {
-                        console.warn(`[UPLOAD] Could not generate signed URL for ${path}: ${urlError.message}`);
-                        // Fallback: construct a storage reference path instead
-                        // The actual download URL will be generated on demand when needed
-                        url = `gs://${bucket.name}/${path}`;
-                    }
-
-                    resolve({
-                        path: path,
-                        name: file.originalname,
-                        originalname: file.originalname,
-                        size: file.size,
-                        mimetype: file.mimetype,
-                        uploadedAt: new Date().toISOString(),
-                        url: url
-                    });
-                } catch (error) {
-                    console.error('Error finishing upload:', error);
-                    reject(new Error(`Failed to complete upload: ${error.message}`));
-                }
+                // Skip signed URL generation during upload - URLs are generated
+                // on-demand when files are downloaded. This avoids an extra network
+                // roundtrip (exists check + getSignedUrl) that can hang or timeout.
+                resolve({
+                    path: path,
+                    name: file.originalname,
+                    originalname: file.originalname,
+                    size: file.size,
+                    mimetype: file.mimetype,
+                    uploadedAt: new Date().toISOString(),
+                    url: null // Generated on-demand via secure download endpoints
+                });
             });
 
             stream.end(file.buffer);
@@ -222,33 +216,32 @@ export async function uploadMultipleFilesToFirebase(files, folder, userId = null
     }
 }
 
+// Helper: wrap a promise with a timeout
+function withTimeout(promise, ms, label = 'Operation') {
+    return Promise.race([
+        promise,
+        new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+        )
+    ]);
+}
+
 // NEW: Generate signed URLs for secure file access
 export async function generateSignedUrl(filePath, expirationMinutes = 15, responseDisposition = 'attachment') {
     try {
         const bucket = storage.bucket();
         const file = bucket.file(filePath);
 
-        // Skip exists check when called right after upload (race condition)
-        // The getSignedUrl call itself will fail if the file truly doesn't exist
-        // For download endpoints, the exists check is still useful but we
-        // handle it gracefully
-        try {
-            const [exists] = await file.exists();
-            if (!exists) {
-                throw new Error(`File not found: ${filePath}`);
-            }
-        } catch (existsError) {
-            // If exists check fails, still try to generate the signed URL
-            // (the file may have just been uploaded and isn't visible yet)
-            console.warn(`[SIGNED-URL] Exists check failed for ${filePath}: ${existsError.message}, attempting signed URL anyway`);
-        }
-
-        // Generate signed URL with expiration
-        const [signedUrl] = await file.getSignedUrl({
-            action: 'read',
-            expires: Date.now() + (expirationMinutes * 60 * 1000),
-            responseDisposition: responseDisposition
-        });
+        // Generate signed URL with expiration (with 15s timeout to prevent hanging)
+        const [signedUrl] = await withTimeout(
+            file.getSignedUrl({
+                action: 'read',
+                expires: Date.now() + (expirationMinutes * 60 * 1000),
+                responseDisposition: responseDisposition
+            }),
+            15000,
+            `Signed URL generation for ${filePath}`
+        );
 
         console.log(`Generated signed URL for ${filePath}, expires in ${expirationMinutes} minutes`);
         return signedUrl;

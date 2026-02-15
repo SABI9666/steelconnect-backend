@@ -695,20 +695,28 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
       });
     }
     
-    // Validate file type (PDF only for results)
-    if (file.mimetype !== 'application/pdf') {
+    // Validate file type (PDF and Excel for results)
+    const allowedResultMimes = [
+      'application/pdf',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'text/csv'
+    ];
+    if (!allowedResultMimes.includes(file.mimetype)) {
       return res.status(400).json({
         success: false,
-        message: 'Result file must be a PDF'
+        message: 'Result file must be a PDF, Excel, Word, or CSV file'
       });
     }
-    
+
     // Check file size
     if (file.size > FILE_UPLOAD_CONFIG.maxFileSize) {
       const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
       return res.status(400).json({
         success: false,
-        message: `Result file size (${sizeMB}MB) exceeds 15MB limit`
+        message: `Result file size (${sizeMB}MB) exceeds 50MB limit`
       });
     }
     

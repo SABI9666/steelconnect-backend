@@ -28,6 +28,10 @@ export async function generateSmartQuestions(projectInfo) {
 PROJECT INFO:
 - Title: ${projectInfo.projectTitle}
 - Description: ${projectInfo.description}
+- Design Standard: ${projectInfo.designStandard || 'Not specified'}
+- Project Type: ${projectInfo.projectType || 'Not specified'}
+- Region/Location: ${projectInfo.region || 'Not specified'}
+- Total Area: ${projectInfo.totalArea || 'Not specified'}
 - Files uploaded: ${projectInfo.fileCount} files (${projectInfo.fileNames?.join(', ') || 'N/A'})
 
 Generate 8-12 critical questions grouped into categories. Each question should have options where applicable to make it easy for the user.
@@ -100,6 +104,10 @@ export async function generateAIEstimate(projectInfo, answers, fileNames) {
 PROJECT INFORMATION:
 - Title: ${projectInfo.projectTitle}
 - Description: ${projectInfo.description}
+- Design Standard: ${projectInfo.designStandard || 'Not specified'}
+- Project Type: ${projectInfo.projectType || 'Not specified'}
+- Region/Location: ${projectInfo.region || 'Not specified'}
+- Total Area: ${projectInfo.totalArea || 'Not specified'}
 - Files: ${fileNames?.join(', ') || 'N/A'}
 
 QUESTIONNAIRE ANSWERS:

@@ -178,12 +178,14 @@ router.post('/contractor/submit', authenticateToken, isContractor, async (req, r
       console.error('[CONTRACTOR] Multer error:', uploadErr.message);
       const isSize = uploadErr.code === 'LIMIT_FILE_SIZE';
       const isCount = uploadErr.code === 'LIMIT_FILE_COUNT';
+      const isFileType = uploadErr.message && (uploadErr.message.includes('File type') || uploadErr.message.includes('File extension') || uploadErr.message.includes('not supported'));
       return res.status(400).json({
         success: false,
         message: isSize ? 'File size too large. Maximum 50MB per file allowed.'
                : isCount ? `Too many files. Maximum ${FILE_UPLOAD_CONFIG.maxFiles} files allowed.`
+               : isFileType ? uploadErr.message
                : `Upload error: ${uploadErr.message}`,
-        errorCode: isSize ? 'FILE_TOO_LARGE' : isCount ? 'TOO_MANY_FILES' : 'UPLOAD_ERROR'
+        errorCode: isSize ? 'FILE_TOO_LARGE' : isCount ? 'TOO_MANY_FILES' : isFileType ? 'INVALID_FILE_TYPE' : 'UPLOAD_ERROR'
       });
     }
 
@@ -1418,7 +1420,7 @@ router.post('/ai-estimate', authenticateToken, async (req, res) => {
             await safeEstimationUpload(req, res);
         } catch (uploadErr) {
             console.error('[AI-ESTIMATION] Multer error:', uploadErr.message);
-            const isFileType = uploadErr.message.includes('Only PDF') || uploadErr.message.includes('File extension');
+            const isFileType = uploadErr.message && (uploadErr.message.includes('Only PDF') || uploadErr.message.includes('File type') || uploadErr.message.includes('File extension'));
             const isSize = uploadErr.code === 'LIMIT_FILE_SIZE';
             const isCount = uploadErr.code === 'LIMIT_FILE_COUNT';
             return res.status(400).json({
@@ -1900,11 +1902,26 @@ router.post('/ai/questions', authenticateToken, async (req, res) => {
 router.post('/ai/generate', authenticateToken, async (req, res) => {
     try {
         // Parse multipart upload if files are included
+        let fileUploadWarning = null;
         try {
             await safeEstimationUpload(req, res);
         } catch (uploadErr) {
-            console.warn('[AI-ESTIMATION] File upload skipped or failed:', uploadErr.message);
-            // Continue without files - AI estimation can still proceed
+            console.warn('[AI-ESTIMATION] File upload failed:', uploadErr.message);
+            const isSize = uploadErr.code === 'LIMIT_FILE_SIZE';
+            const isCount = uploadErr.code === 'LIMIT_FILE_COUNT';
+            const isFileType = uploadErr.message && (uploadErr.message.includes('File type') || uploadErr.message.includes('File extension'));
+            // For file type/size/count errors, return error to user so they can fix it
+            if (isSize || isCount || isFileType) {
+                return res.status(400).json({
+                    success: false,
+                    message: isSize ? 'File size too large. Maximum 50MB per file allowed.'
+                           : isCount ? `Too many files. Maximum ${FILE_UPLOAD_CONFIG.maxFiles} files allowed.`
+                           : uploadErr.message,
+                    errorCode: isSize ? 'FILE_TOO_LARGE' : isCount ? 'TOO_MANY_FILES' : 'INVALID_FILE_TYPE'
+                });
+            }
+            // For other errors (network, etc.), continue without files but warn
+            fileUploadWarning = `File upload skipped: ${uploadErr.message}`;
         }
 
         const { estimationId, projectTitle, description, designStandard, projectType, region, totalArea, answers, fileNames } = req.body;
@@ -2017,12 +2034,16 @@ router.post('/ai/generate', authenticateToken, async (req, res) => {
             console.error('[AI-ESTIMATION] Could not save estimation:', saveErr.message);
         }
 
-        res.json({
+        const responseData = {
             success: true,
             data: estimate,
             estimationId: savedEstimationId,
             fileCount: uploadedFiles.length
-        });
+        };
+        if (fileUploadWarning) {
+            responseData.warning = fileUploadWarning;
+        }
+        res.json(responseData);
     } catch (error) {
         console.error('[AI-ESTIMATION] Error generating estimate:', error);
         res.status(500).json({ success: false, message: error.message || 'Failed to generate AI estimate' });

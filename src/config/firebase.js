@@ -31,9 +31,17 @@ if (!admin.apps.length) {
         throw new Error('Firebase credentials not found. Please set either FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 or individual Firebase environment variables.');
     }
 
+    // Validate storage bucket configuration
+    const storageBucket = process.env.FIREBASE_STORAGE_BUCKET;
+    if (!storageBucket) {
+        console.error('⚠️  WARNING: FIREBASE_STORAGE_BUCKET environment variable is not set. File uploads will fail!');
+    } else {
+        console.log(`Firebase Storage bucket: ${storageBucket}`);
+    }
+
     admin.initializeApp({
         credential: credential,
-        storageBucket: process.env.FIREBASE_STORAGE_BUCKET
+        storageBucket: storageBucket
     });
 }
 
@@ -41,6 +49,17 @@ if (!admin.apps.length) {
 export const adminDb = admin.firestore();
 export const adminAuth = admin.auth();
 export const storage = getStorage();
+
+// Validate bucket is accessible at startup
+try {
+    const bucket = storage.bucket();
+    console.log(`Firebase Storage initialized: bucket="${bucket.name}"`);
+    if (!bucket.name) {
+        console.error('⚠️  WARNING: Firebase Storage bucket name is empty. Set FIREBASE_STORAGE_BUCKET env var. File uploads will fail!');
+    }
+} catch (bucketErr) {
+    console.error('⚠️  WARNING: Firebase Storage bucket initialization failed:', bucketErr.message);
+}
 
 // File upload configuration
 export const FILE_UPLOAD_CONFIG = {
@@ -97,9 +116,18 @@ export const FILE_UPLOAD_CONFIG = {
 // UPDATED: Upload single file to Firebase Storage with secure access
 export async function uploadToFirebaseStorage(file, path, metadata = {}) {
     try {
-        console.log(`Uploading file to Firebase Storage: ${path}`);
-        
+        // Validate file object
+        if (!file || !file.buffer) {
+            throw new Error(`Invalid file object - missing buffer for ${file?.originalname || 'unknown'}`);
+        }
+
+        console.log(`[FIREBASE-UPLOAD] Uploading file: ${file.originalname} (${(file.size / 1024).toFixed(1)}KB, ${file.mimetype}) to path: ${path}`);
+
         const bucket = storage.bucket();
+        if (!bucket.name) {
+            throw new Error('Firebase Storage bucket is not configured. Check FIREBASE_STORAGE_BUCKET environment variable.');
+        }
+
         const fileRef = bucket.file(path);
         
         // Create upload stream with proper metadata for access control

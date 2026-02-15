@@ -82,6 +82,42 @@ const normalizeDate = (val) => {
   return String(val);
 };
 
+// Background AI estimate generation - runs after response is sent to the client
+async function generateAIEstimateBackground(estimationId, projectInfo, fileNames) {
+  try {
+    console.log(`[BACKGROUND] Starting AI estimate generation for estimation ${estimationId}`);
+    const aiEstimate = await generateAIEstimate(
+      projectInfo,
+      {}, // No questionnaire answers in single-submit flow
+      fileNames
+    );
+
+    // Update the estimation document with the AI result
+    const updateData = {
+      aiEstimate,
+      aiGeneratedAt: new Date().toISOString(),
+      aiStatus: 'completed',
+      estimatedAmount: aiEstimate?.summary?.grandTotal || aiEstimate?.summary?.totalEstimate || 0,
+      updatedAt: new Date().toISOString()
+    };
+
+    await adminDb.collection('estimations').doc(estimationId).update(updateData);
+    console.log(`[BACKGROUND] AI estimate saved for estimation ${estimationId}`);
+  } catch (error) {
+    console.error(`[BACKGROUND] AI estimate generation failed for ${estimationId}:`, error.message);
+    // Update status so frontend knows AI generation failed
+    try {
+      await adminDb.collection('estimations').doc(estimationId).update({
+        aiStatus: 'failed',
+        aiError: error.message,
+        updatedAt: new Date().toISOString()
+      });
+    } catch (updateErr) {
+      console.error(`[BACKGROUND] Failed to update AI status for ${estimationId}:`, updateErr.message);
+    }
+  }
+}
+
 // Get all estimations (Admin only)
 router.get('/', authenticateToken, isAdmin, async (req, res) => {
   try {
@@ -207,10 +243,17 @@ router.post('/contractor/submit', authenticateToken, isContractor, async (req, r
       uploadedFiles = await Promise.all(uploadPromises);
       console.log(`[CONTRACTOR] Successfully uploaded ${uploadedFiles.length} files`);
     } catch (uploadError) {
-      console.error('[CONTRACTOR] File upload failed:', uploadError);
+      console.error('[CONTRACTOR] File upload to Firebase Storage failed:', uploadError);
+      console.error('[CONTRACTOR] Upload error details:', {
+        name: uploadError.name,
+        message: uploadError.message,
+        code: uploadError.code,
+        filesAttempted: files.length,
+        userId: req.user?.userId
+      });
       return res.status(500).json({
         success: false,
-        message: 'File upload failed',
+        message: `File upload failed: ${uploadError.message}`,
         error: uploadError.message
       });
     }
@@ -222,22 +265,7 @@ router.post('/contractor/submit', authenticateToken, isContractor, async (req, r
     }
     if (!parsedFileNames) parsedFileNames = files.map(f => f.originalname);
 
-    // Auto-generate AI estimate in the background
-    let aiEstimate = null;
-    try {
-      console.log(`[CONTRACTOR] Auto-generating AI estimate for "${projectTitle}"`);
-      aiEstimate = await generateAIEstimate(
-        { projectTitle, description, designStandard: designStandard || '', projectType: projectType || '', region: region || '', totalArea: totalArea || '' },
-        {}, // No questionnaire answers in single-submit flow
-        parsedFileNames
-      );
-      console.log(`[CONTRACTOR] AI estimate generated successfully`);
-    } catch (aiError) {
-      console.error('[CONTRACTOR] AI estimate generation failed (non-blocking):', aiError.message);
-      // Non-blocking - estimation still saved without AI result
-    }
-
-    // Create estimation document with files + AI result
+    // Create estimation document IMMEDIATELY (don't wait for AI generation)
     const estimationData = {
       projectTitle,
       description,
@@ -252,30 +280,24 @@ router.post('/contractor/submit', authenticateToken, isContractor, async (req, r
       fileCount: uploadedFiles.length,
       totalFileSize: uploadedFiles.reduce((sum, file) => sum + (file.size || 0), 0),
       status: 'pending',
+      aiStatus: 'generating', // Track AI generation status separately
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       submissionMetadata: {
         userAgent: req.get('User-Agent'),
         ipAddress: req.ip,
         timestamp: new Date().toISOString(),
-        version: '3.0'
+        version: '3.1'
       }
     };
 
-    // Attach AI estimate if generated
-    if (aiEstimate) {
-      estimationData.aiEstimate = aiEstimate;
-      estimationData.aiGeneratedAt = new Date().toISOString();
-      estimationData.estimatedAmount = aiEstimate?.summary?.grandTotal || aiEstimate?.summary?.totalEstimate || 0;
-    }
-
     const estimationRef = await adminDb.collection('estimations').add(estimationData);
+    console.log(`[CONTRACTOR] Estimation saved with ID: ${estimationRef.id}, starting background AI generation`);
 
-    console.log(`[CONTRACTOR] Estimation created with ID: ${estimationRef.id}, AI estimate: ${aiEstimate ? 'yes' : 'no'}`);
-
+    // Return success IMMEDIATELY - don't wait for AI estimate
     res.status(201).json({
       success: true,
-      message: `Estimation submitted successfully with ${uploadedFiles.length} file(s)${aiEstimate ? ' and AI estimate generated' : ''}`,
+      message: `Estimation submitted successfully with ${uploadedFiles.length} file(s). AI estimate is being generated in the background.`,
       estimationId: estimationRef.id,
       data: {
         id: estimationRef.id,
@@ -283,10 +305,23 @@ router.post('/contractor/submit', authenticateToken, isContractor, async (req, r
         description,
         fileCount: uploadedFiles.length,
         totalFileSizeMB: (estimationData.totalFileSize / (1024 * 1024)).toFixed(2),
-        hasAIEstimate: !!aiEstimate,
+        hasAIEstimate: false,
+        aiStatus: 'generating',
         status: 'pending',
         createdAt: estimationData.createdAt
       }
+    });
+
+    // Fire-and-forget: Generate AI estimate in background AFTER response is sent
+    // This prevents the Claude API call (30-60s) from blocking the upload response
+    generateAIEstimateBackground(estimationRef.id, {
+      projectTitle, description,
+      designStandard: designStandard || '',
+      projectType: projectType || '',
+      region: region || '',
+      totalArea: totalArea || ''
+    }, parsedFileNames).catch(err => {
+      console.error(`[BACKGROUND] Unhandled error in AI generation for ${estimationRef.id}:`, err.message);
     });
 
   } catch (error) {

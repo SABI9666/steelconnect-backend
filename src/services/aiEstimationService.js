@@ -85,13 +85,14 @@ Focus questions on:
 
 Make questions specific to what was described in the project info.`;
 
-        const response = await anthropic.messages.create({
+        const stream = await anthropic.messages.stream({
             model: 'claude-sonnet-4-5-20250929',
             max_tokens: 4000,
             system: SYSTEM_PROMPT,
             messages: [{ role: 'user', content: prompt }]
         });
 
+        const response = await stream.finalMessage();
         const text = response.content[0].text;
         // Parse JSON from response, handling potential markdown wrapping
         const jsonStr = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
@@ -252,13 +253,14 @@ CRITICAL REQUIREMENTS:
 - For each material, provide the EXACT specification grade (ASTM, IS, EN standard as applicable)
 - Estimate total area and dimensions from the project description if not explicitly provided`;
 
-        const response = await anthropic.messages.create({
+        const stream = await anthropic.messages.stream({
             model: 'claude-sonnet-4-5-20250929',
             max_tokens: 32000,
             system: SYSTEM_PROMPT,
             messages: [{ role: 'user', content: prompt }]
         });
 
+        const response = await stream.finalMessage();
         const text = response.content[0].text;
         const jsonStr = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
         return JSON.parse(jsonStr);

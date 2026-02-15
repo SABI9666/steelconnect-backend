@@ -156,8 +156,9 @@ async function extractPdfText(fileBuffers) {
         if (!/\.pdf$/i.test(file.originalname)) continue;
 
         try {
-            // Dynamic import since pdf-parse may not be installed
-            const pdfParse = (await import('pdf-parse')).default;
+            // Import pdf-parse/lib directly to avoid the ESM bug where
+            // pdf-parse/index.js tries to read a test file (module.parent is undefined in ESM)
+            const pdfParse = (await import('pdf-parse/lib/pdf-parse.js')).default;
             const result = await pdfParse(file.buffer, { max: MAX_PDF_PAGES });
 
             if (result.text && result.text.trim().length > 50) {
@@ -311,14 +312,15 @@ export async function generateAIEstimate(projectInfo, answers, fileNames, fileBu
         // STEP 4: Add the main estimation prompt
         messageContent.push({ type: 'text', text: textPrompt });
 
-        // Call Claude with multimodal content
-        const response = await anthropic.messages.create({
+        // Call Claude with streaming (required for large vision payloads that take >10 min)
+        const stream = await anthropic.messages.stream({
             model: 'claude-sonnet-4-5-20250929',
             max_tokens: 32000,
             system: SYSTEM_PROMPT,
             messages: [{ role: 'user', content: messageContent }]
         });
 
+        const response = await stream.finalMessage();
         const text = response.content[0].text;
         const jsonStr = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
         const result = JSON.parse(jsonStr);

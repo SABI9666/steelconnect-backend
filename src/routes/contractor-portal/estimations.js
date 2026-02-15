@@ -2,6 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import { adminDb, storage, uploadToFirebaseStorage, FILE_UPLOAD_CONFIG } from '../../config/firebase.js';
 import { authenticateToken } from '../../middleware/authMiddleware.js';
+import { generateAIEstimate } from '../../services/aiEstimationService.js';
 
 const router = express.Router();
 
@@ -115,6 +116,7 @@ router.post('/submit', authenticateToken, upload.array('files', 20), handleMulte
         }
 
         // Save estimation request to Firestore
+        const fileNames = allFiles.map(f => f.originalname);
         const estimationData = {
             contractorId: userId,
             contractorEmail: req.user.email,
@@ -126,6 +128,7 @@ router.post('/submit', authenticateToken, upload.array('files', 20), handleMulte
             fileCount: uploadedFiles.length,
             totalFileSize: uploadedFiles.reduce((sum, f) => sum + (f.size || 0), 0),
             status: 'pending',
+            aiStatus: 'generating',
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
         };
@@ -147,13 +150,44 @@ router.post('/submit', authenticateToken, upload.array('files', 20), handleMulte
 
         res.status(201).json({
             success: true,
-            message: `Estimation request submitted successfully with ${uploadedFiles.length} file(s)`,
+            message: `Estimation request submitted successfully with ${uploadedFiles.length} file(s). AI estimate is being generated.`,
             estimationId: estimationRef.id,
             data: {
                 id: estimationRef.id,
                 ...estimationData
             }
         });
+
+        // Fire-and-forget: Generate AI estimate in background AFTER response is sent
+        (async () => {
+            try {
+                console.log(`[CONTRACTOR-PORTAL] Starting background AI generation for ${estimationRef.id}`);
+                const aiEstimate = await generateAIEstimate(
+                    { projectTitle: projectTitle.trim(), description: description.trim() },
+                    {},
+                    fileNames
+                );
+                await adminDb.collection('estimations').doc(estimationRef.id).update({
+                    aiEstimate,
+                    aiGeneratedAt: new Date().toISOString(),
+                    aiStatus: 'completed',
+                    estimatedAmount: aiEstimate?.summary?.grandTotal || aiEstimate?.summary?.totalEstimate || 0,
+                    updatedAt: new Date().toISOString()
+                });
+                console.log(`[CONTRACTOR-PORTAL] AI estimate saved for ${estimationRef.id}`);
+            } catch (aiError) {
+                console.error(`[CONTRACTOR-PORTAL] AI generation failed for ${estimationRef.id}:`, aiError.message);
+                try {
+                    await adminDb.collection('estimations').doc(estimationRef.id).update({
+                        aiStatus: 'failed',
+                        aiError: aiError.message,
+                        updatedAt: new Date().toISOString()
+                    });
+                } catch (updateErr) {
+                    console.error(`[CONTRACTOR-PORTAL] Failed to update AI status:`, updateErr.message);
+                }
+            }
+        })().catch(err => console.error(`[CONTRACTOR-PORTAL] Unhandled AI error:`, err.message));
 
     } catch (error) {
         console.error('Error submitting estimation request:', error);

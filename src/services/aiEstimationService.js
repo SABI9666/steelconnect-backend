@@ -10,14 +10,18 @@ const SYSTEM_PROMPT = `You are the world's most experienced and precise construc
 CRITICAL RULES:
 1. Always provide costs in the user's specified currency and region
 2. Use current market rates for the specified region
-3. Break down EVERY trade with line items, quantities, unit costs, and totals
-4. Include labor, material, equipment, and overhead for each trade
-5. Apply regional cost indices and market adjustments
-6. Include contingency, escalation, overhead & profit
-7. Provide both detailed and summary views
-8. Flag assumptions and exclusions clearly
-9. Use industry-standard CSI MasterFormat divisions where applicable
-10. All numbers must be realistic and defensible
+3. Break down EVERY trade with detailed line items including EXACT material quantities, specifications, and unit costs
+4. For EACH line item, provide: material name, specification/grade, quantity, unit of measure, material cost, labor cost, equipment cost
+5. Include labor, material, equipment, and overhead for each trade
+6. Apply regional cost indices and market adjustments
+7. Include contingency, escalation, overhead & profit
+8. Provide both detailed and summary views
+9. Flag assumptions and exclusions clearly
+10. Use industry-standard CSI MasterFormat divisions where applicable
+11. All numbers must be realistic and defensible
+12. When file names suggest DWG/CAD drawings, infer structural details (steel sections, member sizes, spans, connections) from the project description and standard engineering practice for that building type
+13. Provide a comprehensive MATERIAL SCHEDULE for each trade showing every material, its specification, quantity, and unit
+14. Estimate total project area, number of floors, and structural dimensions from the project description if not explicitly provided
 
 You must respond ONLY in valid JSON format. No markdown, no explanation outside JSON.`;
 
@@ -31,8 +35,9 @@ PROJECT INFO:
 - Design Standard: ${projectInfo.designStandard || 'Not specified'}
 - Project Type: ${projectInfo.projectType || 'Not specified'}
 - Region/Location: ${projectInfo.region || 'Not specified'}
-- Total Area: ${projectInfo.totalArea || 'Not specified'}
 - Files uploaded: ${projectInfo.fileCount} files (${projectInfo.fileNames?.join(', ') || 'N/A'})
+
+NOTE: Analyze the uploaded file names carefully. If DWG/CAD files are present, the user has construction drawings - ask questions about structural details, member sizes, connection types, and specifications that would be found in those drawings. Always ask about total project area/dimensions since this is critical for estimation.
 
 Generate 8-12 critical questions grouped into categories. Each question should have options where applicable to make it easy for the user.
 
@@ -99,7 +104,16 @@ Make questions specific to what was described in the project info.`;
 
 export async function generateAIEstimate(projectInfo, answers, fileNames) {
     try {
-        const prompt = `Generate a COMPREHENSIVE, WORLD-CLASS construction cost estimate based on the following project information and questionnaire answers.
+        // Detect if DWG/CAD files are present for enhanced structural analysis
+        const hasDwgFiles = fileNames?.some(f => /\.(dwg|dxf|rvt)$/i.test(f)) || false;
+        const hasPdfDrawings = fileNames?.some(f => /\.(pdf)$/i.test(f)) || false;
+        const fileAnalysisNote = hasDwgFiles
+            ? `\nIMPORTANT - DWG/CAD FILES DETECTED: The user has uploaded structural/architectural drawings (${fileNames.filter(f => /\.(dwg|dxf|rvt)$/i.test(f)).join(', ')}). Based on the project description, infer the structural system details (member sizes, steel sections, connection types, spans, bay sizes, foundation types) that would typically be shown in these drawings for this type of project. Provide a COMPREHENSIVE material takeoff as if you had performed a full quantity survey from the drawings.`
+            : hasPdfDrawings
+            ? `\nIMPORTANT - PDF DRAWINGS DETECTED: The user has uploaded PDF drawings/blueprints (${fileNames.filter(f => /\.pdf$/i.test(f)).join(', ')}). Based on the project description and file names, infer structural and architectural details. Provide detailed material quantities as if extracted from the drawings.`
+            : '';
+
+        const prompt = `Generate a COMPREHENSIVE, WORLD-CLASS construction cost estimate with FULL MATERIAL QUANTITIES AND SPECIFICATIONS for each trade, based on the following project information and questionnaire answers.
 
 PROJECT INFORMATION:
 - Title: ${projectInfo.projectTitle}
@@ -107,13 +121,13 @@ PROJECT INFORMATION:
 - Design Standard: ${projectInfo.designStandard || 'Not specified'}
 - Project Type: ${projectInfo.projectType || 'Not specified'}
 - Region/Location: ${projectInfo.region || 'Not specified'}
-- Total Area: ${projectInfo.totalArea || 'Not specified'}
 - Files: ${fileNames?.join(', ') || 'N/A'}
+${fileAnalysisNote}
 
 QUESTIONNAIRE ANSWERS:
 ${JSON.stringify(answers, null, 2)}
 
-Produce a COMPLETE detailed cost estimate. Respond in this exact JSON format:
+Produce a COMPLETE detailed cost estimate with FULL MATERIAL SCHEDULES. Respond in this exact JSON format:
 
 {
     "summary": {
@@ -122,7 +136,9 @@ Produce a COMPLETE detailed cost estimate. Respond in this exact JSON format:
         "location": "string",
         "currency": "string (e.g., USD, INR, AED, GBP)",
         "currencySymbol": "string (e.g., $, ₹, د.إ, £)",
-        "totalArea": "string",
+        "totalArea": "string (estimated from project info)",
+        "numberOfFloors": "string",
+        "structuralSystem": "string (e.g., Steel Frame, RCC, Pre-Engineered, etc.)",
         "estimateDate": "string (today's date)",
         "confidenceLevel": "string (Low/Medium/High)",
         "estimateClass": "string (Class 1-5 per AACE)",
@@ -137,20 +153,57 @@ Produce a COMPLETE detailed cost estimate. Respond in this exact JSON format:
             "tradeIcon": "string (fa icon class)",
             "subtotal": number,
             "percentOfTotal": number,
+            "materialSchedule": [
+                {
+                    "material": "string (e.g., W12x26 Steel Beam, #5 Rebar Grade 60, 4000 PSI Concrete)",
+                    "specification": "string (ASTM A992, Grade 60, etc.)",
+                    "quantity": number,
+                    "unit": "string (tons, cy, lf, sf, ea, etc.)",
+                    "unitRate": number,
+                    "totalCost": number
+                }
+            ],
             "lineItems": [
                 {
-                    "description": "string",
+                    "description": "string (detailed work item description)",
                     "quantity": number,
                     "unit": "string (tons, cy, sf, lf, ea, etc.)",
                     "materialCost": number,
                     "laborCost": number,
                     "equipmentCost": number,
                     "unitTotal": number,
-                    "lineTotal": number
+                    "lineTotal": number,
+                    "materialDetails": "string (specific material specs used for this line item)"
                 }
             ]
         }
     ],
+    "materialSummary": {
+        "totalMaterialCost": number,
+        "totalLaborCost": number,
+        "totalEquipmentCost": number,
+        "keyMaterials": [
+            {
+                "material": "string",
+                "specification": "string",
+                "totalQuantity": number,
+                "unit": "string",
+                "estimatedCost": number,
+                "supplier": "string (recommended supplier type)"
+            }
+        ]
+    },
+    "structuralAnalysis": {
+        "structuralSystem": "string (detailed structural system description)",
+        "foundationType": "string",
+        "primaryMembers": "string (beam/column sizes if applicable)",
+        "secondaryMembers": "string (purlins, girts, bracing if applicable)",
+        "connectionTypes": "string (bolted, welded, moment, pinned)",
+        "steelTonnage": "string (total estimated steel weight if applicable)",
+        "concreteVolume": "string (total estimated concrete volume)",
+        "rebarTonnage": "string (total estimated rebar weight)",
+        "drawingNotes": "string (observations and inferences from the provided file names and project description)"
+    },
     "costBreakdown": {
         "directCosts": number,
         "generalConditions": number,
@@ -169,7 +222,9 @@ Produce a COMPLETE detailed cost estimate. Respond in this exact JSON format:
         {
             "tradeName": "string",
             "amount": number,
-            "percentage": number
+            "percentage": number,
+            "materialCost": number,
+            "laborCost": number
         }
     ],
     "assumptions": ["string array of key assumptions made"],
@@ -178,21 +233,28 @@ Produce a COMPLETE detailed cost estimate. Respond in this exact JSON format:
     "marketInsights": {
         "regionalFactor": "string (description of regional pricing adjustments)",
         "materialTrends": "string (current material market trends)",
-        "laborMarket": "string (current labor availability/rates)"
+        "laborMarket": "string (current labor availability/rates)",
+        "recommendedProcurement": "string (procurement strategy recommendations)"
     }
 }
 
-IMPORTANT:
+CRITICAL REQUIREMENTS:
 - Include ALL relevant trades for this project type (minimum 8-15 trades)
-- Every trade must have detailed line items
+- Every trade MUST have a "materialSchedule" listing EVERY material with exact specifications, quantities, and unit rates
+- Every trade MUST have detailed "lineItems" with material, labor, and equipment costs broken out
+- Include a "structuralAnalysis" section with inferred structural details based on the project type and description
+- Include a "materialSummary" with aggregated material quantities across all trades
+- If DWG/CAD files are mentioned, provide detailed structural member sizes (e.g., W12x26, HSS 6x6x1/4, #5@12" rebar) typical for the project type
 - Use current ${new Date().getFullYear()} market rates for the specified region
 - All numbers must be realistic and consistent
 - Grand total must equal sum of all trades + markups
-- Include: Site Work, Concrete/Foundations, Structural (Steel/Rebar), Exterior Envelope, Roofing, Interior Finishes, MEP (Mechanical/Electrical/Plumbing), Fire Protection, Elevators (if applicable), Specialties, General Conditions, etc.`;
+- Include: Site Work, Concrete/Foundations, Structural (Steel/Rebar), Exterior Envelope, Roofing, Interior Finishes, MEP (Mechanical/Electrical/Plumbing), Fire Protection, Elevators (if applicable), Specialties, General Conditions, etc.
+- For each material, provide the EXACT specification grade (ASTM, IS, EN standard as applicable)
+- Estimate total area and dimensions from the project description if not explicitly provided`;
 
         const response = await anthropic.messages.create({
             model: 'claude-sonnet-4-5-20250929',
-            max_tokens: 16000,
+            max_tokens: 32000,
             system: SYSTEM_PROMPT,
             messages: [{ role: 'user', content: prompt }]
         });

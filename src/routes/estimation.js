@@ -192,7 +192,7 @@ router.post('/contractor/submit', authenticateToken, isContractor, async (req, r
     console.log('[CONTRACTOR] Estimation submission by:', req.user?.email);
     console.log('[CONTRACTOR] Files received:', req.files?.length || 0);
 
-    const { projectTitle, description, contractorName, contractorEmail, designStandard, projectType, region, totalArea, fileNames } = req.body;
+    const { projectTitle, description, contractorName, contractorEmail, designStandard, projectType, region, fileNames } = req.body;
     const files = req.files;
 
     // Validate required fields
@@ -274,7 +274,6 @@ router.post('/contractor/submit', authenticateToken, isContractor, async (req, r
       designStandard: designStandard || '',
       projectType: projectType || '',
       region: region || '',
-      totalArea: totalArea || '',
       contractorName: contractorName || req.user.name,
       contractorEmail: contractorEmail || req.user.email,
       contractorId: req.user.userId,
@@ -320,8 +319,7 @@ router.post('/contractor/submit', authenticateToken, isContractor, async (req, r
       projectTitle, description,
       designStandard: designStandard || '',
       projectType: projectType || '',
-      region: region || '',
-      totalArea: totalArea || ''
+      region: region || ''
     }, parsedFileNames).catch(err => {
       console.error(`[BACKGROUND] Unhandled error in AI generation for ${estimationRef.id}:`, err.message);
     });

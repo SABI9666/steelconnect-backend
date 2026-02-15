@@ -17,6 +17,7 @@ import {
   FILE_UPLOAD_CONFIG 
 } from '../config/firebase.js';
 import { sendEstimationResultNotification } from '../utils/emailService.js';
+import { generateSmartQuestions, generateAIEstimate } from '../services/aiEstimationService.js';
 
 const router = express.Router();
 
@@ -1335,6 +1336,576 @@ router.use((error, req, res, next) => {
   
   // Pass other errors to the next error handler
   next(error);
+});
+
+// ==========================================
+// AI AUTOMATED ESTIMATION ENGINE
+// ==========================================
+
+// POST /estimation/ai-estimate - Generate AI-powered cost estimation
+router.post('/ai-estimate', authenticateToken, async (req, res) => {
+    try {
+        // Parse multipart upload safely (handles multer errors inline)
+        try {
+            await safeEstimationUpload(req, res);
+        } catch (uploadErr) {
+            console.error('[AI-ESTIMATION] Multer error:', uploadErr.message);
+            const isFileType = uploadErr.message.includes('Only PDF') || uploadErr.message.includes('File extension');
+            const isSize = uploadErr.code === 'LIMIT_FILE_SIZE';
+            const isCount = uploadErr.code === 'LIMIT_FILE_COUNT';
+            return res.status(400).json({
+                success: false,
+                message: isSize ? 'File size too large. Maximum 50MB per file allowed.'
+                       : isCount ? `Too many files. Maximum ${FILE_UPLOAD_CONFIG.maxFiles} files allowed.`
+                       : isFileType ? uploadErr.message
+                       : `Upload error: ${uploadErr.message}`,
+                errorCode: isSize ? 'FILE_TOO_LARGE' : isCount ? 'TOO_MANY_FILES' : isFileType ? 'INVALID_FILE_TYPE' : 'UPLOAD_ERROR'
+            });
+        }
+
+        const {
+            projectTitle, description, contractorName, contractorEmail,
+            // Questionnaire fields
+            projectType, buildingType, totalArea, numberOfFloors,
+            region, city, state, country,
+            structuralSystem, foundationType,
+            materialPreferences, qualityGrade,
+            siteCondition, soilType, seismicZone,
+            timeline, urgency,
+            specialRequirements, existingStructure,
+            mepRequirements, finishLevel
+        } = req.body;
+
+        if (!projectTitle || !description || !projectType || !totalArea || !region) {
+            return res.status(400).json({
+                success: false,
+                message: 'Project title, description, project type, total area, and region are required'
+            });
+        }
+
+        // Upload files to Firebase Storage (reuse existing upload helper)
+        let uploadedFiles = [];
+        const files = req.files;
+        if (files && files.length > 0) {
+            try {
+                const uploadPromises = files.map(async (file, index) => {
+                    const timestamp = Date.now();
+                    const fileName = `${timestamp}_${index}_${file.originalname}`;
+                    const filePath = `estimation-files/${req.user.userId}/${fileName}`;
+
+                    const metadata = {
+                        contractorEmail: req.user.email,
+                        contractorId: req.user.userId,
+                        uploadedBy: req.user.userId,
+                        fileIndex: index,
+                        uploadBatch: timestamp,
+                        estimationType: 'ai-automated'
+                    };
+
+                    return uploadToFirebaseStorage(file, filePath, metadata);
+                });
+
+                uploadedFiles = await Promise.all(uploadPromises);
+                console.log(`[AI-ESTIMATION] Successfully uploaded ${uploadedFiles.length} files`);
+            } catch (uploadError) {
+                console.error('[AI-ESTIMATION] File upload failed:', uploadError);
+                // Continue without files - AI estimation can still proceed
+            }
+        }
+
+        // Build questionnaire data object
+        const questionnaire = {
+            projectType: projectType || 'general',
+            buildingType: buildingType || '',
+            totalArea: parseFloat(totalArea) || 0,
+            numberOfFloors: parseInt(numberOfFloors) || 1,
+            region: region || '',
+            city: city || '',
+            state: state || '',
+            country: country || 'USA',
+            structuralSystem: structuralSystem || '',
+            foundationType: foundationType || '',
+            materialPreferences: materialPreferences || '',
+            qualityGrade: qualityGrade || 'standard',
+            siteCondition: siteCondition || 'normal',
+            soilType: soilType || '',
+            seismicZone: seismicZone || '',
+            timeline: timeline || '',
+            urgency: urgency || 'normal',
+            specialRequirements: specialRequirements || '',
+            existingStructure: existingStructure || 'no',
+            mepRequirements: mepRequirements || '',
+            finishLevel: finishLevel || 'standard'
+        };
+
+        // Generate AI estimation using Claude API
+        let aiResult = null;
+        const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
+
+        if (anthropicApiKey) {
+            try {
+                const estimationPrompt = buildEstimationPrompt(questionnaire, projectTitle, description);
+
+                const response = await fetch('https://api.anthropic.com/v1/messages', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-key': anthropicApiKey,
+                        'anthropic-version': '2023-06-01'
+                    },
+                    body: JSON.stringify({
+                        model: 'claude-sonnet-4-5-20250929',
+                        max_tokens: 8000,
+                        messages: [{
+                            role: 'user',
+                            content: estimationPrompt
+                        }]
+                    })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    const aiText = data.content?.[0]?.text || '';
+                    aiResult = parseAIEstimationResponse(aiText);
+                } else {
+                    console.error('[AI-ESTIMATION] Claude API error:', response.status, await response.text());
+                }
+            } catch (aiError) {
+                console.error('[AI-ESTIMATION] AI processing error:', aiError);
+            }
+        }
+
+        // Fallback: generate estimation using built-in calculation engine
+        if (!aiResult) {
+            aiResult = generateFallbackEstimation(questionnaire, projectTitle, description);
+        }
+
+        // Store in Firestore
+        const estimationDoc = {
+            projectTitle,
+            description,
+            contractorName: contractorName || req.user.name,
+            contractorEmail: contractorEmail || req.user.email,
+            contractorId: req.user.userId,
+            uploadedFiles,
+            fileCount: uploadedFiles.length,
+            totalFileSize: uploadedFiles.reduce((sum, f) => sum + (f.size || 0), 0),
+            questionnaire,
+            aiResult,
+            status: 'completed',
+            estimationType: 'ai-automated',
+            estimatedAmount: aiResult?.summary?.totalEstimate || 0,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            completedBy: 'AI Engine',
+            submissionMetadata: {
+                userAgent: req.get('User-Agent') || 'Unknown',
+                ipAddress: req.ip || req.connection?.remoteAddress,
+                timestamp: new Date().toISOString(),
+                version: '3.0-ai'
+            }
+        };
+
+        const docRef = await adminDb.collection('estimations').add(estimationDoc);
+
+        console.log(`[AI-ESTIMATION] Generated for "${projectTitle}" by ${req.user.email} (ID: ${docRef.id})`);
+
+        res.status(201).json({
+            success: true,
+            message: 'AI estimation generated successfully',
+            data: {
+                id: docRef.id,
+                ...estimationDoc
+            }
+        });
+
+    } catch (error) {
+        console.error('[AI-ESTIMATION] Error:', error);
+        res.status(500).json({ success: false, message: 'Error generating AI estimation' });
+    }
+});
+
+// Build the prompt for Claude API
+function buildEstimationPrompt(q, title, description) {
+    return `You are a world-class construction cost estimator with 30+ years of experience across all trades including structural steel, rebar, concrete, MEP, finishes, sitework, and general construction. Generate a comprehensive, professional cost estimation report.
+
+PROJECT DETAILS:
+- Title: ${title}
+- Description: ${description}
+- Project Type: ${q.projectType}
+- Building Type: ${q.buildingType}
+- Total Area: ${q.totalArea} sq ft
+- Number of Floors: ${q.numberOfFloors}
+- Structural System: ${q.structuralSystem}
+- Foundation Type: ${q.foundationType}
+
+LOCATION & SITE:
+- Region: ${q.region}
+- City: ${q.city}, State: ${q.state}, Country: ${q.country}
+- Site Condition: ${q.siteCondition}
+- Soil Type: ${q.soilType}
+- Seismic Zone: ${q.seismicZone}
+
+SPECIFICATIONS:
+- Material Preferences: ${q.materialPreferences}
+- Quality Grade: ${q.qualityGrade}
+- MEP Requirements: ${q.mepRequirements}
+- Finish Level: ${q.finishLevel}
+- Existing Structure: ${q.existingStructure}
+- Special Requirements: ${q.specialRequirements}
+- Timeline: ${q.timeline}
+- Urgency: ${q.urgency}
+
+Generate the response as a valid JSON object (no markdown, no code blocks, just pure JSON) with this exact structure:
+{
+  "summary": {
+    "totalEstimate": <number - total cost in USD>,
+    "costPerSqFt": <number>,
+    "contingency": <number - contingency amount>,
+    "estimateRange": { "low": <number>, "high": <number> },
+    "confidenceLevel": "<string: High/Medium/Low>",
+    "generatedAt": "<ISO date string>"
+  },
+  "trades": [
+    {
+      "name": "<trade name>",
+      "category": "<category>",
+      "description": "<what this covers>",
+      "materialCost": <number>,
+      "laborCost": <number>,
+      "equipmentCost": <number>,
+      "subtotal": <number>,
+      "unit": "<per sq ft / per ton / lump sum etc>",
+      "quantity": <number>,
+      "unitRate": <number>,
+      "notes": "<any notes>"
+    }
+  ],
+  "materials": [
+    {
+      "name": "<material name>",
+      "specification": "<spec>",
+      "quantity": <number>,
+      "unit": "<unit>",
+      "unitPrice": <number>,
+      "totalCost": <number>,
+      "supplier": "<suggested supplier type>"
+    }
+  ],
+  "laborBreakdown": [
+    {
+      "trade": "<trade>",
+      "hours": <number>,
+      "rate": <number>,
+      "totalCost": <number>,
+      "crew": "<crew description>"
+    }
+  ],
+  "timeline": {
+    "totalDuration": "<e.g., 6-8 months>",
+    "phases": [
+      {
+        "name": "<phase name>",
+        "duration": "<duration>",
+        "cost": <number>,
+        "description": "<what happens>"
+      }
+    ]
+  },
+  "regionalFactors": {
+    "laborIndex": <number - multiplier>,
+    "materialIndex": <number - multiplier>,
+    "region": "<region name>",
+    "adjustments": "<explanation of regional adjustments>"
+  },
+  "risks": [
+    {
+      "risk": "<risk description>",
+      "impact": "<High/Medium/Low>",
+      "mitigation": "<mitigation strategy>",
+      "costImpact": <number>
+    }
+  ],
+  "recommendations": ["<recommendation 1>", "<recommendation 2>"],
+  "assumptions": ["<assumption 1>", "<assumption 2>"],
+  "exclusions": ["<exclusion 1>", "<exclusion 2>"]
+}
+
+Include ALL relevant construction trades for this project type. Use realistic ${q.region} region pricing. Be detailed and professional. Include at minimum these trade categories where applicable:
+- General Conditions & Requirements
+- Sitework & Earthwork
+- Concrete & Foundations
+- Structural Steel / Rebar
+- Masonry
+- Metals & Miscellaneous Steel
+- Carpentry & Wood Framing
+- Thermal & Moisture Protection (Roofing, Insulation, Waterproofing)
+- Doors, Windows & Glass
+- Finishes (Drywall, Painting, Flooring, Ceiling)
+- Mechanical (HVAC, Plumbing, Fire Protection)
+- Electrical (Power, Lighting, Low Voltage)
+- Equipment & Specialties
+- Exterior Improvements & Landscaping
+
+Remember: Output ONLY valid JSON, nothing else.`;
+}
+
+// Parse AI response - try JSON first, then extract from text
+function parseAIEstimationResponse(text) {
+    try {
+        // Try direct JSON parse
+        const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+        return JSON.parse(cleaned);
+    } catch (e) {
+        console.error('[AI-ESTIMATION] Failed to parse AI response as JSON, using fallback');
+        return null;
+    }
+}
+
+// Fallback estimation engine when Claude API is unavailable
+function generateFallbackEstimation(q, title, description) {
+    const area = q.totalArea || 1000;
+    const floors = q.numberOfFloors || 1;
+
+    // Regional cost multipliers
+    const regionMultipliers = {
+        'northeast': 1.25, 'midwest': 0.95, 'south': 0.90, 'west': 1.15,
+        'northwest': 1.10, 'southeast': 0.92, 'southwest': 0.95,
+        'usa': 1.0, 'canada': 1.08, 'uk': 1.20, 'australia': 1.15,
+        'india': 0.25, 'uae': 0.85, 'europe': 1.18
+    };
+
+    const qualityMultipliers = {
+        'economy': 0.75, 'standard': 1.0, 'premium': 1.35, 'luxury': 1.75
+    };
+
+    const projectTypeRates = {
+        'commercial': 185, 'residential': 155, 'industrial': 145, 'institutional': 195,
+        'healthcare': 350, 'retail': 165, 'warehouse': 95, 'mixed-use': 175,
+        'renovation': 130, 'infrastructure': 200, 'general': 160
+    };
+
+    const regionKey = (q.region || 'usa').toLowerCase().replace(/[^a-z]/g, '');
+    const regionMult = regionMultipliers[regionKey] || 1.0;
+    const qualityMult = qualityMultipliers[q.qualityGrade] || 1.0;
+    const baseRate = projectTypeRates[q.projectType] || 160;
+    const costPerSqFt = baseRate * regionMult * qualityMult;
+    const totalArea = area * floors;
+
+    // Trade breakdown percentages
+    const tradePercents = {
+        'General Conditions': 0.08,
+        'Sitework & Earthwork': 0.06,
+        'Concrete & Foundations': 0.12,
+        'Structural Steel': 0.14,
+        'Masonry': 0.04,
+        'Carpentry & Framing': 0.06,
+        'Roofing & Waterproofing': 0.05,
+        'Doors, Windows & Glass': 0.05,
+        'Finishes': 0.10,
+        'Mechanical (HVAC)': 0.10,
+        'Plumbing': 0.06,
+        'Electrical': 0.09,
+        'Fire Protection': 0.03,
+        'Equipment & Specialties': 0.02
+    };
+
+    const baseCost = costPerSqFt * totalArea;
+    const contingency = baseCost * 0.10;
+    const totalEstimate = baseCost + contingency;
+
+    const trades = Object.entries(tradePercents).map(([name, pct]) => {
+        const subtotal = Math.round(baseCost * pct);
+        return {
+            name,
+            category: name,
+            description: `${name} for ${q.projectType} project`,
+            materialCost: Math.round(subtotal * 0.55),
+            laborCost: Math.round(subtotal * 0.35),
+            equipmentCost: Math.round(subtotal * 0.10),
+            subtotal,
+            unit: 'per sq ft',
+            quantity: totalArea,
+            unitRate: Math.round((subtotal / totalArea) * 100) / 100,
+            notes: ''
+        };
+    });
+
+    const materials = [
+        { name: 'Structural Steel', specification: 'ASTM A992 Grade 50', quantity: Math.round(totalArea * 0.008), unit: 'tons', unitPrice: 3200 * regionMult, totalCost: 0, supplier: 'Steel Mill / Distributor' },
+        { name: 'Rebar', specification: 'Grade 60 #4-#11', quantity: Math.round(totalArea * 0.005), unit: 'tons', unitPrice: 1800 * regionMult, totalCost: 0, supplier: 'Rebar Supplier' },
+        { name: 'Ready-Mix Concrete', specification: '4000 PSI', quantity: Math.round(totalArea * 0.15), unit: 'cubic yards', unitPrice: 165 * regionMult, totalCost: 0, supplier: 'Local Batch Plant' },
+        { name: 'Lumber/Framing', specification: 'SPF Grade #2', quantity: Math.round(totalArea * 2.5), unit: 'board feet', unitPrice: 0.85 * regionMult, totalCost: 0, supplier: 'Lumber Yard' },
+        { name: 'Roofing System', specification: 'TPO/EPDM Single Ply', quantity: Math.round(totalArea / floors), unit: 'sq ft', unitPrice: 12 * regionMult, totalCost: 0, supplier: 'Roofing Distributor' }
+    ];
+    materials.forEach(m => { m.totalCost = Math.round(m.quantity * m.unitPrice); });
+
+    return {
+        summary: {
+            totalEstimate: Math.round(totalEstimate),
+            costPerSqFt: Math.round(costPerSqFt * 100) / 100,
+            contingency: Math.round(contingency),
+            estimateRange: { low: Math.round(totalEstimate * 0.85), high: Math.round(totalEstimate * 1.15) },
+            confidenceLevel: 'Medium',
+            generatedAt: new Date().toISOString()
+        },
+        trades,
+        materials,
+        laborBreakdown: trades.slice(0, 6).map(t => ({
+            trade: t.name,
+            hours: Math.round(t.laborCost / (55 * regionMult)),
+            rate: Math.round(55 * regionMult * 100) / 100,
+            totalCost: t.laborCost,
+            crew: `${t.name} crew`
+        })),
+        timeline: {
+            totalDuration: `${Math.max(3, Math.round(totalArea / 5000) + floors * 2)}-${Math.max(5, Math.round(totalArea / 3000) + floors * 3)} months`,
+            phases: [
+                { name: 'Pre-Construction', duration: '2-4 weeks', cost: Math.round(totalEstimate * 0.02), description: 'Permits, mobilization, site prep' },
+                { name: 'Foundation & Structure', duration: `${Math.max(1, Math.round(floors * 1.5))} months`, cost: Math.round(totalEstimate * 0.30), description: 'Excavation, foundation, framing' },
+                { name: 'Envelope & MEP Rough-in', duration: `${Math.max(1, Math.round(floors))} months`, cost: Math.round(totalEstimate * 0.35), description: 'Roofing, windows, mechanical/electrical rough-in' },
+                { name: 'Interior Finishes', duration: `${Math.max(1, Math.round(floors * 0.8))} months`, cost: Math.round(totalEstimate * 0.25), description: 'Drywall, paint, flooring, trim' },
+                { name: 'Commissioning & Closeout', duration: '2-3 weeks', cost: Math.round(totalEstimate * 0.08), description: 'Testing, inspections, punch list, turnover' }
+            ]
+        },
+        regionalFactors: {
+            laborIndex: regionMult,
+            materialIndex: regionMult,
+            region: q.region || 'Default',
+            adjustments: `Regional multiplier of ${regionMult}x applied based on ${q.region || 'default'} market conditions`
+        },
+        risks: [
+            { risk: 'Material price volatility', impact: 'High', mitigation: 'Lock in pricing with early procurement', costImpact: Math.round(totalEstimate * 0.05) },
+            { risk: 'Weather delays', impact: 'Medium', mitigation: 'Build schedule buffer and weather contingency', costImpact: Math.round(totalEstimate * 0.03) },
+            { risk: 'Labor shortage', impact: 'Medium', mitigation: 'Pre-qualify subcontractors early', costImpact: Math.round(totalEstimate * 0.04) },
+            { risk: 'Scope changes', impact: 'High', mitigation: 'Detailed scope documentation and change order process', costImpact: Math.round(totalEstimate * 0.07) }
+        ],
+        recommendations: [
+            'Conduct detailed site investigation before finalizing foundation design',
+            'Obtain minimum 3 competitive bids for major trade packages',
+            'Consider value engineering for cost optimization',
+            'Implement phased procurement to manage material price risks'
+        ],
+        assumptions: [
+            'Normal site conditions with standard soil bearing capacity',
+            'Standard permitting timeline with no unusual regulatory requirements',
+            `${q.qualityGrade || 'Standard'} quality materials and finishes`,
+            'No hazardous material abatement required',
+            'Standard working hours (no premium time included)'
+        ],
+        exclusions: [
+            'Land acquisition costs',
+            'Architectural and engineering design fees',
+            'Furniture, fixtures, and equipment (FF&E)',
+            'Owner soft costs and financing charges',
+            'Environmental remediation'
+        ]
+    };
+}
+
+// ==========================================
+// AI-POWERED ESTIMATION ENDPOINTS
+// ==========================================
+
+// POST /estimation/ai/questions - Generate smart questionnaire based on project info
+router.post('/ai/questions', authenticateToken, async (req, res) => {
+    try {
+        const { projectTitle, description, fileCount, fileNames } = req.body;
+
+        if (!projectTitle || !description) {
+            return res.status(400).json({ success: false, message: 'Project title and description are required' });
+        }
+
+        console.log(`[AI-ESTIMATION] Generating questions for "${projectTitle}" by ${req.user.email}`);
+
+        const questions = await generateSmartQuestions({ projectTitle, description, fileCount, fileNames });
+
+        res.json({ success: true, data: questions });
+    } catch (error) {
+        console.error('[AI-ESTIMATION] Error generating questions:', error);
+        res.status(500).json({ success: false, message: 'Failed to generate questionnaire' });
+    }
+});
+
+// POST /estimation/ai/generate - Generate full AI estimate from answers
+router.post('/ai/generate', authenticateToken, async (req, res) => {
+    try {
+        const { estimationId, projectTitle, description, answers, fileNames } = req.body;
+
+        if (!projectTitle || !answers) {
+            return res.status(400).json({ success: false, message: 'Project info and answers are required' });
+        }
+
+        console.log(`[AI-ESTIMATION] Generating estimate for "${projectTitle}" by ${req.user.email}`);
+
+        const estimate = await generateAIEstimate(
+            { projectTitle, description },
+            answers,
+            fileNames
+        );
+
+        // If estimationId provided, save AI result to the estimation document
+        if (estimationId) {
+            try {
+                const docRef = adminDb.collection('estimations').doc(estimationId);
+                const doc = await docRef.get();
+                if (doc.exists) {
+                    await docRef.update({
+                        aiEstimate: estimate,
+                        aiGeneratedAt: new Date().toISOString(),
+                        aiAnswers: answers,
+                        status: doc.data().status === 'pending' ? 'in-progress' : doc.data().status,
+                        updatedAt: new Date().toISOString()
+                    });
+                    console.log(`[AI-ESTIMATION] Saved AI result to estimation ${estimationId}`);
+                }
+            } catch (saveErr) {
+                console.warn('[AI-ESTIMATION] Could not save to estimation doc:', saveErr.message);
+            }
+        }
+
+        res.json({ success: true, data: estimate });
+    } catch (error) {
+        console.error('[AI-ESTIMATION] Error generating estimate:', error);
+        res.status(500).json({ success: false, message: error.message || 'Failed to generate AI estimate' });
+    }
+});
+
+// GET /estimation/:estimationId/ai-result - Get saved AI estimate for an estimation
+router.get('/:estimationId/ai-result', authenticateToken, async (req, res) => {
+    try {
+        const { estimationId } = req.params;
+        const docRef = adminDb.collection('estimations').doc(estimationId);
+        const doc = await docRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ success: false, message: 'Estimation not found' });
+        }
+
+        const data = doc.data();
+
+        // Access check
+        if (data.contractorEmail !== req.user.email && req.user.type !== 'admin') {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
+
+        if (!data.aiEstimate) {
+            return res.status(404).json({ success: false, message: 'No AI estimate generated yet' });
+        }
+
+        res.json({
+            success: true,
+            data: {
+                aiEstimate: data.aiEstimate,
+                aiGeneratedAt: data.aiGeneratedAt,
+                aiAnswers: data.aiAnswers
+            }
+        });
+    } catch (error) {
+        console.error('[AI-ESTIMATION] Error fetching AI result:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch AI estimate' });
+    }
 });
 
 export default router;

@@ -82,14 +82,66 @@ const normalizeDate = (val) => {
   return String(val);
 };
 
+// Download file buffers from Firebase Storage for AI vision analysis
+async function downloadFilesFromFirebase(uploadedFiles) {
+  const fileBuffers = [];
+
+  for (const file of uploadedFiles) {
+    if (!file.path) continue;
+
+    const ext = (file.originalname || file.name || '').toLowerCase().split('.').pop();
+    // Only download analyzable files (PDFs and images)
+    if (!['pdf', 'jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) continue;
+
+    try {
+      const bucket = storage.bucket();
+      const fileRef = bucket.file(file.path);
+      const [buffer] = await fileRef.download();
+
+      fileBuffers.push({
+        originalname: file.originalname || file.name,
+        buffer: buffer,
+        mimetype: file.mimetype || 'application/pdf',
+        size: buffer.length
+      });
+
+      console.log(`[FIREBASE-DL] Downloaded ${file.originalname || file.name} (${(buffer.length / 1024 / 1024).toFixed(2)}MB) for vision analysis`);
+    } catch (dlErr) {
+      console.error(`[FIREBASE-DL] Failed to download ${file.originalname || file.name}: ${dlErr.message}`);
+    }
+  }
+
+  return fileBuffers;
+}
+
 // Background AI estimate generation - runs after response is sent to the client
-async function generateAIEstimateBackground(estimationId, projectInfo, fileNames) {
+async function generateAIEstimateBackground(estimationId, projectInfo, fileNames, fileBuffers) {
   try {
     console.log(`[BACKGROUND] Starting AI estimate generation for estimation ${estimationId}`);
+
+    // If no file buffers provided (retry case), download from Firebase
+    if ((!fileBuffers || fileBuffers.length === 0) && fileNames && fileNames.length > 0) {
+      console.log(`[BACKGROUND] No file buffers in memory, downloading from Firebase for vision analysis...`);
+      try {
+        const estDoc = await adminDb.collection('estimations').doc(estimationId).get();
+        if (estDoc.exists) {
+          const estData = estDoc.data();
+          if (estData.uploadedFiles && estData.uploadedFiles.length > 0) {
+            fileBuffers = await downloadFilesFromFirebase(estData.uploadedFiles);
+            console.log(`[BACKGROUND] Downloaded ${fileBuffers.length} files from Firebase for vision analysis`);
+          }
+        }
+      } catch (dlErr) {
+        console.error(`[BACKGROUND] Could not download files for vision: ${dlErr.message}`);
+        fileBuffers = [];
+      }
+    }
+
     const aiEstimate = await generateAIEstimate(
       projectInfo,
       {}, // No questionnaire answers in single-submit flow
-      fileNames
+      fileNames,
+      fileBuffers || []
     );
 
     // Update the estimation document with the AI result
@@ -315,12 +367,13 @@ router.post('/contractor/submit', authenticateToken, isContractor, async (req, r
 
     // Fire-and-forget: Generate AI estimate in background AFTER response is sent
     // This prevents the Claude API call (30-60s) from blocking the upload response
+    // IMPORTANT: Pass file buffers for Vision-based drawing analysis
     generateAIEstimateBackground(estimationRef.id, {
       projectTitle, description,
       designStandard: designStandard || '',
       projectType: projectType || '',
       region: region || ''
-    }, parsedFileNames).catch(err => {
+    }, parsedFileNames, files).catch(err => {
       console.error(`[BACKGROUND] Unhandled error in AI generation for ${estimationRef.id}:`, err.message);
     });
 
@@ -1972,10 +2025,12 @@ router.post('/ai/generate', authenticateToken, async (req, res) => {
             }
         }
 
+        // Pass file buffers for Vision-based drawing analysis
         const estimate = await generateAIEstimate(
             { projectTitle, description, designStandard, projectType, region, totalArea },
             parsedAnswers,
-            parsedFileNames || (uploadedFiles.length > 0 ? uploadedFiles.map(f => f.name) : [])
+            parsedFileNames || (uploadedFiles.length > 0 ? uploadedFiles.map(f => f.name) : []),
+            files || [] // multer file buffers for Claude Vision
         );
 
         // Always save AI result - create new document or update existing

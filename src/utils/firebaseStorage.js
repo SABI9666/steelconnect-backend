@@ -51,19 +51,27 @@ export async function uploadToFirebaseStorage(file, path) {
         });
         
         return new Promise((resolve, reject) => {
+            // Timeout protection: reject if upload takes longer than 60 seconds
+            const uploadTimeout = setTimeout(() => {
+                stream.destroy();
+                reject(new Error(`Upload timed out for ${file.originalname || 'unknown'} after 60 seconds`));
+            }, 60000);
+
             stream.on('error', (error) => {
+                clearTimeout(uploadTimeout);
                 console.error('Firebase Storage upload error:', error);
                 reject(new Error(`Failed to upload file: ${error.message}`));
             });
-            
+
             stream.on('finish', async () => {
+                clearTimeout(uploadTimeout);
                 try {
                     // Make file publicly accessible
                     await fileRef.makePublic();
-                    
+
                     // Generate public URL
                     const publicUrl = `https://storage.googleapis.com/${bucket.name}/${path}`;
-                    
+
                     // FIXED: Return consistent object structure
                     const fileData = {
                         name: file.originalname || 'unknown',
@@ -77,7 +85,7 @@ export async function uploadToFirebaseStorage(file, path) {
                         filename: path,
                         uploadedAt: new Date().toISOString()
                     };
-                    
+
                     console.log(`File uploaded successfully: ${publicUrl}`);
                     resolve(fileData);
                 } catch (error) {
@@ -85,7 +93,7 @@ export async function uploadToFirebaseStorage(file, path) {
                     reject(new Error(`Failed to make file public: ${error.message}`));
                 }
             });
-            
+
             // Write file buffer to stream
             stream.end(file.buffer);
         });

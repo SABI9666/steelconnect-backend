@@ -1378,10 +1378,11 @@ router.post('/estimations/:estimationId/send-ai-report', async (req, res) => {
     }
 });
 
-// Retry/Generate AI estimate for an estimation
+// Retry/Generate AI estimate for an estimation (async - responds immediately, generates in background)
 router.post('/estimations/:estimationId/retry-ai', async (req, res) => {
     try {
-        const estDoc = await adminDb.collection('estimations').doc(req.params.estimationId).get();
+        const estimationId = req.params.estimationId;
+        const estDoc = await adminDb.collection('estimations').doc(estimationId).get();
         if (!estDoc.exists) {
             return res.status(404).json({ success: false, message: 'Estimation not found' });
         }
@@ -1389,13 +1390,21 @@ router.post('/estimations/:estimationId/retry-ai', async (req, res) => {
         const estData = estDoc.data();
 
         // Mark as generating
-        await adminDb.collection('estimations').doc(req.params.estimationId).update({
+        await adminDb.collection('estimations').doc(estimationId).update({
             aiStatus: 'generating',
             aiError: null,
             updatedAt: new Date().toISOString()
         });
 
-        // Build project info from stored data
+        console.log(`[ADMIN] Retry AI estimate for estimation ${estimationId} by ${req.user.email}`);
+
+        // Respond immediately - AI generation runs in background
+        res.json({
+            success: true,
+            message: 'AI estimate generation started. This may take 30-60 seconds. The page will refresh automatically when ready.'
+        });
+
+        // Generate AI estimate in background (don't await in request handler)
         const projectInfo = {
             projectTitle: estData.projectTitle || estData.projectName || '',
             description: estData.description || '',
@@ -1408,41 +1417,53 @@ router.post('/estimations/:estimationId/retry-ai', async (req, res) => {
             ? estData.uploadedFiles.map(f => f.originalname || f.name || '')
             : [];
 
-        console.log(`[ADMIN] Retry AI estimate for estimation ${req.params.estimationId} by ${req.user.email}`);
+        generateAIEstimate(projectInfo, estData.aiAnswers || {}, fileNames)
+            .then(async (aiEstimate) => {
+                await adminDb.collection('estimations').doc(estimationId).update({
+                    aiEstimate,
+                    aiGeneratedAt: new Date().toISOString(),
+                    aiStatus: 'completed',
+                    aiError: null,
+                    estimatedAmount: aiEstimate?.summary?.grandTotal || aiEstimate?.summary?.totalEstimate || 0,
+                    updatedAt: new Date().toISOString()
+                });
+                console.log(`[ADMIN] AI estimate generated successfully for estimation ${estimationId}`);
+            })
+            .catch(async (error) => {
+                console.error('[ADMIN] Background AI estimate failed:', error.message);
+                try {
+                    await adminDb.collection('estimations').doc(estimationId).update({
+                        aiStatus: 'failed',
+                        aiError: error.message,
+                        updatedAt: new Date().toISOString()
+                    });
+                } catch (updateErr) {
+                    console.error('[ADMIN] Failed to update AI status:', updateErr.message);
+                }
+            });
+    } catch (error) {
+        console.error('[ADMIN] Error starting AI estimate retry:', error);
+        res.status(500).json({ success: false, message: 'Failed to start AI estimate: ' + error.message });
+    }
+});
 
-        // Generate AI estimate (this may take 30-60s)
-        const aiEstimate = await generateAIEstimate(projectInfo, estData.aiAnswers || {}, fileNames);
-
-        // Save result to Firestore
-        await adminDb.collection('estimations').doc(req.params.estimationId).update({
-            aiEstimate,
-            aiGeneratedAt: new Date().toISOString(),
-            aiStatus: 'completed',
-            aiError: null,
-            estimatedAmount: aiEstimate?.summary?.grandTotal || aiEstimate?.summary?.totalEstimate || 0,
-            updatedAt: new Date().toISOString()
-        });
-
-        console.log(`[ADMIN] AI estimate generated successfully for estimation ${req.params.estimationId}`);
-
+// Check AI generation status for an estimation
+router.get('/estimations/:estimationId/ai-status', async (req, res) => {
+    try {
+        const estDoc = await adminDb.collection('estimations').doc(req.params.estimationId).get();
+        if (!estDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Estimation not found' });
+        }
+        const estData = estDoc.data();
         res.json({
             success: true,
-            message: 'AI estimate generated successfully!',
-            estimatedAmount: aiEstimate?.summary?.grandTotal || 0
+            aiStatus: estData.aiStatus || 'none',
+            aiError: estData.aiError || null,
+            estimatedAmount: estData.estimatedAmount || 0,
+            aiGeneratedAt: estData.aiGeneratedAt || null
         });
     } catch (error) {
-        console.error('[ADMIN] Error retrying AI estimate:', error);
-        // Update status to failed
-        try {
-            await adminDb.collection('estimations').doc(req.params.estimationId).update({
-                aiStatus: 'failed',
-                aiError: error.message,
-                updatedAt: new Date().toISOString()
-            });
-        } catch (updateErr) {
-            console.error('[ADMIN] Failed to update AI status:', updateErr.message);
-        }
-        res.status(500).json({ success: false, message: 'AI estimate generation failed: ' + error.message });
+        res.status(500).json({ success: false, message: error.message });
     }
 });
 

@@ -121,12 +121,23 @@ export async function uploadToFirebaseStorage(file, path, metadata = {}) {
                 console.error('Firebase Storage upload error:', error);
                 reject(new Error(`Failed to upload file: ${error.message}`));
             });
-            
+
             stream.on('finish', async () => {
                 try {
                     console.log(`File uploaded successfully to: ${path}`);
-                    
-                    // Return file info for secure access (no public URL)
+
+                    // Try to generate a signed URL, but don't block the upload if it fails
+                    // (signed URLs are regenerated on demand for downloads anyway)
+                    let url = null;
+                    try {
+                        url = await generateSignedUrl(path, 60); // 1 hour temp URL
+                    } catch (urlError) {
+                        console.warn(`[UPLOAD] Could not generate signed URL for ${path}: ${urlError.message}`);
+                        // Fallback: construct a storage reference path instead
+                        // The actual download URL will be generated on demand when needed
+                        url = `gs://${bucket.name}/${path}`;
+                    }
+
                     resolve({
                         path: path,
                         name: file.originalname,
@@ -134,15 +145,14 @@ export async function uploadToFirebaseStorage(file, path, metadata = {}) {
                         size: file.size,
                         mimetype: file.mimetype,
                         uploadedAt: new Date().toISOString(),
-                        // Generate a temporary signed URL for immediate access if needed
-                        url: await generateSignedUrl(path, 60) // 1 hour temp URL
+                        url: url
                     });
                 } catch (error) {
                     console.error('Error finishing upload:', error);
                     reject(new Error(`Failed to complete upload: ${error.message}`));
                 }
             });
-            
+
             stream.end(file.buffer);
         });
     } catch (error) {
@@ -189,20 +199,29 @@ export async function generateSignedUrl(filePath, expirationMinutes = 15, respon
     try {
         const bucket = storage.bucket();
         const file = bucket.file(filePath);
-        
-        // Check if file exists
-        const [exists] = await file.exists();
-        if (!exists) {
-            throw new Error(`File not found: ${filePath}`);
+
+        // Skip exists check when called right after upload (race condition)
+        // The getSignedUrl call itself will fail if the file truly doesn't exist
+        // For download endpoints, the exists check is still useful but we
+        // handle it gracefully
+        try {
+            const [exists] = await file.exists();
+            if (!exists) {
+                throw new Error(`File not found: ${filePath}`);
+            }
+        } catch (existsError) {
+            // If exists check fails, still try to generate the signed URL
+            // (the file may have just been uploaded and isn't visible yet)
+            console.warn(`[SIGNED-URL] Exists check failed for ${filePath}: ${existsError.message}, attempting signed URL anyway`);
         }
-        
+
         // Generate signed URL with expiration
         const [signedUrl] = await file.getSignedUrl({
             action: 'read',
             expires: Date.now() + (expirationMinutes * 60 * 1000),
             responseDisposition: responseDisposition
         });
-        
+
         console.log(`Generated signed URL for ${filePath}, expires in ${expirationMinutes} minutes`);
         return signedUrl;
     } catch (error) {

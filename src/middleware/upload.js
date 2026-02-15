@@ -388,24 +388,16 @@ export const validatePDFFiles = (req, res, next) => {
     const isEstimationUpload = req.originalUrl.includes('/estimation');
     
     if (isEstimationUpload) {
-        // Strict PDF-only validation for estimations
+        // Estimation uploads: accept all construction file types (PDF, DWG, DOC, XLS, images, etc.)
+        const estAllowedExtensions = ['pdf', 'dwg', 'dxf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'jpg', 'jpeg', 'png', 'tif', 'tiff', 'bmp', 'txt', 'rtf', 'zip', 'rar'];
         for (const file of files) {
-            if (file.mimetype !== 'application/pdf') {
-                console.log(`❌ PDF validation failed: ${file.originalname} - MIME type: ${file.mimetype}`);
-                return res.status(400).json({
-                    success: false,
-                    error: `File "${file.originalname}" must be a PDF. Only PDF files are accepted for estimation requests. Found: ${file.mimetype}`,
-                    errorCode: 'INVALID_FILE_TYPE'
-                });
-            }
-            
             const ext = file.originalname.toLowerCase().split('.').pop();
-            if (ext !== 'pdf') {
-                console.log(`❌ Extension validation failed: ${file.originalname} - extension: .${ext}`);
+            if (!estAllowedExtensions.includes(ext)) {
+                console.log(`❌ File type validation failed: ${file.originalname} - extension: .${ext}`);
                 return res.status(400).json({
                     success: false,
-                    error: `File "${file.originalname}" must have .pdf extension. Found: .${ext}`,
-                    errorCode: 'INVALID_FILE_EXTENSION'
+                    error: `File "${file.originalname}" type .${ext} is not supported. Allowed: PDF, DWG, DXF, DOC, DOCX, XLS, XLSX, CSV, JPG, PNG, TIF, TXT, ZIP, RAR`,
+                    errorCode: 'INVALID_FILE_TYPE'
                 });
             }
         }

@@ -150,37 +150,49 @@ export async function uploadMultipleFilesToFirebase(files, basePath, userId = nu
  */
 export function validateFileUpload(files, maxFiles = 20) {
     const maxSize = 50 * 1024 * 1024; // 50MB
-    const allowedTypes = [
+    const allowedMimeTypes = [
         'application/pdf',
+        'application/octet-stream',
         'application/msword',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'image/jpeg',
         'image/png',
         'image/gif',
+        'image/tiff',
+        'image/bmp',
         'text/plain',
+        'text/csv',
         'application/vnd.ms-excel',
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/zip',
+        'application/x-rar-compressed',
+        'application/x-zip-compressed',
+        'application/acad',
+        'application/x-acad',
+        'application/x-autocad',
+        'image/vnd.dwg',
+        'image/x-dwg'
     ];
-    
+    const allowedExtensions = ['pdf', 'dwg', 'dxf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'jpg', 'jpeg', 'png', 'tif', 'tiff', 'bmp', 'txt', 'rtf', 'zip', 'rar'];
+
     // Handle single file or array of files
     const fileArray = Array.isArray(files) ? files : [files];
-    
+
     if (fileArray.length > maxFiles) {
         throw new Error(`Too many files. Maximum ${maxFiles} files allowed, but ${fileArray.length} were provided.`);
     }
-    
+
     for (const file of fileArray) {
         if (!file) {
             throw new Error('Invalid file object provided');
         }
-        
+
         if (file.size > maxSize) {
             throw new Error(`File size exceeds maximum allowed size of 50MB. File "${file.originalname || 'unknown'}" size: ${(file.size / (1024 * 1024)).toFixed(2)}MB`);
         }
-        
-        // FIXED: Handle missing MIME type
+
+        // Handle missing MIME type - detect from extension
         if (!file.mimetype) {
-            // Try to detect from extension
             const ext = (file.originalname || '').toLowerCase().split('.').pop();
             const mimeMap = {
                 'pdf': 'application/pdf',
@@ -189,11 +201,20 @@ export function validateFileUpload(files, maxFiles = 20) {
                 'jpg': 'image/jpeg',
                 'jpeg': 'image/jpeg',
                 'png': 'image/png',
+                'tif': 'image/tiff',
+                'tiff': 'image/tiff',
+                'bmp': 'image/bmp',
                 'txt': 'text/plain',
+                'csv': 'text/csv',
                 'xls': 'application/vnd.ms-excel',
-                'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'dwg': 'application/octet-stream',
+                'dxf': 'application/octet-stream',
+                'zip': 'application/zip',
+                'rar': 'application/x-rar-compressed',
+                'rtf': 'text/plain'
             };
-            
+
             if (mimeMap[ext]) {
                 file.mimetype = mimeMap[ext];
                 console.log(`Auto-detected MIME type: ${file.mimetype} for file: ${file.originalname}`);
@@ -201,12 +222,20 @@ export function validateFileUpload(files, maxFiles = 20) {
                 throw new Error(`Could not determine file type for "${file.originalname}". Please ensure the file has a valid extension.`);
             }
         }
-        
-        if (!allowedTypes.includes(file.mimetype)) {
-            throw new Error(`File type not allowed: ${file.mimetype} for file "${file.originalname}". Allowed types: ${allowedTypes.join(', ')}`);
+
+        // Validate by extension first (more reliable than MIME type for construction files)
+        const ext = (file.originalname || '').toLowerCase().split('.').pop();
+        if (allowedExtensions.includes(ext)) {
+            // Extension is valid - allow even if MIME type is unusual
+            // (browsers often send wrong MIME types for DWG, DXF, etc.)
+            if (!allowedMimeTypes.includes(file.mimetype)) {
+                console.warn(`[VALIDATE] Unusual MIME type ${file.mimetype} for .${ext} file "${file.originalname}" - allowing based on extension`);
+            }
+        } else if (!allowedMimeTypes.includes(file.mimetype)) {
+            throw new Error(`File type not allowed for "${file.originalname}". Supported: PDF, DWG, DXF, DOC, DOCX, XLS, XLSX, CSV, JPG, PNG, TIF, TXT, ZIP, RAR`);
         }
     }
-    
+
     console.log(`File validation passed for ${fileArray.length} file(s)`);
     return true;
 }

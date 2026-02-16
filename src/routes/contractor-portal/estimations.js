@@ -51,7 +51,7 @@ const handleMulterError = (err, req, res, next) => {
 // Submit estimation request (for contractors) - supports multiple files
 router.post('/submit', authenticateToken, upload.array('files', 20), handleMulterError, async (req, res) => {
     try {
-        const { projectTitle, description, buildingArea, numberOfFloors, structureType, materialGrade, scopeOfWork, expectedTimeline, budgetRange, specialRequirements } = req.body;
+        const { projectTitle, description, scopeOfWork } = req.body;
         const files = req.files || [];
         const file = files[0] || req.file; // backwards compat for single file
         const userId = req.user.userId;
@@ -127,17 +127,8 @@ router.post('/submit', authenticateToken, upload.array('files', 20), handleMulte
             uploadedFile: uploadedFiles[0] || null, // backwards compat
             fileCount: uploadedFiles.length,
             totalFileSize: uploadedFiles.reduce((sum, f) => sum + (f.size || 0), 0),
-            // Project requirements
-            requirements: {
-                buildingArea: buildingArea || '',
-                numberOfFloors: numberOfFloors || '',
-                structureType: structureType || '',
-                materialGrade: materialGrade || '',
-                scopeOfWork: scopeOfWork || '',
-                expectedTimeline: expectedTimeline || '',
-                budgetRange: budgetRange || '',
-                specialRequirements: specialRequirements || ''
-            },
+            // Client's exact scope of estimation requirement
+            scopeOfWork: scopeOfWork || '',
             status: 'pending',
             aiStatus: 'generating',
             createdAt: new Date().toISOString(),

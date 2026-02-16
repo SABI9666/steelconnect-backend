@@ -635,27 +635,12 @@ You have been provided with actual construction drawings/blueprints above. You M
 YOUR ACCURACY ON READING THESE DRAWINGS DIRECTLY DETERMINES THE QUALITY OF THE ESTIMATE.`
         : `\nNote: No analyzable drawing files were provided. The estimate will be based on project description and questionnaire answers. For maximum accuracy, upload PDF drawings or images of structural plans.`;
 
-    // Build scope instruction if contractor provided a specific scope of work
-    const scopeInstruction = projectInfo.scopeOfWork
-        ? `\n\n⚠️ SCOPE CONSTRAINT (MANDATORY - READ CAREFULLY):
-The client has specified the following EXACT scope of work for this estimation. You MUST estimate ONLY the trades and work items that fall within this scope. Do NOT include trades or costs outside this scope.
-
-CLIENT'S SCOPE OF WORK:
-"""
-${projectInfo.scopeOfWork}
-"""
-
-IMPORTANT: Your estimate must cover ONLY what the client has requested above. If they asked for only structural steel, estimate ONLY structural steel. If they asked for foundation work only, estimate ONLY foundation work. Do NOT add extra trades that were not requested. The grandTotal should reflect ONLY the scoped work, not the entire building.`
-        : '';
-
-    return `\n\nGenerate a ${projectInfo.scopeOfWork ? 'FOCUSED' : 'COMPREHENSIVE'} construction cost estimate with FULL MATERIAL QUANTITIES AND SPECIFICATIONS for ${projectInfo.scopeOfWork ? 'the specified scope of work' : 'each trade'}.
+    return `\n\nGenerate a COMPREHENSIVE construction cost estimate with FULL MATERIAL QUANTITIES AND SPECIFICATIONS for each trade. Extract ALL scope, dimensions, member sizes, and specifications directly from the provided drawings/designs.
 ${drawingAnalysisInstruction}
-${scopeInstruction}
 
 PROJECT INFORMATION:
 - Title: ${projectInfo.projectTitle}
 - Description: ${projectInfo.description}
-- Scope of Work: ${projectInfo.scopeOfWork || 'Full project estimation (all trades)'}
 - Design Standard: ${projectInfo.designStandard || 'Not specified'}
 - Project Type: ${projectInfo.projectType || 'Not specified'}
 - Region/Location: ${projectInfo.region || 'Not specified'}
@@ -809,7 +794,7 @@ CRITICAL REQUIREMENTS:
   5. "summary.grandTotal" MUST EXACTLY equal "costBreakdown.totalWithMarkups"
   6. Each tradesSummary[].amount MUST match the corresponding trades[].subtotal
   7. VERIFY: After computing all values, double-check that grandTotal = directCosts + sum of all markup amounts. If they don't match, FIX them before outputting
-- ${projectInfo.scopeOfWork ? 'Include ONLY the trades relevant to the specified scope of work above. Do NOT add trades outside the scope.' : 'Include: Site Work, Concrete/Foundations, Structural (Steel/Rebar), Exterior Envelope, Roofing, Interior Finishes, MEP (Mechanical/Electrical/Plumbing), Fire Protection, Elevators (if applicable), Specialties, General Conditions, etc.'}
+- Include ONLY the trades that are visible/relevant in the provided drawings and project description. Extract the scope directly from the design documents.
 - For each material, provide the EXACT specification grade (ASTM, IS, EN standard as applicable)
 - MARKUP PERCENTAGE RULES: Each markup percentage (generalConditionsPercent, overheadPercent, profitPercent, contingencyPercent, escalationPercent) must be a realistic value between 0 and 25. For example: profit should be 5-15%, contingency 5-10%, overhead 5-10%, general conditions 5-10%, escalation 0-5%.`;
 }

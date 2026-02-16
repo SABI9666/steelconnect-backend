@@ -4,6 +4,7 @@ import multer from 'multer';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { adminDb, admin } from '../config/firebase.js';
 import { uploadToFirebaseStorage, deleteFileFromFirebase } from '../utils/firebaseStorage.js';
+import { sendProfileApprovalRequestToAdmin } from '../utils/emailService.js';
 
 // Sanitize filenames to prevent special character issues in storage URLs
 function sanitizeFilename(filename) {
@@ -258,6 +259,17 @@ router.put('/complete', upload.fields([
         };
 
         await adminDb.collection('profile_reviews').add(reviewRequest);
+
+        // Send notification email to admin (sabincn676@gmail.com) for profile approval
+        try {
+            await sendProfileApprovalRequestToAdmin(
+                { name: currentUserData.name, email: currentUserData.email, type: userType },
+                profileData
+            );
+            console.log(`Admin notification email sent for profile approval request: ${currentUserData.email}`);
+        } catch (adminEmailError) {
+            console.error('Failed to send admin profile approval email:', adminEmailError);
+        }
 
         // Send notification email to user (placeholder - just log for now)
         try {

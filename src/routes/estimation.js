@@ -1923,7 +1923,7 @@ function generateFallbackEstimation(q, title, description) {
 // POST /estimation/ai/questions - Generate smart questionnaire based on project info
 router.post('/ai/questions', authenticateToken, async (req, res) => {
     try {
-        const { projectTitle, description, designStandard, projectType, region, totalArea, fileCount, fileNames } = req.body;
+        const { projectTitle, description, designStandard, projectType, region, totalArea, scopeOfWork, fileCount, fileNames } = req.body;
 
         if (!projectTitle || !description) {
             return res.status(400).json({ success: false, message: 'Project title and description are required' });
@@ -1931,7 +1931,7 @@ router.post('/ai/questions', authenticateToken, async (req, res) => {
 
         console.log(`[AI-ESTIMATION] Generating questions for "${projectTitle}" by ${req.user.email}`);
 
-        const questions = await generateSmartQuestions({ projectTitle, description, designStandard, projectType, region, totalArea, fileCount, fileNames });
+        const questions = await generateSmartQuestions({ projectTitle, description, designStandard, projectType, region, totalArea, scopeOfWork, fileCount, fileNames });
 
         res.json({ success: true, data: questions });
     } catch (error) {
@@ -1966,7 +1966,7 @@ router.post('/ai/generate', authenticateToken, async (req, res) => {
             fileUploadWarning = `File upload skipped: ${uploadErr.message}`;
         }
 
-        const { estimationId, projectTitle, description, designStandard, projectType, region, totalArea, answers, fileNames } = req.body;
+        const { estimationId, projectTitle, description, designStandard, projectType, region, totalArea, scopeOfWork, answers, fileNames } = req.body;
 
         // Parse answers if sent as string (FormData sends strings)
         let parsedAnswers = answers;
@@ -2018,7 +2018,7 @@ router.post('/ai/generate', authenticateToken, async (req, res) => {
 
         // Pass file buffers for Vision-based drawing analysis
         const estimate = await generateAIEstimate(
-            { projectTitle, description, designStandard, projectType, region, totalArea },
+            { projectTitle, description, designStandard, projectType, region, totalArea, scopeOfWork },
             parsedAnswers,
             parsedFileNames || (uploadedFiles.length > 0 ? uploadedFiles.map(f => f.name) : []),
             files || [] // multer file buffers for Claude Vision

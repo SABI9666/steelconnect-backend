@@ -564,10 +564,82 @@ export async function sendOTPVerificationEmail(user, otpCode, clientIP, userAgen
     }
 }
 
+// Send profile approval request notification to admin
+export async function sendProfileApprovalRequestToAdmin(user, profileData) {
+    const ADMIN_EMAIL = 'sabincn676@gmail.com';
+    try {
+        console.log(`Sending profile approval request email to admin: ${ADMIN_EMAIL} for user: ${user.email}`);
+
+        const emailContent = `
+            <h2 style="color: #1e293b; margin-top: 0;">New Profile Approval Request</h2>
+
+            <div class="alert-box">
+                <h3 style="margin: 0 0 10px 0; color: #1e3a8a;">Action Required: Review Profile</h3>
+                <p style="margin: 0;">A user has submitted their profile for review and approval on SteelConnect.</p>
+            </div>
+
+            <div class="info-box">
+                <h4 style="margin-top: 0; color: #1e293b;">User Details</h4>
+                <div class="detail-row">
+                    <span class="detail-label">Name:</span>
+                    <span class="detail-value">${user.name || 'N/A'}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Email:</span>
+                    <span class="detail-value">${user.email || 'N/A'}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">User Type:</span>
+                    <span class="detail-value">${(user.type || 'N/A').charAt(0).toUpperCase() + (user.type || '').slice(1)}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Submitted At:</span>
+                    <span class="detail-value">${new Date().toLocaleString()}</span>
+                </div>
+                ${profileData.companyName ? `<div class="detail-row"><span class="detail-label">Company:</span><span class="detail-value">${profileData.companyName}</span></div>` : ''}
+                ${profileData.skills ? `<div class="detail-row"><span class="detail-label">Skills:</span><span class="detail-value">${Array.isArray(profileData.skills) ? profileData.skills.join(', ') : profileData.skills}</span></div>` : ''}
+                ${profileData.experience ? `<div class="detail-row"><span class="detail-label">Experience:</span><span class="detail-value">${profileData.experience}</span></div>` : ''}
+            </div>
+
+            <div style="text-align: center; margin: 25px 0;">
+                <a href="https://steelconnectapp.com/admin" class="button" style="color: white; text-decoration: none;">Review Profile in Admin Panel</a>
+            </div>
+
+            <p style="color: #64748b; font-size: 13px; text-align: center;">
+                Please log in to the admin dashboard to approve or reject this profile.
+            </p>
+        `;
+
+        const emailHTML = getEmailTemplate('Profile Approval Request - SteelConnect', emailContent);
+
+        const emailData = {
+            from: `SteelConnect <${FROM_EMAIL}>`,
+            to: ADMIN_EMAIL,
+            subject: `New Profile Approval Request - ${user.name || user.email} (${(user.type || '').charAt(0).toUpperCase() + (user.type || '').slice(1)})`,
+            html: emailHTML
+        };
+
+        const response = await resend.emails.send(emailData);
+
+        if (response.error) {
+            console.error('Resend API error (admin notification):', response.error);
+            return { success: false, error: response.error };
+        }
+
+        console.log(`Profile approval request email sent to admin ${ADMIN_EMAIL}. Message ID: ${response.data?.id || 'N/A'}`);
+        return { success: true, messageId: response.data?.id };
+
+    } catch (error) {
+        console.error('Admin profile approval email error:', error);
+        return { success: false, error: error.message || 'Failed to send admin notification email' };
+    }
+}
+
 export default {
     sendLoginNotification,
     sendEstimationResultNotification,
     sendProfileReviewNotification,
     sendPasswordResetEmail,
-    sendOTPVerificationEmail
+    sendOTPVerificationEmail,
+    sendProfileApprovalRequestToAdmin
 };

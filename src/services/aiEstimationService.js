@@ -1,6 +1,7 @@
 // src/services/aiEstimationService.js - AI-Powered Construction Cost Estimation Engine
-// with Vision-based Drawing Analysis for Accurate Dimension Extraction
+// with Vision-based Drawing Analysis + Intelligent PDF Measurement Extraction
 import Anthropic from '@anthropic-ai/sdk';
+import { extractMeasurementsFromPDFs, formatExtractionForAI } from './pdfMeasurementExtractor.js';
 
 const anthropic = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY
@@ -401,6 +402,23 @@ export async function generateAIEstimate(projectInfo, answers, fileNames, fileBu
 
         console.log(`[AI-ESTIMATION] Generating estimate for "${projectInfo.projectTitle}" with ${fileBuffers?.length || 0} files (analyzable: ${hasAnalyzableFiles})`);
 
+        // STEP 0: Run intelligent PDF measurement extraction (parallel with prompt building)
+        let measurementData = null;
+        let measurementText = '';
+        if (hasFiles) {
+            try {
+                measurementData = await extractMeasurementsFromPDFs(fileBuffers);
+                measurementText = formatExtractionForAI(measurementData);
+                if (measurementText) {
+                    console.log(`[AI-ESTIMATION] Intelligent measurement extraction: ${measurementData.combined?.overallConfidence?.level} confidence (${measurementData.combined?.overallConfidence?.score}%)`);
+                } else {
+                    console.log(`[AI-ESTIMATION] No measurable text data extracted from PDFs (likely scanned drawings)`);
+                }
+            } catch (measureErr) {
+                console.log(`[AI-ESTIMATION] Measurement extraction skipped: ${measureErr.message}`);
+            }
+        }
+
         // Build the text prompt
         const textPrompt = buildEstimationTextPrompt(projectInfo, answers, fileNames, hasAnalyzableFiles);
 
@@ -432,6 +450,14 @@ export async function generateAIEstimate(projectInfo, answers, fileNames, fileBu
             } catch (pdfErr) {
                 console.log(`[AI-ESTIMATION] PDF text extraction skipped: ${pdfErr.message}`);
             }
+        }
+
+        // STEP 3.5: Add intelligently extracted measurement data
+        if (measurementText) {
+            messageContent.push({
+                type: 'text',
+                text: `\n\n🔬 INTELLIGENT PRE-EXTRACTED DATA FROM PDF TEXT LAYERS:\nThe following dimensions, member sizes, material specifications, and schedules were automatically extracted from the PDF text layers using pattern recognition. Use this data to VERIFY and CROSS-CHECK what you see in the visual drawings. Where this extracted data and your visual analysis agree, you can have HIGH CONFIDENCE in those values. Where they disagree, note the discrepancy and use the most accurate value.\n\n${measurementText}\n\n⚠️ IMPORTANT: The above data is extracted from TEXT LAYERS only. Some PDFs are scanned images with no text — for those, rely entirely on your visual analysis. Always trust what you can SEE in the drawings over text extraction when there's a conflict.\n`
+            });
         }
 
         // STEP 4: Add the main estimation prompt
@@ -489,6 +515,18 @@ export async function generateAIEstimate(projectInfo, answers, fileNames, fileBu
 async function generateAIEstimateTextFallback(projectInfo, answers, fileNames, fileBuffers) {
     console.log(`[AI-FALLBACK] Starting text-only estimation for "${projectInfo.projectTitle}"`);
 
+    // Run intelligent measurement extraction (critical for text fallback since no vision)
+    let measurementText = '';
+    try {
+        const measurementData = await extractMeasurementsFromPDFs(fileBuffers);
+        measurementText = formatExtractionForAI(measurementData);
+        if (measurementText) {
+            console.log(`[AI-FALLBACK] Intelligent measurements extracted: ${measurementData.combined?.overallConfidence?.level}`);
+        }
+    } catch (err) {
+        console.log(`[AI-FALLBACK] Measurement extraction skipped: ${err.message}`);
+    }
+
     // Extract all available text from PDFs
     let pdfTexts = [];
     try {
@@ -531,8 +569,16 @@ async function generateAIEstimateTextFallback(projectInfo, answers, fileNames, f
         console.log(`[AI-FALLBACK] Using extracted text from ${pdfTexts.length} PDF(s) (${pdfTexts.reduce((sum, pt) => sum + pt.text.length, 0)} chars total)`);
     }
 
+    // Add intelligent measurement data (especially valuable in fallback mode)
+    if (measurementText) {
+        fallbackContent.push({
+            type: 'text',
+            text: `\n\n🔬 INTELLIGENT PRE-EXTRACTED MEASUREMENT DATA:\nSince the PDF could not be visually analyzed, the following data was extracted from the PDF text layer using intelligent pattern recognition. This is your PRIMARY source for dimensions, member sizes, and specifications.\n\n${measurementText}\n`
+        });
+    }
+
     // Use text-aware prompt (mark as having "files" if we got any text out)
-    const hasUsableContent = hasTextContent || hasImages;
+    const hasUsableContent = hasTextContent || hasImages || !!measurementText;
     const textPrompt = buildEstimationTextPrompt(projectInfo, answers, fileNames, hasUsableContent);
     fallbackContent.push({ type: 'text', text: textPrompt });
 

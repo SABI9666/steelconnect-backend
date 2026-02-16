@@ -707,4 +707,118 @@ export function formatExtractionForAI(extractionResult) {
     return sections.join('\n');
 }
 
-export default { extractMeasurementsFromText, extractMeasurementsFromPDFs, formatExtractionForAI };
+/**
+ * Extract text per-page from PDF using pdf-parse.
+ * Returns array of { pageNumber, text } for each page.
+ */
+export async function extractPageLevelText(fileBuffer, maxPages = 50) {
+    const pages = [];
+    try {
+        const pdfParse = (await import('pdf-parse/lib/pdf-parse.js')).default;
+        let currentPage = 0;
+        const options = {
+            max: maxPages,
+            pagerender: function(pageData) {
+                currentPage++;
+                return pageData.getTextContent().then(function(textContent) {
+                    const text = textContent.items.map(item => item.str).join(' ');
+                    pages.push({ pageNumber: currentPage, text });
+                    return text;
+                });
+            }
+        };
+        await pdfParse(fileBuffer, options);
+    } catch (err) {
+        console.log(`[PDF-PAGES] Page-level extraction failed: ${err.message}`);
+    }
+    return pages;
+}
+
+/**
+ * Extract schedule table data from text using pattern matching.
+ * Targets beam/column/joist schedules with Mark | Size | Length | Qty | Weight patterns.
+ * @param {string} text - PDF text content
+ * @returns {Array<{ mark: string, size: string, length: string, qty: number, weight: string }>}
+ */
+export function extractScheduleTable(text) {
+    const entries = [];
+    if (!text) return entries;
+
+    // Pattern: B1  W24x68  30'-0"  12  or  C1  W14x48  15'-0"  24
+    const schedulePattern = /\b([BCJ]\d{1,3})\s+(?:(W|HSS|C|L|ISMB|ISMC|IPE|HEA)\s*(\d{1,3})\s*[x×X]\s*(\d{1,4}(?:\.\d+)?))\s+(?:(\d{1,3})\s*['′]\s*[-–]?\s*(\d{0,2})\s*(?:["″]|'')?)?\s*(?:(\d{1,4}))?/gi;
+    let match;
+    while ((match = schedulePattern.exec(text)) !== null) {
+        entries.push({
+            mark: match[1],
+            size: `${match[2]}${match[3]}x${match[4]}`,
+            length: match[5] ? `${match[5]}'-${match[6] || '0'}"` : '',
+            qty: match[7] ? parseInt(match[7]) : 1,
+            weight: ''
+        });
+    }
+
+    // Also capture Mark = Size patterns from extractSchedules
+    const entryRegex = /\b([BCJ]\d{1,3})\s*[=:\-–]\s*(W|HSS|C|L|ISMB|ISMC|IPE|HEA)\s*(\d{1,3})\s*[x×X]\s*(\d{1,4}(?:\.\d+)?)/gi;
+    while ((match = entryRegex.exec(text)) !== null) {
+        const mark = match[1];
+        if (!entries.find(e => e.mark === mark)) {
+            entries.push({
+                mark,
+                size: `${match[2]}${match[3]}x${match[4]}`,
+                length: '',
+                qty: 1,
+                weight: ''
+            });
+        }
+    }
+
+    return entries;
+}
+
+/**
+ * Calculate steel member weights using AISC weight table.
+ * @param {Array} scheduleEntries - From extractScheduleTable
+ * @param {number} defaultLength - Default member length in feet if not specified
+ * @returns {{ totalWeight: number, unit: string, breakdown: Array }}
+ */
+export function calculateMemberWeights(scheduleEntries, defaultLength = 25) {
+    let totalWeightLbs = 0;
+    const breakdown = [];
+
+    for (const entry of scheduleEntries) {
+        // Parse weight from section name (number after 'x' = approx lb/ft for W-shapes)
+        const sizeMatch = entry.size.match(/[WC](\d+)[xX](\d+(?:\.\d+)?)/);
+        if (!sizeMatch) continue;
+
+        const weightPerFt = parseFloat(sizeMatch[2]);
+        if (isNaN(weightPerFt) || weightPerFt <= 0) continue;
+
+        // Parse length
+        let lengthFt = defaultLength;
+        const lenMatch = entry.length.match(/(\d+)['′]/);
+        if (lenMatch) lengthFt = parseInt(lenMatch[1]);
+
+        const qty = entry.qty || 1;
+        const memberWeight = weightPerFt * lengthFt * qty;
+        totalWeightLbs += memberWeight;
+
+        breakdown.push({
+            mark: entry.mark,
+            size: entry.size,
+            weightPerFt,
+            length: lengthFt,
+            qty,
+            totalLbs: Math.round(memberWeight),
+            calculation: `${qty} × ${weightPerFt} lb/ft × ${lengthFt}' = ${Math.round(memberWeight)} lbs`
+        });
+    }
+
+    return {
+        totalWeight: Math.round(totalWeightLbs),
+        totalTons: Math.round((totalWeightLbs / 2000) * 100) / 100,
+        unit: 'lbs',
+        breakdown
+    };
+}
+
+export default { extractMeasurementsFromText, extractMeasurementsFromPDFs, formatExtractionForAI, extractPageLevelText, extractScheduleTable, calculateMemberWeights };

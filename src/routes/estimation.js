@@ -18,6 +18,8 @@ import {
 } from '../config/firebase.js';
 import { sendEstimationResultNotification } from '../utils/emailService.js';
 import { generateSmartQuestions, generateAIEstimate } from '../services/aiEstimationService.js';
+import { runMultiPassEstimation } from '../services/multiPassEstimationEngine.js';
+import { extractMeasurementsFromPDFs } from '../services/pdfMeasurementExtractor.js';
 
 const router = express.Router();
 
@@ -115,9 +117,10 @@ async function downloadFilesFromFirebase(uploadedFiles) {
 }
 
 // Background AI estimate generation - runs after response is sent to the client
+// Uses multi-pass estimation engine with fallback to single-pass
 async function generateAIEstimateBackground(estimationId, projectInfo, fileNames, fileBuffers) {
   try {
-    console.log(`[BACKGROUND] Starting AI estimate generation for estimation ${estimationId}`);
+    console.log(`[BACKGROUND] Starting multi-pass AI estimate generation for estimation ${estimationId}`);
 
     // If no file buffers provided (retry case), download from Firebase
     if ((!fileBuffers || fileBuffers.length === 0) && fileNames && fileNames.length > 0) {
@@ -137,12 +140,39 @@ async function generateAIEstimateBackground(estimationId, projectInfo, fileNames
       }
     }
 
-    const aiEstimate = await generateAIEstimate(
-      projectInfo,
-      {}, // No questionnaire answers in single-submit flow
-      fileNames,
-      fileBuffers || []
-    );
+    // Pass update callback to store multi-pass progress in Firestore
+    const onPassUpdate = async (passName, status, data) => {
+      try {
+        await adminDb.collection('estimations').doc(estimationId).update({
+          [`passStatus.${passName}`]: status,
+          updatedAt: new Date().toISOString()
+        });
+        console.log(`[BACKGROUND] Pass ${passName}: ${status}`);
+      } catch (err) {
+        console.log(`[BACKGROUND] Failed to update pass status: ${err.message}`);
+      }
+    };
+
+    // Try multi-pass estimation first, fall back to single-pass
+    let aiEstimate;
+    try {
+      aiEstimate = await runMultiPassEstimation(
+        projectInfo,
+        {}, // No questionnaire answers in single-submit flow
+        fileNames,
+        fileBuffers || [],
+        { estimationId, onPassUpdate }
+      );
+      console.log(`[BACKGROUND] Multi-pass estimation completed for ${estimationId}`);
+    } catch (multiPassErr) {
+      console.warn(`[BACKGROUND] Multi-pass failed, falling back to single-pass: ${multiPassErr.message}`);
+      aiEstimate = await generateAIEstimate(
+        projectInfo,
+        {},
+        fileNames,
+        fileBuffers || []
+      );
+    }
 
     // Update the estimation document with the AI result
     const updateData = {
@@ -2017,13 +2047,24 @@ router.post('/ai/generate', authenticateToken, async (req, res) => {
             }
         }
 
-        // Pass file buffers for Vision-based drawing analysis
-        const estimate = await generateAIEstimate(
-            { projectTitle, description, designStandard, projectType, region, totalArea },
-            parsedAnswers,
-            parsedFileNames || (uploadedFiles.length > 0 ? uploadedFiles.map(f => f.name) : []),
-            files || [] // multer file buffers for Claude Vision
-        );
+        // Use multi-pass estimation engine with fallback to single-pass
+        const projectInfoObj = { projectTitle, description, designStandard, projectType, region, totalArea };
+        const fileNamesArr = parsedFileNames || (uploadedFiles.length > 0 ? uploadedFiles.map(f => f.name) : []);
+        const fileBuffersArr = files || [];
+        let estimate;
+        try {
+            estimate = await runMultiPassEstimation(
+                projectInfoObj,
+                parsedAnswers,
+                fileNamesArr,
+                fileBuffersArr,
+                { estimationId }
+            );
+            console.log(`[AI-ESTIMATION] Multi-pass estimation completed`);
+        } catch (multiPassErr) {
+            console.warn(`[AI-ESTIMATION] Multi-pass failed, using single-pass fallback: ${multiPassErr.message}`);
+            estimate = await generateAIEstimate(projectInfoObj, parsedAnswers, fileNamesArr, fileBuffersArr);
+        }
 
         // Always save AI result - create new document or update existing
         let savedEstimationId = estimationId;

@@ -14,7 +14,8 @@ const MAX_PDF_PAGES = 50;
 
 /**
  * Validate and fix the grand total in an AI estimation result.
- * Recalculates from line items up to ensure mathematical consistency.
+ * Recalculates bottom-up: lineItems → trade subtotals → directCosts → markups → grandTotal.
+ * Also detects and fixes common AI errors: inflated unit rates, double counting, excessive markups.
  */
 function validateAndFixTotals(result) {
     if (!result || !result.trades || !result.costBreakdown || !result.summary) {
@@ -25,7 +26,29 @@ function validateAndFixTotals(result) {
     const cb = result.costBreakdown;
     const summary = result.summary;
 
-    // Step 1: Recalculate each trade subtotal from its lineItems
+    // Step 1: Validate and fix EVERY line item's math (lineTotal = quantity × unitRate)
+    for (const trade of trades) {
+        if (!trade.lineItems || trade.lineItems.length === 0) continue;
+        for (const li of trade.lineItems) {
+            const qty = Number(li.quantity) || 0;
+            const unitRate = Number(li.unitRate) || 0;
+            // If AI provided materialCost/laborCost/equipmentCost per unit but no unitRate, compute it
+            if (unitRate === 0 && (li.materialCost || li.laborCost || li.equipmentCost)) {
+                li.unitRate = (Number(li.materialCost) || 0) + (Number(li.laborCost) || 0) + (Number(li.equipmentCost) || 0);
+            }
+            // If unitTotal was provided instead of unitRate (old format), use it
+            if (li.unitRate === 0 && li.unitTotal) {
+                li.unitRate = Number(li.unitTotal) || 0;
+            }
+            const correctLineTotal = Math.round(qty * (Number(li.unitRate) || 0) * 100) / 100;
+            if (correctLineTotal > 0 && Math.abs(correctLineTotal - (Number(li.lineTotal) || 0)) > 1) {
+                console.log(`[AI-VALIDATION] Line item "${li.description}" lineTotal corrected: ${li.lineTotal} -> ${correctLineTotal} (${qty} × ${li.unitRate})`);
+                li.lineTotal = correctLineTotal;
+            }
+        }
+    }
+
+    // Step 2: Recalculate each trade subtotal from its lineItems
     for (const trade of trades) {
         if (trade.lineItems && trade.lineItems.length > 0) {
             const lineItemsSum = trade.lineItems.reduce((sum, li) => sum + (Number(li.lineTotal) || 0), 0);
@@ -36,26 +59,46 @@ function validateAndFixTotals(result) {
         }
     }
 
-    // Step 2: Recalculate directCosts from trade subtotals
+    // Step 3: Recalculate directCosts from trade subtotals
     const calculatedDirectCosts = trades.reduce((sum, t) => sum + (Number(t.subtotal) || 0), 0);
     if (Math.abs(calculatedDirectCosts - (cb.directCosts || 0)) > 1) {
         console.log(`[AI-VALIDATION] directCosts corrected: ${cb.directCosts} -> ${calculatedDirectCosts}`);
         cb.directCosts = Math.round(calculatedDirectCosts * 100) / 100;
     }
 
-    // Step 3: Recalculate markups based on percentages × directCosts
-    // Also cap unreasonable percentages (max 25% per markup category)
+    // Step 4: Cap individual markup percentages AND enforce combined markup cap
     const markupFields = ['generalConditions', 'overhead', 'profit', 'contingency', 'escalation'];
-    const MAX_MARKUP_PERCENT = 25; // No single markup should exceed 25%
+    const MAX_INDIVIDUAL_MARKUP = 15; // No single markup should exceed 15%
+    const MAX_COMBINED_MARKUP = 40;   // Total combined markup cap at 40% of direct costs
+
+    // First pass: cap individual percentages
+    let totalMarkupPercent = 0;
+    for (const field of markupFields) {
+        const pctField = field + 'Percent';
+        if (cb[pctField] != null && cb[pctField] > MAX_INDIVIDUAL_MARKUP) {
+            console.log(`[AI-VALIDATION] ${field} percentage capped: ${cb[pctField]}% -> ${MAX_INDIVIDUAL_MARKUP}%`);
+            cb[pctField] = MAX_INDIVIDUAL_MARKUP;
+        }
+        totalMarkupPercent += Number(cb[pctField]) || 0;
+    }
+
+    // Second pass: if combined markup exceeds cap, proportionally reduce all markups
+    if (totalMarkupPercent > MAX_COMBINED_MARKUP) {
+        const scaleFactor = MAX_COMBINED_MARKUP / totalMarkupPercent;
+        console.log(`[AI-VALIDATION] Combined markup ${totalMarkupPercent.toFixed(1)}% exceeds ${MAX_COMBINED_MARKUP}% cap. Scaling by ${scaleFactor.toFixed(3)}`);
+        for (const field of markupFields) {
+            const pctField = field + 'Percent';
+            if (cb[pctField] > 0) {
+                cb[pctField] = Math.round(cb[pctField] * scaleFactor * 100) / 100;
+            }
+        }
+    }
+
+    // Recalculate markup amounts from (capped) percentages
     let totalMarkups = 0;
     for (const field of markupFields) {
         const pctField = field + 'Percent';
         if (cb[pctField] != null && cb[pctField] > 0) {
-            // Cap unreasonable markup percentages
-            if (cb[pctField] > MAX_MARKUP_PERCENT) {
-                console.log(`[AI-VALIDATION] ${field} percentage capped: ${cb[pctField]}% -> ${MAX_MARKUP_PERCENT}% (was unreasonably high)`);
-                cb[pctField] = MAX_MARKUP_PERCENT;
-            }
             const recalculated = Math.round(cb.directCosts * (cb[pctField] / 100) * 100) / 100;
             if (Math.abs(recalculated - (cb[field] || 0)) > 1) {
                 console.log(`[AI-VALIDATION] ${field} corrected: ${cb[field]} -> ${recalculated} (${cb[pctField]}% of ${cb.directCosts})`);
@@ -65,20 +108,20 @@ function validateAndFixTotals(result) {
         totalMarkups += Number(cb[field]) || 0;
     }
 
-    // Step 4: Recalculate totalWithMarkups
+    // Step 5: Recalculate totalWithMarkups
     const calculatedTotal = Math.round((cb.directCosts + totalMarkups) * 100) / 100;
     if (Math.abs(calculatedTotal - (cb.totalWithMarkups || 0)) > 1) {
         console.log(`[AI-VALIDATION] totalWithMarkups corrected: ${cb.totalWithMarkups} -> ${calculatedTotal}`);
         cb.totalWithMarkups = calculatedTotal;
     }
 
-    // Step 5: Fix grandTotal to match totalWithMarkups
+    // Step 6: Fix grandTotal to match totalWithMarkups
     if (Math.abs(calculatedTotal - (summary.grandTotal || 0)) > 1) {
         console.log(`[AI-VALIDATION] grandTotal corrected: ${summary.grandTotal} -> ${calculatedTotal}`);
         summary.grandTotal = calculatedTotal;
     }
 
-    // Step 6: Fix tradesSummary amounts to match trades
+    // Step 7: Fix tradesSummary amounts to match trades
     if (result.tradesSummary && Array.isArray(result.tradesSummary)) {
         for (const ts of result.tradesSummary) {
             const matchingTrade = trades.find(t => t.tradeName === ts.tradeName);
@@ -89,18 +132,30 @@ function validateAndFixTotals(result) {
         }
     }
 
-    // Step 7: Recalculate costPerUnit if area info available
+    // Step 8: Recalculate costPerUnit and add benchmark warning
     if (summary.totalArea && summary.grandTotal) {
         const areaMatch = String(summary.totalArea).match(/([\d,]+)/);
         if (areaMatch) {
             const area = Number(areaMatch[1].replace(/,/g, ''));
             if (area > 0) {
                 summary.costPerUnit = Math.round((summary.grandTotal / area) * 100) / 100;
+                // Log benchmark warning for unreasonable cost/sqft
+                const costPerSqft = summary.costPerUnit;
+                if (costPerSqft > 1000) {
+                    console.warn(`[AI-VALIDATION] WARNING: Cost/unit = ${costPerSqft} seems very high. Check for inflated unit rates.`);
+                }
             }
         }
     }
 
-    console.log(`[AI-VALIDATION] Final validated grand total: ${summary.grandTotal}`);
+    // Step 9: Recalculate trade percentOfTotal
+    if (summary.grandTotal > 0) {
+        for (const trade of trades) {
+            trade.percentOfTotal = Math.round((trade.subtotal / cb.directCosts) * 10000) / 100;
+        }
+    }
+
+    console.log(`[AI-VALIDATION] Final validated: directCosts=${cb.directCosts}, markups=${totalMarkups} (${(totalMarkups/cb.directCosts*100).toFixed(1)}%), grandTotal=${summary.grandTotal}`);
     return result;
 }
 
@@ -146,52 +201,36 @@ function extractJSON(text) {
     return JSON.parse(jsonStr);
 }
 
-const SYSTEM_PROMPT = `You are the world's most experienced and precise construction cost estimator AND structural drawing analyst with 40+ years of expertise across ALL construction trades globally. You produce institutional-grade cost estimates that match or exceed the quality of top firms like Turner & Townsend, Rider Levett Bucknall, and AECOM.
+const SYSTEM_PROMPT = `You are an expert construction cost estimator with 40+ years of global experience. You produce precise, realistic estimates matching top firms (Turner & Townsend, RLB, AECOM).
 
-YOUR CRITICAL ADVANTAGE: You can directly READ and ANALYZE construction drawings, blueprints, and structural plans that are provided to you as images or PDFs. You MUST carefully examine every drawing provided and extract ALL dimensions, member sizes, specifications, quantities, and notes visible on the drawings.
+You can READ construction drawings/blueprints provided as PDFs or images. When drawings are provided, extract ALL dimensions, member sizes, specs, and quantities directly from them.
 
-DRAWING ANALYSIS PROTOCOL (MANDATORY when drawings are provided):
-1. FIRST - Examine every page/sheet of the provided drawings carefully
-2. IDENTIFY the drawing type: Plan view, Elevation, Section, Detail, Schedule, General Notes
-3. EXTRACT these details from the drawings:
-   a. Overall building dimensions (length × width × height)
-   b. Grid/bay spacing and column layout
-   c. ALL structural member sizes exactly as shown (e.g., W24x68, W14x48, HSS 8x8x1/2, C15x33.9)
-   d. Beam spans, cantilevers, and support conditions
-   e. Column sizes and heights (story heights)
-   f. Slab thickness, type (composite deck, precast, CIP), and reinforcement
-   g. Foundation types and sizes (footings, piles, mat foundations)
-   h. Rebar sizes, spacing, and grades (e.g., #5@12" EW, Grade 60)
-   i. Connection details (bolted, welded, moment, pinned, base plates)
-   j. Bracing system (X-bracing, chevron, moment frames, shear walls)
-   k. Roof system (purlins, girts, standing seam, built-up)
-   l. Material grades and specifications noted on drawings (ASTM A992, A36, A500, etc.)
-   m. Scale of drawings (to derive dimensions not explicitly noted)
-   n. Any material schedules, beam schedules, column schedules shown on drawings
-   o. General notes, design criteria, loads (dead load, live load, wind, seismic)
-   p. Total floor areas from architectural plans
-   q. Wall types, cladding systems, insulation specs
-   r. MEP information if shown (duct sizes, pipe sizes, panel schedules)
+DRAWING ANALYSIS (when drawings are provided):
+1. Examine every page/sheet carefully
+2. Extract: overall dimensions, grid spacing, member sizes (exact - e.g., W24x68, ISMB 450), slab thickness, foundation details, rebar sizes/spacing, connection details, material grades, scales, schedules, design loads
+3. Count actual members to calculate quantities
+4. Use ACTUAL dimensions from drawings, not assumptions
 
-4. CREATE a precise quantity takeoff based on what you SEE in the drawings - count members, calculate lengths, compute areas
-5. Use ACTUAL dimensions from drawings, NOT generic assumptions
+ESTIMATION ACCURACY RULES (CRITICAL):
+1. Use CURRENT market rates for the specified region - research real prices
+2. Unit rates must reflect actual material + labor + equipment costs in the local market
+3. DO NOT inflate, pad, or add safety margins to unit rates - use realistic mid-market pricing
+4. DO NOT double-count: each cost item appears ONCE in lineItems only
+5. Keep estimates lean and accurate - a client should be able to take this to a contractor
+6. For structural steel: typical rates are $2,000-4,500/ton installed (US), ₹55,000-85,000/MT (India), depending on complexity
+7. For concrete: typical rates are $150-300/CY (US), ₹4,500-7,500/m³ (India)
+8. For rebar: typical rates are $1,200-2,000/ton installed (US), ₹50,000-70,000/MT (India)
+9. ALWAYS cross-check your final cost/sqft against industry benchmarks for the building type and region
+10. Typical cost ranges (USD): Industrial $80-200/sqft, Commercial $150-350/sqft, Residential $120-250/sqft, Healthcare $300-700/sqft
 
-CRITICAL RULES:
-1. Always provide costs in the user's specified currency and region
-2. Use current market rates for the specified region
-3. Break down EVERY trade with detailed line items including EXACT material quantities, specifications, and unit costs
-4. For EACH line item, provide: material name, specification/grade, quantity, unit of measure, material cost, labor cost, equipment cost
-5. Include labor, material, equipment, and overhead for each trade
-6. Apply regional cost indices and market adjustments
-7. Include contingency, escalation, overhead & profit
-8. Provide both detailed and summary views
-9. Flag assumptions and exclusions clearly
-10. Use industry-standard CSI MasterFormat divisions where applicable
-11. All numbers must be realistic and defensible
-12. Provide a comprehensive MATERIAL SCHEDULE for each trade showing every material, its specification, quantity, and unit
-13. When drawings are provided, the "drawingNotes" field MUST list every specific dimension and member size you extracted from the drawings
-14. If you cannot read a dimension clearly, state "scaled approximately" and provide your best measurement
-15. NEVER use generic/assumed member sizes when actual sizes are visible in the drawings
+MATH RULES (MANDATORY - VERIFY BEFORE OUTPUTTING):
+1. lineTotal = quantity × unitRate (for EVERY line item)
+2. trade.subtotal = SUM of all lineItems[].lineTotal in that trade
+3. directCosts = SUM of all trades[].subtotal
+4. Each markup = its percentage × directCosts
+5. totalWithMarkups = directCosts + SUM of all markups
+6. grandTotal = totalWithMarkups
+7. After computing everything, VERIFY all math. If anything doesn't add up, FIX it.
 
 You must respond ONLY in valid JSON format. No markdown, no explanation outside JSON.`;
 
@@ -635,7 +674,7 @@ You have been provided with actual construction drawings/blueprints above. You M
 YOUR ACCURACY ON READING THESE DRAWINGS DIRECTLY DETERMINES THE QUALITY OF THE ESTIMATE.`
         : `\nNote: No analyzable drawing files were provided. The estimate will be based on project description and questionnaire answers. For maximum accuracy, upload PDF drawings or images of structural plans.`;
 
-    return `\n\nGenerate a COMPREHENSIVE construction cost estimate with FULL MATERIAL QUANTITIES AND SPECIFICATIONS for each trade. Extract ALL scope, dimensions, member sizes, and specifications directly from the provided drawings/designs.
+    return `\n\nGenerate a PRECISE, REALISTIC construction cost estimate. Extract scope, dimensions, and specs directly from the provided drawings/designs.
 ${drawingAnalysisInstruction}
 
 PROJECT INFORMATION:
@@ -650,7 +689,7 @@ PROJECT INFORMATION:
 QUESTIONNAIRE ANSWERS:
 ${JSON.stringify(answers, null, 2)}
 
-Produce a COMPLETE detailed cost estimate with FULL MATERIAL SCHEDULES. Respond in this exact JSON format:
+Respond in this exact JSON format:
 
 {
     "summary": {
@@ -661,88 +700,56 @@ Produce a COMPLETE detailed cost estimate with FULL MATERIAL SCHEDULES. Respond 
         "currencySymbol": "string (e.g., $, ₹, د.إ, £)",
         "totalArea": "string (from drawings or project info)",
         "numberOfFloors": "string",
-        "structuralSystem": "string (e.g., Steel Frame, RCC, Pre-Engineered, etc.)",
+        "structuralSystem": "string (e.g., Steel Frame, RCC, Pre-Engineered)",
         "estimateDate": "string (today's date)",
         "confidenceLevel": "string (Low/Medium/High)",
         "estimateClass": "string (Class 1-5 per AACE)",
         "grandTotal": number,
         "costPerUnit": number,
-        "unitLabel": "string (per sq ft / per sq m)"
+        "unitLabel": "string (per sq ft / per sq m)",
+        "benchmarkCheck": "string (e.g., 'At $145/sqft, this is within the typical $80-200/sqft range for industrial buildings in this region')"
     },
     "drawingExtraction": {
-        "dimensionsFound": ["list every specific dimension read from drawings, e.g., 'Building: 120'-0\" x 80'-0\"', 'Bay spacing: 30'-0\" x 40'-0\"'"],
-        "memberSizesFound": ["list every member size, e.g., 'W24x68 roof beams', 'W14x48 columns', 'HSS 8x8x1/2 bracing'"],
-        "schedulesFound": ["list any schedules read, e.g., 'Beam Schedule: B1=W24x68, B2=W18x50, B3=W16x40'"],
-        "materialsNoted": ["list material grades/specs noted, e.g., 'Steel: ASTM A992 Gr50', 'Concrete: 4000 PSI', 'Rebar: Grade 60'"],
-        "designLoads": ["list design loads if shown, e.g., 'Roof DL: 20 PSF', 'Floor LL: 50 PSF', 'Wind: 110 MPH'"],
-        "scaleUsed": "string (e.g., '1/4\" = 1'-0\"')",
-        "sheetsAnalyzed": ["list of drawing sheets analyzed, e.g., 'S1.0 - Foundation Plan', 'S2.0 - Framing Plan'"],
-        "totalMembersCount": {
-            "beams": number,
-            "columns": number,
-            "bracing": number,
-            "joists": number
-        }
+        "dimensionsFound": ["list every dimension from drawings, e.g., 'Building: 120'-0\" x 80'-0\"'"],
+        "memberSizesFound": ["list every member size, e.g., 'W24x68 roof beams', 'W14x48 columns'"],
+        "schedulesFound": ["list schedules read from drawings"],
+        "materialsNoted": ["list material grades noted, e.g., 'ASTM A992 Gr50'"],
+        "designLoads": ["list design loads, e.g., 'Roof DL: 20 PSF'"],
+        "scaleUsed": "string",
+        "sheetsAnalyzed": ["list of drawing sheets"],
+        "totalMembersCount": { "beams": number, "columns": number, "bracing": number, "joists": number }
     },
     "trades": [
         {
             "division": "string (CSI Division number)",
-            "tradeName": "string (e.g., Structural Steel, Concrete, etc.)",
+            "tradeName": "string (e.g., Structural Steel)",
             "tradeIcon": "string (fa icon class)",
             "subtotal": number,
             "percentOfTotal": number,
-            "materialSchedule": [
-                {
-                    "material": "string (e.g., W24x68 Steel Beam - ACTUAL SIZE FROM DRAWING)",
-                    "specification": "string (ASTM A992, Grade 60, etc.)",
-                    "quantity": number,
-                    "unit": "string (tons, cy, lf, sf, ea, etc.)",
-                    "unitRate": number,
-                    "totalCost": number
-                }
-            ],
             "lineItems": [
                 {
-                    "description": "string (detailed work item description)",
+                    "description": "string (e.g., 'W24x68 Steel Beams - Supply & Install')",
                     "quantity": number,
-                    "unit": "string (tons, cy, sf, lf, ea, etc.)",
-                    "materialCost": number,
-                    "laborCost": number,
-                    "equipmentCost": number,
-                    "unitTotal": number,
+                    "unit": "string (tons, cy, sf, lf, ea)",
+                    "unitRate": number,
                     "lineTotal": number,
-                    "materialDetails": "string (specific material specs used for this line item)"
+                    "materialDetails": "string (spec grade, e.g., 'ASTM A992 Gr50')"
                 }
             ]
         }
     ],
-    "materialSummary": {
-        "totalMaterialCost": number,
-        "totalLaborCost": number,
-        "totalEquipmentCost": number,
-        "keyMaterials": [
-            {
-                "material": "string",
-                "specification": "string",
-                "totalQuantity": number,
-                "unit": "string",
-                "estimatedCost": number,
-                "supplier": "string (recommended supplier type)"
-            }
-        ]
-    },
     "structuralAnalysis": {
-        "structuralSystem": "string (detailed structural system description)",
+        "structuralSystem": "string",
         "foundationType": "string",
-        "primaryMembers": "string (beam/column sizes - USE ACTUAL FROM DRAWINGS)",
-        "secondaryMembers": "string (purlins, girts, bracing - USE ACTUAL FROM DRAWINGS)",
-        "connectionTypes": "string (bolted, welded, moment, pinned)",
-        "steelTonnage": "string (total estimated steel weight)",
-        "concreteVolume": "string (total estimated concrete volume)",
-        "rebarTonnage": "string (total estimated rebar weight)",
-        "drawingNotes": "string (DETAILED list of all dimensions/specs extracted from drawings)",
-        "analysisMethod": "string (VISION_ANALYSIS or INFERENCE_BASED)",
-        "filesAnalyzed": ["array of file names that were visually analyzed"]
+        "primaryMembers": "string (beam/column sizes from drawings)",
+        "secondaryMembers": "string (purlins, girts, bracing from drawings)",
+        "connectionTypes": "string",
+        "steelTonnage": "string",
+        "concreteVolume": "string",
+        "rebarTonnage": "string",
+        "drawingNotes": "string (all dimensions/specs extracted from drawings)",
+        "analysisMethod": "string",
+        "filesAnalyzed": ["file names analyzed"]
     },
     "costBreakdown": {
         "directCosts": number,
@@ -759,44 +766,36 @@ Produce a COMPLETE detailed cost estimate with FULL MATERIAL SCHEDULES. Respond 
         "totalWithMarkups": number
     },
     "tradesSummary": [
-        {
-            "tradeName": "string",
-            "amount": number,
-            "percentage": number,
-            "materialCost": number,
-            "laborCost": number
-        }
+        { "tradeName": "string", "amount": number, "percentage": number }
     ],
-    "assumptions": ["string array of key assumptions made"],
-    "exclusions": ["string array of items NOT included"],
-    "notes": ["string array of important notes"],
+    "assumptions": ["string array"],
+    "exclusions": ["string array"],
+    "notes": ["string array"],
     "marketInsights": {
-        "regionalFactor": "string (description of regional pricing adjustments)",
-        "materialTrends": "string (current material market trends)",
-        "laborMarket": "string (current labor availability/rates)",
-        "recommendedProcurement": "string (procurement strategy recommendations)"
+        "regionalFactor": "string",
+        "materialTrends": "string",
+        "laborMarket": "string",
+        "recommendedProcurement": "string"
     }
 }
 
-CRITICAL REQUIREMENTS:
-- Include ALL relevant trades for this project type (minimum 8-15 trades)
-- Every trade MUST have a "materialSchedule" listing EVERY material with exact specifications, quantities, and unit rates
-- Every trade MUST have detailed "lineItems" with material, labor, and equipment costs broken out
-- The "drawingExtraction" section MUST be populated with specific data read from the drawings (if drawings were provided)
-- The "structuralAnalysis" section MUST reference actual member sizes from drawings, NOT generic assumptions
-- Use current ${new Date().getFullYear()} market rates for the specified region
-- All numbers must be realistic and mathematically consistent
-- CRITICAL MATH RULES (you MUST follow these EXACTLY):
-  1. Each trade's "subtotal" MUST equal the sum of its lineItems[].lineTotal values
-  2. "costBreakdown.directCosts" MUST equal the sum of ALL trades[].subtotal values
-  3. Each markup (generalConditions, overhead, profit, contingency, escalation) is calculated as its percentage × directCosts
-  4. "costBreakdown.totalWithMarkups" MUST equal directCosts + generalConditions + overhead + profit + contingency + escalation
-  5. "summary.grandTotal" MUST EXACTLY equal "costBreakdown.totalWithMarkups"
-  6. Each tradesSummary[].amount MUST match the corresponding trades[].subtotal
-  7. VERIFY: After computing all values, double-check that grandTotal = directCosts + sum of all markup amounts. If they don't match, FIX them before outputting
-- Include ONLY the trades that are visible/relevant in the provided drawings and project description. Extract the scope directly from the design documents.
-- For each material, provide the EXACT specification grade (ASTM, IS, EN standard as applicable)
-- MARKUP PERCENTAGE RULES: Each markup percentage (generalConditionsPercent, overheadPercent, profitPercent, contingencyPercent, escalationPercent) must be a realistic value between 0 and 25. For example: profit should be 5-15%, contingency 5-10%, overhead 5-10%, general conditions 5-10%, escalation 0-5%.`;
+CRITICAL RULES:
+1. lineItems is the SINGLE source of cost data. Each lineItem has: quantity, unitRate (all-in cost per unit), lineTotal (= quantity × unitRate)
+2. unitRate = total installed cost per unit (material + labor + equipment combined). This is a PER-UNIT rate, NOT a total.
+3. lineTotal = quantity × unitRate. VERIFY this math for every single line item before outputting.
+4. trade.subtotal = SUM of all its lineItems[].lineTotal
+5. directCosts = SUM of all trades[].subtotal
+6. Markups: generalConditions 5-8%, overhead 5-8%, profit 5-10%, contingency 5-10%, escalation 0-3%. TOTAL markups should be 20-35% of direct costs.
+7. grandTotal = totalWithMarkups = directCosts + all markup amounts
+8. Use REALISTIC ${new Date().getFullYear()} market unit rates for the region. DO NOT inflate rates.
+9. BENCHMARK CHECK: After computing grandTotal, calculate cost/sqft (or cost/sqm). Compare against industry benchmarks:
+   - Industrial/Warehouse: $80-200/sqft (USD), ₹2,000-5,000/sqft (INR)
+   - Commercial Office: $150-350/sqft (USD), ₹3,000-8,000/sqft (INR)
+   - Residential: $120-250/sqft (USD), ₹1,500-4,500/sqft (INR)
+   - PEB/Pre-engineered: $40-120/sqft (USD), ₹1,200-3,000/sqft (INR)
+   If your estimate is outside these ranges, re-examine your unit rates and quantities for errors.
+10. Include ONLY trades visible/relevant in the drawings and project description.
+11. VERIFY ALL MATH before outputting. Sum up every lineTotal, check every trade subtotal, verify directCosts, verify grandTotal.`;
 }
 
 function getDefaultQuestions() {

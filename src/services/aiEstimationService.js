@@ -201,27 +201,60 @@ function extractJSON(text) {
     return JSON.parse(jsonStr);
 }
 
-const SYSTEM_PROMPT = `You are an expert construction cost estimator with 40+ years of global experience. You produce precise, realistic estimates matching top firms (Turner & Townsend, RLB, AECOM).
+const SYSTEM_PROMPT = `You are the world's most precise construction cost estimator with 40+ years of global experience across every building type and region. You produce estimates that match actual construction costs within 5-10%, on par with top firms (Turner & Townsend, RLB, AECOM, Rider Levett Bucknall).
 
 You can READ construction drawings/blueprints provided as PDFs or images. When drawings are provided, extract ALL dimensions, member sizes, specs, and quantities directly from them.
 
-DRAWING ANALYSIS (when drawings are provided):
-1. Examine every page/sheet carefully
-2. Extract: overall dimensions, grid spacing, member sizes (exact - e.g., W24x68, ISMB 450), slab thickness, foundation details, rebar sizes/spacing, connection details, material grades, scales, schedules, design loads
-3. Count actual members to calculate quantities
-4. Use ACTUAL dimensions from drawings, not assumptions
+DRAWING ANALYSIS METHODOLOGY (follow this exact sequence):
+STEP 1 - INVENTORY: List every drawing sheet, its type (plan/elevation/section/detail/schedule), and its scale
+STEP 2 - DIMENSIONS: Extract ALL building dimensions from plans: overall footprint, grid spacings, bay sizes, floor-to-floor heights, eave/ridge heights
+STEP 3 - MEMBER SIZES: Read EVERY member callout/mark (B1, C2, etc.) and its corresponding size from schedules or callouts (W24x68, ISMB450, etc.)
+STEP 4 - COUNT: Go grid-by-grid and count members systematically. Cross-reference plan counts with schedule quantities.
+STEP 5 - CALCULATE: Compute quantities using standard formulas:
+   - Steel tonnage: weight-per-foot × length × count ÷ 2000 (the number after 'x' in W-shapes = approximate lb/ft, e.g., W24x68 = 68 lb/ft)
+   - Concrete volume: Length × Width × Depth for each element (footings, slabs, grade beams, walls)
+   - Rebar: estimate 80-150 lbs per CY of concrete depending on element type
+   - Area takeoffs: measure from grid dimensions, not assumptions
+STEP 6 - VERIFY: Check each quantity against rules of thumb:
+   - Steel: typically 5-15 psf for steel buildings, 3-8 psf for light commercial
+   - Concrete: footings ~0.5-1.5 CY per column, SOG 4-8" typical, elevated slabs 6-12"
+   - Rebar: footings ~100-150 lbs/CY, slabs ~60-100 lbs/CY, walls ~120-180 lbs/CY
 
 ESTIMATION ACCURACY RULES (CRITICAL):
-1. Use CURRENT market rates for the specified region - research real prices
+1. Use CURRENT ${new Date().getFullYear()} market rates for the specified region - research real prices
 2. Unit rates must reflect actual material + labor + equipment costs in the local market
 3. DO NOT inflate, pad, or add safety margins to unit rates - use realistic mid-market pricing
 4. DO NOT double-count: each cost item appears ONCE in lineItems only
 5. Keep estimates lean and accurate - a client should be able to take this to a contractor
-6. For structural steel: typical rates are $2,000-4,500/ton installed (US), ₹55,000-85,000/MT (India), depending on complexity
-7. For concrete: typical rates are $150-300/CY (US), ₹4,500-7,500/m³ (India)
-8. For rebar: typical rates are $1,200-2,000/ton installed (US), ₹50,000-70,000/MT (India)
-9. ALWAYS cross-check your final cost/sqft against industry benchmarks for the building type and region
-10. Typical cost ranges (USD): Industrial $80-200/sqft, Commercial $150-350/sqft, Residential $120-250/sqft, Healthcare $300-700/sqft
+6. STRUCTURAL STEEL RATES (installed, ${new Date().getFullYear()}):
+   - USA: Light members $3,000-4,500/ton, Medium $2,500-3,500/ton, Heavy $2,200-3,000/ton
+   - India: ₹55,000-85,000/MT (material + fabrication + erection)
+   - UAE: AED 8,000-14,000/MT
+   - UK: £2,500-4,000/tonne
+7. CONCRETE RATES (in-place):
+   - USA: $150-300/CY (includes formwork, placement, finishing)
+   - India: ₹4,500-7,500/m³
+   - UAE: AED 600-1,200/m³
+8. REBAR RATES (in-place):
+   - USA: $1,200-2,000/ton
+   - India: ₹50,000-70,000/MT
+   - UAE: AED 3,500-6,000/MT
+9. ALWAYS cross-check your final cost/sqft against these benchmarks:
+   - Industrial/Warehouse: $80-200/sqft | ₹2,000-5,000/sqft | AED 300-800/sqft
+   - Commercial Office: $150-350/sqft | ₹3,000-8,000/sqft | AED 600-1,400/sqft
+   - Residential: $120-250/sqft | ₹1,500-4,500/sqft | AED 400-1,000/sqft
+   - Healthcare: $300-700/sqft | ₹5,000-15,000/sqft | AED 1,000-2,500/sqft
+   - PEB/Pre-engineered: $40-120/sqft | ₹1,200-3,000/sqft | AED 150-450/sqft
+   - Educational: $200-400/sqft | ₹3,000-7,000/sqft
+   - Hospitality: $200-500/sqft | ₹4,000-10,000/sqft
+10. If your estimate falls outside these ranges, RECALCULATE before outputting.
+
+QUANTITY CALCULATION RULES:
+1. For steel: ALWAYS show your calculation. Example: "12 beams × W24x68 × 30'-0" = 12 × 68 lb/ft × 30 ft = 24,480 lbs = 12.24 tons"
+2. For concrete: ALWAYS show volume calculation. Example: "24 footings × 6'×6'×2' = 24 × 72 CF = 1,728 CF = 64 CY"
+3. Cross-reference beam schedule quantities with plan counts - they MUST match
+4. Include connection material: typically 8-12% of main steel tonnage
+5. Include waste factors: steel 2-5%, concrete 5-8%, rebar 5-10%
 
 MATH RULES (MANDATORY - VERIFY BEFORE OUTPUTTING):
 1. lineTotal = quantity × unitRate (for EVERY line item)
@@ -231,6 +264,7 @@ MATH RULES (MANDATORY - VERIFY BEFORE OUTPUTTING):
 5. totalWithMarkups = directCosts + SUM of all markups
 6. grandTotal = totalWithMarkups
 7. After computing everything, VERIFY all math. If anything doesn't add up, FIX it.
+8. Show your quantity calculation traces in the "drawingNotes" field
 
 You must respond ONLY in valid JSON format. No markdown, no explanation outside JSON.`;
 
@@ -339,7 +373,7 @@ async function extractPdfText(fileBuffers) {
                 textResults.push({
                     fileName: file.originalname,
                     pages: result.numpages,
-                    text: result.text.substring(0, 8000) // Limit text to avoid token overflow
+                    text: result.text.substring(0, 100000) // Allow up to 100K chars for full schedule data extraction
                 });
                 console.log(`[AI-VISION] Extracted ${result.text.length} chars of text from ${file.originalname} (${result.numpages} pages)`);
             } else {
@@ -353,8 +387,26 @@ async function extractPdfText(fileBuffers) {
     return textResults;
 }
 
-export async function generateSmartQuestions(projectInfo) {
+export async function generateSmartQuestions(projectInfo, measurementData = null) {
     try {
+        // Build measurement context if pre-extracted data is available
+        let measurementContext = '';
+        if (measurementData && measurementData.combined && measurementData.combined.filesWithData > 0) {
+            const c = measurementData.combined;
+            const dims = [...(c.dimensions?.imperial || []), ...(c.dimensions?.metric || [])];
+            const members = Object.values(c.memberSizes || {}).flat();
+            const areas = c.dimensions?.areas || [];
+            measurementContext = `\n\nPRE-EXTRACTED DATA FROM UPLOADED DRAWINGS (auto-detected):
+${dims.length > 0 ? `- Dimensions found: ${dims.slice(0, 10).join(', ')}` : ''}
+${c.dimensions?.gridSpacings?.length > 0 ? `- Grid spacings: ${c.dimensions.gridSpacings.join(', ')}` : ''}
+${areas.length > 0 ? `- Areas detected: ${areas.join(', ')}` : ''}
+${members.length > 0 ? `- Member sizes: ${members.slice(0, 10).join(', ')}` : ''}
+${c.materialSpecs?.steelGrades?.length > 0 ? `- Steel grades: ${c.materialSpecs.steelGrades.join(', ')}` : ''}
+${c.materialSpecs?.concreteGrades?.length > 0 ? `- Concrete grades: ${c.materialSpecs.concreteGrades.join(', ')}` : ''}
+
+IMPORTANT: Since drawing data was auto-detected, generate CONFIRMATION questions with "defaultValue" pre-filled from the detected data. For example, if area "9,600 SF" was detected, set defaultValue: "9,600 sq ft" on the area question. Ask the user to CONFIRM or CORRECT the auto-detected values rather than asking open-ended questions.`;
+        }
+
         const prompt = `Based on this project information, generate targeted follow-up questions needed to produce an accurate construction cost estimate.
 
 PROJECT INFO:
@@ -364,6 +416,7 @@ PROJECT INFO:
 - Project Type: ${projectInfo.projectType || 'Not specified'}
 - Region/Location: ${projectInfo.region || 'Not specified'}
 - Files uploaded: ${projectInfo.fileCount} files (${projectInfo.fileNames?.join(', ') || 'N/A'})
+${measurementContext}
 
 NOTE: Analyze the uploaded file names carefully. If DWG/CAD files are present, the user has construction drawings - ask questions about structural details, member sizes, connection types, and specifications that would be found in those drawings. Always ask about total project area/dimensions since this is critical for estimation.
 
@@ -382,7 +435,8 @@ Respond in this exact JSON format:
                     "type": "select",
                     "required": true,
                     "options": ["Commercial Office", "Residential", "Industrial", "Retail", "Healthcare", "Educational", "Mixed-Use", "Other"],
-                    "helpText": "This determines applicable building codes and cost standards"
+                    "helpText": "This determines applicable building codes and cost standards",
+                    "defaultValue": ""
                 },
                 {
                     "id": "q2",
@@ -391,7 +445,8 @@ Respond in this exact JSON format:
                     "inputType": "text",
                     "required": true,
                     "placeholder": "e.g., 50,000 sq ft or 4,645 sq m",
-                    "helpText": "Total gross floor area including all levels"
+                    "helpText": "Total gross floor area including all levels",
+                    "defaultValue": ""
                 }
             ]
         }
@@ -399,6 +454,7 @@ Respond in this exact JSON format:
 }
 
 Question types allowed: "select" (dropdown with options), "input" (text/number field), "multiselect" (multiple choice), "textarea" (long text).
+Each question can include an optional "defaultValue" field to pre-fill answers from auto-detected drawing data.
 
 Focus questions on:
 1. Project type, size, and location/region
@@ -414,8 +470,8 @@ Focus questions on:
 Make questions specific to what was described in the project info.`;
 
         const stream = await anthropic.messages.stream({
-            model: 'claude-sonnet-4-5-20250929',
-            max_tokens: 4000,
+            model: 'claude-opus-4-20250514',
+            max_tokens: 6000,
             system: SYSTEM_PROMPT,
             messages: [{ role: 'user', content: prompt }]
         });
@@ -512,14 +568,20 @@ export async function generateAIEstimate(projectInfo, answers, fileNames, fileBu
         // Call Claude with streaming (required for large vision payloads that take >10 min)
         try {
             const stream = await anthropic.messages.stream({
-                model: 'claude-sonnet-4-5-20250929',
-                max_tokens: 32000,
+                model: 'claude-opus-4-20250514',
+                max_tokens: 64000,
+                thinking: {
+                    type: 'enabled',
+                    budget_tokens: 16000
+                },
                 system: SYSTEM_PROMPT,
                 messages: [{ role: 'user', content: messageContent }]
             });
 
             const response = await stream.finalMessage();
-            const text = response.content[0].text;
+            // With extended thinking enabled, the response may contain thinking blocks before the text block
+            const textBlock = response.content.find(block => block.type === 'text');
+            const text = textBlock ? textBlock.text : response.content[0].text;
             const result = extractJSON(text);
 
             // Validate and fix grand total calculation
@@ -629,14 +691,20 @@ async function generateAIEstimateTextFallback(projectInfo, answers, fileNames, f
     fallbackContent.push({ type: 'text', text: textPrompt });
 
     const stream = await anthropic.messages.stream({
-        model: 'claude-sonnet-4-5-20250929',
-        max_tokens: 32000,
+        model: 'claude-opus-4-20250514',
+        max_tokens: 64000,
+        thinking: {
+            type: 'enabled',
+            budget_tokens: 16000
+        },
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: fallbackContent }]
     });
 
     const response = await stream.finalMessage();
-    const text = response.content[0].text;
+    // With extended thinking enabled, the response may contain thinking blocks before the text block
+    const textBlock = response.content.find(block => block.type === 'text');
+    const text = textBlock ? textBlock.text : response.content[0].text;
     const result = extractJSON(text);
 
     // Validate and fix grand total calculation
@@ -834,4 +902,5 @@ function getDefaultQuestions() {
     };
 }
 
+export { buildFileContentBlocks, extractPdfText, extractJSON, validateAndFixTotals, buildEstimationTextPrompt, SYSTEM_PROMPT };
 export default { generateSmartQuestions, generateAIEstimate, getDefaultQuestions };

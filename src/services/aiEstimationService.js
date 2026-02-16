@@ -413,10 +413,13 @@ export async function generateAIEstimate(projectInfo, answers, fileNames, fileBu
         const messageContent = [];
 
         if (hasAnalyzableFiles) {
-            // STEP 1: Add drawing analysis instruction
+            // STEP 1: Add drawing analysis instruction (scope-aware when scope is provided)
+            const scopeContext = projectInfo.scopeOfWork
+                ? `\n\nThe client has provided a specific SCOPE OF WORK. As you analyze these drawings, focus on extracting dimensions, quantities, and specifications that are relevant to the client's scope items. The full scope will be provided in the estimation prompt below.`
+                : '';
             messageContent.push({
                 type: 'text',
-                text: `🔍 DRAWING ANALYSIS MODE ACTIVATED\n\nI am providing you with ${fileBuffers.length} construction drawing file(s) for direct visual analysis. You MUST:\n1. Examine EVERY page of EVERY drawing\n2. Extract ALL dimensions, member sizes, and specifications you can read\n3. Build your quantity takeoff from what you ACTUALLY SEE in these drawings\n4. List specific dimensions you extracted in the "drawingNotes" field\n\nHere are the drawing files:\n`
+                text: `🔍 DRAWING ANALYSIS MODE ACTIVATED\n\nI am providing you with ${fileBuffers.length} construction drawing file(s) for direct visual analysis. You MUST:\n1. Examine EVERY page of EVERY drawing\n2. Extract ALL dimensions, member sizes, and specifications you can read\n3. Build your quantity takeoff from what you ACTUALLY SEE in these drawings\n4. List specific dimensions you extracted in the "drawingNotes" field${scopeContext}\n\nHere are the drawing files:\n`
             });
 
             // STEP 2: Add actual file content blocks (PDFs and images)
@@ -571,8 +574,77 @@ async function generateAIEstimateTextFallback(projectInfo, answers, fileNames, f
  * Build the text portion of the estimation prompt.
  */
 function buildEstimationTextPrompt(projectInfo, answers, fileNames, hasVisionFiles) {
-    const drawingAnalysisInstruction = hasVisionFiles
-        ? `\n\n🎯 CRITICAL - VISION-BASED ANALYSIS:
+    const hasScope = !!projectInfo.scopeOfWork;
+
+    // Build a unified instruction that ties scope + drawings together
+    let analysisInstruction;
+
+    if (hasScope && hasVisionFiles) {
+        // BEST CASE: Client provided both scope AND drawings - cross-reference them
+        analysisInstruction = `\n\n🎯🎯 CRITICAL - SCOPE-DRIVEN DRAWING ANALYSIS (HIGHEST ACCURACY MODE):
+
+The client has provided BOTH their exact scope of work AND construction drawings. You MUST cross-reference them:
+
+═══════════════════════════════════════════════════════════
+CLIENT'S EXACT SCOPE OF ESTIMATION REQUIREMENT:
+═══════════════════════════════════════════════════════════
+${projectInfo.scopeOfWork}
+═══════════════════════════════════════════════════════════
+
+YOUR MANDATORY PROCESS:
+STEP 1 - READ THE SCOPE: Parse every line item the client has written above. This defines EXACTLY what needs to be estimated.
+STEP 2 - ANALYZE THE DRAWINGS: For EACH scope item, find the corresponding details in the uploaded drawings:
+   - Extract ACTUAL dimensions, member sizes, quantities, and specifications from the drawings
+   - Count actual members (beams, columns, bracing, purlins, etc.) shown in plans
+   - Read beam schedules, column schedules, rebar schedules, and material notes
+   - Note drawing scale and derive any unspecified dimensions
+   - Cross-reference plan views with sections and elevations
+   - Read general notes for material grades (ASTM, IS, EN standards), design loads, and specs
+STEP 3 - MAP SCOPE TO DRAWINGS: For each scope line item, produce a detailed cost breakdown using the EXACT quantities and specifications from the drawings. The trades in your estimate MUST directly correspond to the client's scope items.
+STEP 4 - VERIFY ACCURACY: Cross-check that every scope item has been estimated and that all drawing dimensions have been used (not generic assumptions).
+
+RULES:
+- Generate cost estimates ONLY for items/trades/work listed in the client's scope above
+- Use ACTUAL member sizes and dimensions from the drawings (e.g., W24x68, not "typical wide flange")
+- If the client mentions specific materials, brands, or specifications, use those exact specs
+- If the scope mentions specific quantities/dimensions, use those exact values
+- Do NOT add trades or work items NOT mentioned in the scope unless absolutely essential
+- Do NOT use generic assumptions when actual values are visible in the drawings
+- In "drawingNotes", LIST EVERY specific dimension/size you extracted and which scope item it maps to
+- If a dimension is unclear, mark it as "scaled approximately X'-Y""
+
+YOUR ACCURACY ON MATCHING THE CLIENT'S SCOPE TO THE ACTUAL DRAWING DATA DETERMINES THE QUALITY OF THE ESTIMATE.`;
+
+    } else if (hasScope && !hasVisionFiles) {
+        // Client provided scope but no analyzable drawings
+        analysisInstruction = `\n\n🎯 CRITICAL - SCOPE-DRIVEN ESTIMATION:
+
+The client has provided their exact scope of work. No analyzable drawings were uploaded, so estimate based on the scope text, project description, and questionnaire answers.
+
+═══════════════════════════════════════════════════════════
+CLIENT'S EXACT SCOPE OF ESTIMATION REQUIREMENT:
+═══════════════════════════════════════════════════════════
+${projectInfo.scopeOfWork}
+═══════════════════════════════════════════════════════════
+
+YOUR MANDATORY PROCESS:
+STEP 1 - READ THE SCOPE: Parse every line item the client has written above. This defines EXACTLY what needs to be estimated.
+STEP 2 - ESTIMATE EACH SCOPE ITEM: For each scope line item, produce a detailed cost breakdown with materials, labor, equipment, and overhead.
+STEP 3 - USE CLIENT'S SPECS: If the client mentions specific materials, brands, member sizes, or specifications, use those exact values.
+
+RULES:
+- Generate cost estimates ONLY for items/trades/work listed in the client's scope
+- The trades in your estimate MUST directly correspond to the client's scope items
+- If the scope mentions specific quantities or dimensions, use those exact values
+- Do NOT add trades or work items NOT mentioned in the scope unless absolutely essential
+- Where the scope lacks detail, use reasonable industry-standard assumptions and flag them clearly
+- For maximum accuracy, recommend the client upload PDF drawings
+
+NOTE: Without drawings, some quantities and dimensions may be approximate. Flag all assumptions.`;
+
+    } else if (!hasScope && hasVisionFiles) {
+        // Drawings provided but no explicit scope - analyze drawings comprehensively
+        analysisInstruction = `\n\n🎯 CRITICAL - VISION-BASED ANALYSIS:
 You have been provided with actual construction drawings/blueprints above. You MUST:
 1. Use ONLY the dimensions, member sizes, and specifications you can READ from the drawings
 2. Do NOT use generic assumptions when the actual value is visible in the drawings
@@ -583,26 +655,17 @@ You have been provided with actual construction drawings/blueprints above. You M
 7. Read general notes for material grades, design loads, and specifications
 8. In your "drawingNotes" field, LIST EVERY specific dimension/size you extracted from the drawings (e.g., "Column grid: 30'-0" x 40'-0" typical bay, W14x48 columns at gridlines A-F, W24x68 beams at roof level")
 9. If a dimension is unclear, mark it as "scaled approximately X'-Y""
+10. Estimate ALL relevant trades visible in or implied by the drawings
 
-YOUR ACCURACY ON READING THESE DRAWINGS DIRECTLY DETERMINES THE QUALITY OF THE ESTIMATE.`
-        : `\nNote: No analyzable drawing files were provided. The estimate will be based on project description and questionnaire answers. For maximum accuracy, upload PDF drawings or images of structural plans.`;
+YOUR ACCURACY ON READING THESE DRAWINGS DIRECTLY DETERMINES THE QUALITY OF THE ESTIMATE.`;
 
-    const scopeSection = projectInfo.scopeOfWork
-        ? `\n\nCLIENT'S EXACT SCOPE OF ESTIMATION REQUIREMENT (MANDATORY - FOLLOW THIS PRECISELY):
----
-${projectInfo.scopeOfWork}
----
-IMPORTANT: The above scope written by the client defines EXACTLY what needs to be estimated. You MUST:
-1. Generate cost estimates ONLY for the items/trades/work listed in the client's scope above
-2. Break down each scope item into detailed line items with materials, labor, and equipment costs
-3. If the client mentions specific materials, brands, or specifications, use those in the estimate
-4. The trades in your estimate should directly map to the scope items the client has listed
-5. Do NOT add trades or work items that are NOT mentioned in the client's scope unless they are absolutely essential dependencies
-6. If the scope mentions quantities or dimensions, use those exact values`
-        : '';
+    } else {
+        // No scope, no drawings - basic estimation from description and answers
+        analysisInstruction = `\nNote: No scope of work or analyzable drawing files were provided. The estimate will be based on project description and questionnaire answers only. For maximum accuracy, provide a detailed scope and upload PDF drawings.`;
+    }
 
     return `\n\nGenerate a COMPREHENSIVE, WORLD-CLASS construction cost estimate with FULL MATERIAL QUANTITIES AND SPECIFICATIONS for each trade.
-${drawingAnalysisInstruction}
+${analysisInstruction}
 
 PROJECT INFORMATION:
 - Title: ${projectInfo.projectTitle}
@@ -610,8 +673,8 @@ PROJECT INFORMATION:
 - Design Standard: ${projectInfo.designStandard || 'Not specified'}
 - Project Type: ${projectInfo.projectType || 'Not specified'}
 - Region/Location: ${projectInfo.region || 'Not specified'}
+- Total Area: ${projectInfo.totalArea || 'Not specified'}
 - Files: ${fileNames?.join(', ') || 'N/A'}
-${scopeSection}
 
 QUESTIONNAIRE ANSWERS:
 ${JSON.stringify(answers, null, 2)}
@@ -745,11 +808,13 @@ Produce a COMPLETE detailed cost estimate with FULL MATERIAL SCHEDULES. Respond 
 }
 
 CRITICAL REQUIREMENTS:
-- Include ALL relevant trades for this project type (minimum 8-15 trades)
+- ${hasScope ? 'SCOPE COMPLIANCE: Every trade in your estimate MUST map to a line item in the client\'s scope. Do NOT invent trades the client did not ask for.' : 'Include ALL relevant trades for this project type (minimum 8-15 trades)'}
+- ${hasScope ? 'If the client\'s scope mentions specific quantities, dimensions, material specs, or brands - use EXACTLY those values, do not substitute.' : ''}
 - Every trade MUST have a "materialSchedule" listing EVERY material with exact specifications, quantities, and unit rates
 - Every trade MUST have detailed "lineItems" with material, labor, and equipment costs broken out
 - The "drawingExtraction" section MUST be populated with specific data read from the drawings (if drawings were provided)
 - The "structuralAnalysis" section MUST reference actual member sizes from drawings, NOT generic assumptions
+- ${hasVisionFiles && hasScope ? 'CROSS-REFERENCE: For each scope item, extract the EXACT dimensions and member sizes from the drawings. Do not use generic/assumed values when the drawing shows the actual value.' : ''}
 - Use current ${new Date().getFullYear()} market rates for the specified region
 - All numbers must be realistic and mathematically consistent
 - CRITICAL MATH RULES (you MUST follow these EXACTLY):
@@ -760,7 +825,7 @@ CRITICAL REQUIREMENTS:
   5. "summary.grandTotal" MUST EXACTLY equal "costBreakdown.totalWithMarkups"
   6. Each tradesSummary[].amount MUST match the corresponding trades[].subtotal
   7. VERIFY: After computing all values, double-check that grandTotal = directCosts + sum of all markup amounts. If they don't match, FIX them before outputting
-- Include: Site Work, Concrete/Foundations, Structural (Steel/Rebar), Exterior Envelope, Roofing, Interior Finishes, MEP (Mechanical/Electrical/Plumbing), Fire Protection, Elevators (if applicable), Specialties, General Conditions, etc.
+- ${hasScope ? 'Include ONLY the trades from the client\'s scope plus any essential dependencies (e.g., general conditions, mobilization)' : 'Include: Site Work, Concrete/Foundations, Structural (Steel/Rebar), Exterior Envelope, Roofing, Interior Finishes, MEP (Mechanical/Electrical/Plumbing), Fire Protection, Elevators (if applicable), Specialties, General Conditions, etc.'}
 - For each material, provide the EXACT specification grade (ASTM, IS, EN standard as applicable)`;
 }
 

@@ -132,17 +132,77 @@ function validateAndFixTotals(result) {
         }
     }
 
-    // Step 8: Recalculate costPerUnit and add benchmark warning
+    // Step 8: Cost/sqft benchmark ENFORCEMENT - hard cap based on project type
     if (summary.totalArea && summary.grandTotal) {
         const areaMatch = String(summary.totalArea).match(/([\d,]+)/);
         if (areaMatch) {
             const area = Number(areaMatch[1].replace(/,/g, ''));
             if (area > 0) {
                 summary.costPerUnit = Math.round((summary.grandTotal / area) * 100) / 100;
-                // Log benchmark warning for unreasonable cost/sqft
-                const costPerSqft = summary.costPerUnit;
-                if (costPerSqft > 1000) {
-                    console.warn(`[AI-VALIDATION] WARNING: Cost/unit = ${costPerSqft} seems very high. Check for inflated unit rates.`);
+
+                // Determine max acceptable cost/sqft based on project type and currency
+                const projectType = (summary.projectType || '').toLowerCase();
+                const currency = (summary.currency || 'USD').toUpperCase();
+                const isINR = currency === 'INR' || (summary.currencySymbol || '').includes('₹');
+
+                let maxCostPerUnit;
+                if (isINR) {
+                    // INR benchmarks (per sqft)
+                    if (projectType.includes('peb') || projectType.includes('pre-eng')) maxCostPerUnit = 3000;
+                    else if (projectType.includes('industrial') || projectType.includes('warehouse')) maxCostPerUnit = 5000;
+                    else if (projectType.includes('commercial') || projectType.includes('office')) maxCostPerUnit = 8000;
+                    else if (projectType.includes('healthcare') || projectType.includes('hospital')) maxCostPerUnit = 12000;
+                    else maxCostPerUnit = 6000; // default cap
+                } else {
+                    // USD benchmarks (per sqft)
+                    if (projectType.includes('peb') || projectType.includes('pre-eng')) maxCostPerUnit = 120;
+                    else if (projectType.includes('industrial') || projectType.includes('warehouse')) maxCostPerUnit = 220;
+                    else if (projectType.includes('commercial') || projectType.includes('office')) maxCostPerUnit = 400;
+                    else if (projectType.includes('healthcare') || projectType.includes('hospital')) maxCostPerUnit = 800;
+                    else maxCostPerUnit = 350; // default cap
+                }
+
+                // If cost/sqft exceeds 1.5x the benchmark HIGH, proportionally scale down ALL line items
+                const hardCap = maxCostPerUnit * 1.5;
+                if (summary.costPerUnit > hardCap) {
+                    const scaleFactor = hardCap / summary.costPerUnit;
+                    console.warn(`[AI-VALIDATION] COST/SQFT ENFORCEMENT: ${summary.costPerUnit.toFixed(0)} exceeds hard cap ${hardCap.toFixed(0)} (${maxCostPerUnit} × 1.5). Scaling all costs by ${scaleFactor.toFixed(3)}`);
+
+                    // Scale down every line item
+                    for (const trade of trades) {
+                        if (!trade.lineItems) continue;
+                        for (const li of trade.lineItems) {
+                            li.unitRate = Math.round((Number(li.unitRate) || 0) * scaleFactor * 100) / 100;
+                            li.lineTotal = Math.round((Number(li.quantity) || 0) * li.unitRate * 100) / 100;
+                        }
+                        trade.subtotal = Math.round(trade.lineItems.reduce((s, li) => s + (Number(li.lineTotal) || 0), 0) * 100) / 100;
+                    }
+
+                    // Recalculate everything from the scaled line items
+                    cb.directCosts = Math.round(trades.reduce((s, t) => s + (Number(t.subtotal) || 0), 0) * 100) / 100;
+                    let scaledMarkups = 0;
+                    for (const field of markupFields) {
+                        const pctField = field + 'Percent';
+                        if (cb[pctField] > 0) {
+                            cb[field] = Math.round(cb.directCosts * (cb[pctField] / 100) * 100) / 100;
+                        }
+                        scaledMarkups += Number(cb[field]) || 0;
+                    }
+                    cb.totalWithMarkups = Math.round((cb.directCosts + scaledMarkups) * 100) / 100;
+                    summary.grandTotal = cb.totalWithMarkups;
+                    summary.costPerUnit = Math.round((summary.grandTotal / area) * 100) / 100;
+
+                    // Update tradesSummary
+                    if (result.tradesSummary) {
+                        for (const ts of result.tradesSummary) {
+                            const mt = trades.find(t => t.tradeName === ts.tradeName);
+                            if (mt) ts.amount = mt.subtotal;
+                        }
+                    }
+
+                    console.warn(`[AI-VALIDATION] After enforcement: cost/sqft = ${summary.costPerUnit.toFixed(0)}, grandTotal = ${summary.grandTotal}`);
+                } else if (summary.costPerUnit > maxCostPerUnit) {
+                    console.log(`[AI-VALIDATION] Cost/sqft ${summary.costPerUnit.toFixed(0)} is above benchmark ${maxCostPerUnit} but within 1.5x tolerance`);
                 }
             }
         }
@@ -201,38 +261,59 @@ function extractJSON(text) {
     return JSON.parse(jsonStr);
 }
 
-const SYSTEM_PROMPT = `You are an expert construction cost estimator with 40+ years of global experience. You produce precise, realistic estimates matching top firms (Turner & Townsend, RLB, AECOM).
+const SYSTEM_PROMPT = `You are an expert construction cost estimator. You produce precise, realistic estimates that contractors can actually use for bidding.
 
-You can READ construction drawings/blueprints provided as PDFs or images. When drawings are provided, extract ALL dimensions, member sizes, specs, and quantities directly from them.
+CORE PRINCIPLE: Accuracy over safety. A good estimate is one that matches the ACTUAL market cost, not an inflated "safe" number. Contractors need realistic numbers to win bids.
 
-DRAWING ANALYSIS (when drawings are provided):
-1. Examine every page/sheet carefully
-2. Extract: overall dimensions, grid spacing, member sizes (exact - e.g., W24x68, ISMB 450), slab thickness, foundation details, rebar sizes/spacing, connection details, material grades, scales, schedules, design loads
-3. Count actual members to calculate quantities
-4. Use ACTUAL dimensions from drawings, not assumptions
+WHEN DRAWINGS ARE PROVIDED:
+- Examine every sheet. Extract dimensions, member sizes, quantities from what you SEE.
+- Count actual members (don't guess). Use drawing scale to derive missing dimensions.
+- Use ACTUAL member sizes from drawings, not assumptions.
 
-ESTIMATION ACCURACY RULES (CRITICAL):
-1. Use CURRENT market rates for the specified region - research real prices
-2. Unit rates must reflect actual material + labor + equipment costs in the local market
-3. DO NOT inflate, pad, or add safety margins to unit rates - use realistic mid-market pricing
-4. DO NOT double-count: each cost item appears ONCE in lineItems only
-5. Keep estimates lean and accurate - a client should be able to take this to a contractor
-6. For structural steel: typical rates are $2,000-4,500/ton installed (US), ₹55,000-85,000/MT (India), depending on complexity
-7. For concrete: typical rates are $150-300/CY (US), ₹4,500-7,500/m³ (India)
-8. For rebar: typical rates are $1,200-2,000/ton installed (US), ₹50,000-70,000/MT (India)
-9. ALWAYS cross-check your final cost/sqft against industry benchmarks for the building type and region
-10. Typical cost ranges (USD): Industrial $80-200/sqft, Commercial $150-350/sqft, Residential $120-250/sqft, Healthcare $300-700/sqft
+ESTIMATION ACCURACY (CRITICAL):
+1. unitRate = the ALL-IN installed cost per unit (material + labor + equipment). This must be a REALISTIC mid-market rate for the region.
+2. DO NOT use premium/high-end rates. Use STANDARD MARKET rates.
+3. DO NOT inflate quantities. Show your quantity derivation for each line item.
+4. DO NOT add trades that aren't shown in the drawings or description. A steel structure project does NOT need interior finishes, landscaping, or HVAC unless specifically mentioned.
+5. KEEP IT LEAN. Only include work items that are clearly needed.
 
-MATH RULES (MANDATORY - VERIFY BEFORE OUTPUTTING):
-1. lineTotal = quantity × unitRate (for EVERY line item)
-2. trade.subtotal = SUM of all lineItems[].lineTotal in that trade
-3. directCosts = SUM of all trades[].subtotal
-4. Each markup = its percentage × directCosts
-5. totalWithMarkups = directCosts + SUM of all markups
-6. grandTotal = totalWithMarkups
-7. After computing everything, VERIFY all math. If anything doesn't add up, FIX it.
+COMMON AI OVERESTIMATION ERRORS (AVOID THESE):
+- Overestimating steel tonnage: A typical single-story industrial building uses 5-15 kg/sqft (50-150 kg/sqm) of steel. A 10,000 sqft building needs ~25-75 tons, NOT 200+ tons.
+- Overestimating concrete: Foundation for a typical building is 10-25% of building area × depth, NOT the full building volume.
+- Double-counting: "Steel fabrication" + "Steel erection" + "Steel supply" as separate items at full rates = 3x actual cost. Use ONE "all-in" line item per material type OR ensure sub-items are properly split.
+- Adding unnecessary trades: Only estimate what is IN the drawings or explicitly requested.
+- Using US rates for India or vice versa: Indian steel is ₹55,000-75,000/MT installed, NOT $3,000/ton converted to INR.
 
-You must respond ONLY in valid JSON format. No markdown, no explanation outside JSON.`;
+REFERENCE RATES (use as anchors, adjust for region/complexity):
+India (INR):
+- Structural steel (supply + fabrication + erection): ₹55,000-75,000/MT
+- Concrete (RMC + placing + formwork): ₹5,000-8,000/m³
+- Rebar (supply + cutting + bending + placing): ₹55,000-65,000/MT
+- Roofing sheets (supply + fixing): ₹350-600/sqft
+- PEB structure (all-in): ₹1,200-2,200/sqft built-up area
+- Painting (2 coats): ₹40-80/sqft
+
+US (USD):
+- Structural steel installed: $2,500-4,000/ton
+- Concrete (complete): $200-350/CY
+- Rebar installed: $1,200-1,800/ton
+- Metal roofing: $8-15/sqft
+- PEB structure: $40-100/sqft
+
+COST/SQFT BENCHMARKS (your final estimate MUST fall within these):
+USD: Industrial $60-180/sqft, Commercial $130-300/sqft, PEB $35-100/sqft
+INR: Industrial ₹1,500-4,000/sqft, Commercial ₹2,500-7,000/sqft, PEB ₹1,000-2,500/sqft
+If your result is ABOVE these ranges, you have an error. Re-check quantities and rates.
+
+MATH RULES (MANDATORY):
+1. lineTotal = quantity × unitRate (VERIFY for every item)
+2. trade.subtotal = SUM of lineItems[].lineTotal
+3. directCosts = SUM of trades[].subtotal
+4. Each markup = percentage × directCosts
+5. grandTotal = directCosts + all markups
+6. VERIFY ALL MATH. If it doesn't add up, FIX IT before outputting.
+
+Respond ONLY in valid JSON. No markdown, no text outside JSON.`;
 
 /**
  * Build multimodal content blocks from uploaded files for Claude Vision analysis.
@@ -509,17 +590,25 @@ export async function generateAIEstimate(projectInfo, answers, fileNames, fileBu
         // STEP 4: Add the main estimation prompt
         messageContent.push({ type: 'text', text: textPrompt });
 
-        // Call Claude with streaming (required for large vision payloads that take >10 min)
+        // Call Claude with extended thinking + streaming for maximum accuracy
+        // Extended thinking lets the AI verify math internally before outputting
         try {
             const stream = await anthropic.messages.stream({
                 model: 'claude-sonnet-4-5-20250929',
                 max_tokens: 32000,
+                thinking: {
+                    type: 'enabled',
+                    budget_tokens: 10000
+                },
                 system: SYSTEM_PROMPT,
                 messages: [{ role: 'user', content: messageContent }]
             });
 
             const response = await stream.finalMessage();
-            const text = response.content[0].text;
+            // With thinking enabled, response has thinking + text blocks. Find the text block.
+            const textBlock = response.content.find(b => b.type === 'text');
+            if (!textBlock) throw new Error('No text content in AI response');
+            const text = textBlock.text;
             const result = extractJSON(text);
 
             // Validate and fix grand total calculation
@@ -631,12 +720,18 @@ async function generateAIEstimateTextFallback(projectInfo, answers, fileNames, f
     const stream = await anthropic.messages.stream({
         model: 'claude-sonnet-4-5-20250929',
         max_tokens: 32000,
+        thinking: {
+            type: 'enabled',
+            budget_tokens: 10000
+        },
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: fallbackContent }]
     });
 
     const response = await stream.finalMessage();
-    const text = response.content[0].text;
+    const textBlock = response.content.find(b => b.type === 'text');
+    if (!textBlock) throw new Error('No text content in AI fallback response');
+    const text = textBlock.text;
     const result = extractJSON(text);
 
     // Validate and fix grand total calculation
@@ -674,10 +769,10 @@ You have been provided with actual construction drawings/blueprints above. You M
 YOUR ACCURACY ON READING THESE DRAWINGS DIRECTLY DETERMINES THE QUALITY OF THE ESTIMATE.`
         : `\nNote: No analyzable drawing files were provided. The estimate will be based on project description and questionnaire answers. For maximum accuracy, upload PDF drawings or images of structural plans.`;
 
-    return `\n\nGenerate a PRECISE, REALISTIC construction cost estimate. Extract scope, dimensions, and specs directly from the provided drawings/designs.
+    return `\n\nGenerate a PRECISE, REALISTIC construction cost estimate.
 ${drawingAnalysisInstruction}
 
-PROJECT INFORMATION:
+PROJECT:
 - Title: ${projectInfo.projectTitle}
 - Description: ${projectInfo.description}
 - Design Standard: ${projectInfo.designStandard || 'Not specified'}
@@ -689,51 +784,59 @@ PROJECT INFORMATION:
 QUESTIONNAIRE ANSWERS:
 ${JSON.stringify(answers, null, 2)}
 
-Respond in this exact JSON format:
+WORKED EXAMPLE (for reference - shows correct quantity derivation and math):
+A 10,000 sqft (930 sqm) single-story steel warehouse in India:
+- Structural Steel: 45 MT × ₹65,000/MT = ₹29,25,000 (quantityBasis: "Building 100'x100', 25 columns at ~400kg + 20 beams at ~600kg + bracing ~8MT + misc 5MT")
+- Foundation: 180 m³ concrete × ₹6,500/m³ = ₹11,70,000 (quantityBasis: "25 footings 1.5m×1.5m×0.6m + plinth beam 200m×0.3m×0.4m")
+- Roofing: 10,000 sqft × ₹450/sqft = ₹45,00,000 (quantityBasis: "Building footprint area")
+- Direct costs: ~₹86,00,000, Markups 25%: ~₹21,50,000, Grand total: ~₹1,07,50,000
+- Cost/sqft: ₹1,075/sqft ✓ (within ₹1,000-2,500 PEB/Industrial range)
 
+Respond in this exact JSON format:
 {
     "summary": {
         "projectTitle": "string",
         "projectType": "string",
         "location": "string",
-        "currency": "string (e.g., USD, INR, AED, GBP)",
-        "currencySymbol": "string (e.g., $, ₹, د.إ, £)",
-        "totalArea": "string (from drawings or project info)",
+        "currency": "string (INR, USD, AED, etc.)",
+        "currencySymbol": "string (₹, $, etc.)",
+        "totalArea": "string",
         "numberOfFloors": "string",
-        "structuralSystem": "string (e.g., Steel Frame, RCC, Pre-Engineered)",
-        "estimateDate": "string (today's date)",
+        "structuralSystem": "string",
+        "estimateDate": "string",
         "confidenceLevel": "string (Low/Medium/High)",
         "estimateClass": "string (Class 1-5 per AACE)",
         "grandTotal": number,
         "costPerUnit": number,
         "unitLabel": "string (per sq ft / per sq m)",
-        "benchmarkCheck": "string (e.g., 'At $145/sqft, this is within the typical $80-200/sqft range for industrial buildings in this region')"
+        "benchmarkCheck": "string (MANDATORY: state your cost/sqft and compare to benchmark range)"
     },
     "drawingExtraction": {
-        "dimensionsFound": ["list every dimension from drawings, e.g., 'Building: 120'-0\" x 80'-0\"'"],
-        "memberSizesFound": ["list every member size, e.g., 'W24x68 roof beams', 'W14x48 columns'"],
-        "schedulesFound": ["list schedules read from drawings"],
-        "materialsNoted": ["list material grades noted, e.g., 'ASTM A992 Gr50'"],
-        "designLoads": ["list design loads, e.g., 'Roof DL: 20 PSF'"],
+        "dimensionsFound": ["specific dimensions"],
+        "memberSizesFound": ["specific member sizes"],
+        "schedulesFound": ["schedules found"],
+        "materialsNoted": ["material grades"],
+        "designLoads": ["design loads"],
         "scaleUsed": "string",
-        "sheetsAnalyzed": ["list of drawing sheets"],
+        "sheetsAnalyzed": ["sheet list"],
         "totalMembersCount": { "beams": number, "columns": number, "bracing": number, "joists": number }
     },
     "trades": [
         {
-            "division": "string (CSI Division number)",
-            "tradeName": "string (e.g., Structural Steel)",
+            "division": "string",
+            "tradeName": "string",
             "tradeIcon": "string (fa icon class)",
             "subtotal": number,
             "percentOfTotal": number,
             "lineItems": [
                 {
-                    "description": "string (e.g., 'W24x68 Steel Beams - Supply & Install')",
+                    "description": "string",
                     "quantity": number,
-                    "unit": "string (tons, cy, sf, lf, ea)",
+                    "unit": "string",
                     "unitRate": number,
                     "lineTotal": number,
-                    "materialDetails": "string (spec grade, e.g., 'ASTM A992 Gr50')"
+                    "quantityBasis": "string (REQUIRED: show HOW you derived this quantity, e.g., '25 columns × 15m height × 48 kg/m = 18 MT')",
+                    "materialDetails": "string (spec grade)"
                 }
             ]
         }
@@ -741,15 +844,15 @@ Respond in this exact JSON format:
     "structuralAnalysis": {
         "structuralSystem": "string",
         "foundationType": "string",
-        "primaryMembers": "string (beam/column sizes from drawings)",
-        "secondaryMembers": "string (purlins, girts, bracing from drawings)",
+        "primaryMembers": "string",
+        "secondaryMembers": "string",
         "connectionTypes": "string",
         "steelTonnage": "string",
         "concreteVolume": "string",
         "rebarTonnage": "string",
-        "drawingNotes": "string (all dimensions/specs extracted from drawings)",
+        "drawingNotes": "string",
         "analysisMethod": "string",
-        "filesAnalyzed": ["file names analyzed"]
+        "filesAnalyzed": ["file names"]
     },
     "costBreakdown": {
         "directCosts": number,
@@ -779,23 +882,16 @@ Respond in this exact JSON format:
     }
 }
 
-CRITICAL RULES:
-1. lineItems is the SINGLE source of cost data. Each lineItem has: quantity, unitRate (all-in cost per unit), lineTotal (= quantity × unitRate)
-2. unitRate = total installed cost per unit (material + labor + equipment combined). This is a PER-UNIT rate, NOT a total.
-3. lineTotal = quantity × unitRate. VERIFY this math for every single line item before outputting.
-4. trade.subtotal = SUM of all its lineItems[].lineTotal
-5. directCosts = SUM of all trades[].subtotal
-6. Markups: generalConditions 5-8%, overhead 5-8%, profit 5-10%, contingency 5-10%, escalation 0-3%. TOTAL markups should be 20-35% of direct costs.
-7. grandTotal = totalWithMarkups = directCosts + all markup amounts
-8. Use REALISTIC ${new Date().getFullYear()} market unit rates for the region. DO NOT inflate rates.
-9. BENCHMARK CHECK: After computing grandTotal, calculate cost/sqft (or cost/sqm). Compare against industry benchmarks:
-   - Industrial/Warehouse: $80-200/sqft (USD), ₹2,000-5,000/sqft (INR)
-   - Commercial Office: $150-350/sqft (USD), ₹3,000-8,000/sqft (INR)
-   - Residential: $120-250/sqft (USD), ₹1,500-4,500/sqft (INR)
-   - PEB/Pre-engineered: $40-120/sqft (USD), ₹1,200-3,000/sqft (INR)
-   If your estimate is outside these ranges, re-examine your unit rates and quantities for errors.
-10. Include ONLY trades visible/relevant in the drawings and project description.
-11. VERIFY ALL MATH before outputting. Sum up every lineTotal, check every trade subtotal, verify directCosts, verify grandTotal.`;
+RULES:
+1. lineTotal = quantity × unitRate. unitRate is the ALL-IN installed cost PER UNIT.
+2. trade.subtotal = SUM(lineItems[].lineTotal). directCosts = SUM(trades[].subtotal).
+3. Markups: GC 5-8%, overhead 3-5%, profit 5-10%, contingency 5-10%, escalation 0-3%. Total 20-30%.
+4. grandTotal = directCosts + all markup amounts = costBreakdown.totalWithMarkups.
+5. EVERY lineItem MUST have a "quantityBasis" showing the calculation/derivation.
+6. Only include trades that are IN the drawings or explicitly described. Do NOT add extra trades.
+7. Use MID-MARKET rates, not premium rates. Check against the reference rates in the system prompt.
+8. After computing grandTotal, calculate cost/sqft. If it exceeds the benchmark HIGH for this project type, you have an error - reduce quantities or rates.
+9. VERIFY ALL MATH before outputting.`;
 }
 
 function getDefaultQuestions() {

@@ -313,34 +313,124 @@ export async function generateAIEstimate(projectInfo, answers, fileNames, fileBu
         messageContent.push({ type: 'text', text: textPrompt });
 
         // Call Claude with streaming (required for large vision payloads that take >10 min)
-        const stream = await anthropic.messages.stream({
-            model: 'claude-sonnet-4-5-20250929',
-            max_tokens: 32000,
-            system: SYSTEM_PROMPT,
-            messages: [{ role: 'user', content: messageContent }]
-        });
+        try {
+            const stream = await anthropic.messages.stream({
+                model: 'claude-sonnet-4-5-20250929',
+                max_tokens: 32000,
+                system: SYSTEM_PROMPT,
+                messages: [{ role: 'user', content: messageContent }]
+            });
 
-        const response = await stream.finalMessage();
-        const text = response.content[0].text;
-        const jsonStr = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-        const result = JSON.parse(jsonStr);
+            const response = await stream.finalMessage();
+            const text = response.content[0].text;
+            const jsonStr = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+            const result = JSON.parse(jsonStr);
 
-        // Tag the result with analysis metadata
-        if (result.structuralAnalysis) {
-            result.structuralAnalysis.analysisMethod = hasAnalyzableFiles
-                ? 'VISION_ANALYSIS - Dimensions extracted directly from uploaded drawings'
-                : 'INFERENCE_BASED - Estimated from project description (no drawings analyzed)';
-            result.structuralAnalysis.filesAnalyzed = hasAnalyzableFiles
-                ? fileBuffers.filter(f => /\.(pdf|jpg|jpeg|png|gif|webp)$/i.test(f.originalname)).map(f => f.originalname)
-                : [];
+            // Tag the result with analysis metadata
+            if (result.structuralAnalysis) {
+                result.structuralAnalysis.analysisMethod = hasAnalyzableFiles
+                    ? 'VISION_ANALYSIS - Dimensions extracted directly from uploaded drawings'
+                    : 'INFERENCE_BASED - Estimated from project description (no drawings analyzed)';
+                result.structuralAnalysis.filesAnalyzed = hasAnalyzableFiles
+                    ? fileBuffers.filter(f => /\.(pdf|jpg|jpeg|png|gif|webp)$/i.test(f.originalname)).map(f => f.originalname)
+                    : [];
+            }
+
+            console.log(`[AI-ESTIMATION] Estimate generated successfully (vision: ${hasAnalyzableFiles}, grand total: ${result.summary?.grandTotal})`);
+            return result;
+        } catch (apiError) {
+            // FALLBACK: If Claude can't process the PDF, retry with text-only extraction
+            const isPdfError = apiError.message?.includes('Could not process PDF') ||
+                apiError.error?.error?.message?.includes('Could not process PDF');
+
+            if (isPdfError && hasAnalyzableFiles) {
+                console.warn(`[AI-ESTIMATION] PDF document block rejected by API. Falling back to text-only analysis...`);
+                return await generateAIEstimateTextFallback(projectInfo, answers, fileNames, fileBuffers);
+            }
+            throw apiError;
         }
-
-        console.log(`[AI-ESTIMATION] Estimate generated successfully (vision: ${hasAnalyzableFiles}, grand total: ${result.summary?.grandTotal})`);
-        return result;
     } catch (error) {
         console.error('[AI-ESTIMATION] Error generating estimate:', error);
         throw new Error('Failed to generate AI estimate. Please try again.');
     }
+}
+
+/**
+ * Fallback: Generate AI estimate using ONLY extracted PDF text when Claude rejects the raw PDF.
+ * This handles complex/scanned PDFs that the API document block can't process.
+ */
+async function generateAIEstimateTextFallback(projectInfo, answers, fileNames, fileBuffers) {
+    console.log(`[AI-FALLBACK] Starting text-only estimation for "${projectInfo.projectTitle}"`);
+
+    // Extract all available text from PDFs
+    let pdfTexts = [];
+    try {
+        pdfTexts = await extractPdfText(fileBuffers);
+    } catch (err) {
+        console.log(`[AI-FALLBACK] PDF text extraction failed: ${err.message}`);
+    }
+
+    // Also include any images that ARE processable (non-PDF files)
+    const imageBuffers = fileBuffers.filter(f =>
+        /\.(jpg|jpeg|png|gif|webp)$/i.test(f.originalname)
+    );
+    const imageBlocks = buildFileContentBlocks(imageBuffers);
+
+    const hasTextContent = pdfTexts.length > 0 && pdfTexts.some(pt => pt.text.trim().length > 100);
+    const hasImages = imageBlocks.length > 0;
+
+    // Build the fallback message content
+    const fallbackContent = [];
+
+    if (hasImages) {
+        fallbackContent.push({
+            type: 'text',
+            text: `🔍 DRAWING ANALYSIS MODE (Images only - PDF could not be visually processed)\n\nThe PDF drawings could not be processed visually. However, image files are available for analysis.\n`
+        });
+        fallbackContent.push(...imageBlocks);
+    }
+
+    if (hasTextContent) {
+        fallbackContent.push({
+            type: 'text',
+            text: `\n📝 EXTRACTED TEXT CONTENT FROM CONSTRUCTION DRAWINGS:\nThe PDF documents could not be processed as visual documents, but text content was extracted successfully. Use this text to identify dimensions, member sizes, schedules, and specifications.\n`
+        });
+        for (const pt of pdfTexts) {
+            fallbackContent.push({
+                type: 'text',
+                text: `\n--- Extracted from "${pt.fileName}" (${pt.pages} pages) ---\n${pt.text}\n---\n`
+            });
+        }
+        console.log(`[AI-FALLBACK] Using extracted text from ${pdfTexts.length} PDF(s) (${pdfTexts.reduce((sum, pt) => sum + pt.text.length, 0)} chars total)`);
+    }
+
+    // Use text-aware prompt (mark as having "files" if we got any text out)
+    const hasUsableContent = hasTextContent || hasImages;
+    const textPrompt = buildEstimationTextPrompt(projectInfo, answers, fileNames, hasUsableContent);
+    fallbackContent.push({ type: 'text', text: textPrompt });
+
+    const stream = await anthropic.messages.stream({
+        model: 'claude-sonnet-4-5-20250929',
+        max_tokens: 32000,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: fallbackContent }]
+    });
+
+    const response = await stream.finalMessage();
+    const text = response.content[0].text;
+    const jsonStr = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    const result = JSON.parse(jsonStr);
+
+    // Tag as text-fallback analysis
+    if (result.structuralAnalysis) {
+        result.structuralAnalysis.analysisMethod = hasTextContent
+            ? 'TEXT_EXTRACTION_FALLBACK - PDF could not be visually processed; estimate based on extracted text content'
+            : 'INFERENCE_BASED - PDF could not be processed; estimated from project description only';
+        result.structuralAnalysis.filesAnalyzed = fileBuffers.map(f => f.originalname);
+    }
+
+    console.log(`[AI-FALLBACK] Text-fallback estimate generated successfully (grand total: ${result.summary?.grandTotal})`);
+    return result;
 }
 
 /**

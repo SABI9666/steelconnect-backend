@@ -11,6 +11,91 @@ const MAX_VISION_PAYLOAD_BYTES = 18 * 1024 * 1024;
 // Maximum pages per PDF to analyze (Claude supports up to 100 pages)
 const MAX_PDF_PAGES = 50;
 
+/**
+ * Validate and fix the grand total in an AI estimation result.
+ * Recalculates from line items up to ensure mathematical consistency.
+ */
+function validateAndFixTotals(result) {
+    if (!result || !result.trades || !result.costBreakdown || !result.summary) {
+        return result;
+    }
+
+    const trades = result.trades;
+    const cb = result.costBreakdown;
+    const summary = result.summary;
+
+    // Step 1: Recalculate each trade subtotal from its lineItems
+    for (const trade of trades) {
+        if (trade.lineItems && trade.lineItems.length > 0) {
+            const lineItemsSum = trade.lineItems.reduce((sum, li) => sum + (Number(li.lineTotal) || 0), 0);
+            if (lineItemsSum > 0 && Math.abs(lineItemsSum - (trade.subtotal || 0)) > 1) {
+                console.log(`[AI-VALIDATION] Trade "${trade.tradeName}" subtotal corrected: ${trade.subtotal} -> ${lineItemsSum}`);
+                trade.subtotal = Math.round(lineItemsSum * 100) / 100;
+            }
+        }
+    }
+
+    // Step 2: Recalculate directCosts from trade subtotals
+    const calculatedDirectCosts = trades.reduce((sum, t) => sum + (Number(t.subtotal) || 0), 0);
+    if (Math.abs(calculatedDirectCosts - (cb.directCosts || 0)) > 1) {
+        console.log(`[AI-VALIDATION] directCosts corrected: ${cb.directCosts} -> ${calculatedDirectCosts}`);
+        cb.directCosts = Math.round(calculatedDirectCosts * 100) / 100;
+    }
+
+    // Step 3: Recalculate markups based on percentages × directCosts
+    const markupFields = ['generalConditions', 'overhead', 'profit', 'contingency', 'escalation'];
+    let totalMarkups = 0;
+    for (const field of markupFields) {
+        const pctField = field + 'Percent';
+        if (cb[pctField] != null && cb[pctField] > 0) {
+            const recalculated = Math.round(cb.directCosts * (cb[pctField] / 100) * 100) / 100;
+            if (Math.abs(recalculated - (cb[field] || 0)) > 1) {
+                console.log(`[AI-VALIDATION] ${field} corrected: ${cb[field]} -> ${recalculated} (${cb[pctField]}% of ${cb.directCosts})`);
+                cb[field] = recalculated;
+            }
+        }
+        totalMarkups += Number(cb[field]) || 0;
+    }
+
+    // Step 4: Recalculate totalWithMarkups
+    const calculatedTotal = Math.round((cb.directCosts + totalMarkups) * 100) / 100;
+    if (Math.abs(calculatedTotal - (cb.totalWithMarkups || 0)) > 1) {
+        console.log(`[AI-VALIDATION] totalWithMarkups corrected: ${cb.totalWithMarkups} -> ${calculatedTotal}`);
+        cb.totalWithMarkups = calculatedTotal;
+    }
+
+    // Step 5: Fix grandTotal to match totalWithMarkups
+    if (Math.abs(calculatedTotal - (summary.grandTotal || 0)) > 1) {
+        console.log(`[AI-VALIDATION] grandTotal corrected: ${summary.grandTotal} -> ${calculatedTotal}`);
+        summary.grandTotal = calculatedTotal;
+    }
+
+    // Step 6: Fix tradesSummary amounts to match trades
+    if (result.tradesSummary && Array.isArray(result.tradesSummary)) {
+        for (const ts of result.tradesSummary) {
+            const matchingTrade = trades.find(t => t.tradeName === ts.tradeName);
+            if (matchingTrade && Math.abs((matchingTrade.subtotal || 0) - (ts.amount || 0)) > 1) {
+                console.log(`[AI-VALIDATION] tradesSummary "${ts.tradeName}" amount corrected: ${ts.amount} -> ${matchingTrade.subtotal}`);
+                ts.amount = matchingTrade.subtotal;
+            }
+        }
+    }
+
+    // Step 7: Recalculate costPerUnit if area info available
+    if (summary.totalArea && summary.grandTotal) {
+        const areaMatch = String(summary.totalArea).match(/([\d,]+)/);
+        if (areaMatch) {
+            const area = Number(areaMatch[1].replace(/,/g, ''));
+            if (area > 0) {
+                summary.costPerUnit = Math.round((summary.grandTotal / area) * 100) / 100;
+            }
+        }
+    }
+
+    console.log(`[AI-VALIDATION] Final validated grand total: ${summary.grandTotal}`);
+    return result;
+}
+
 const SYSTEM_PROMPT = `You are the world's most experienced and precise construction cost estimator AND structural drawing analyst with 40+ years of expertise across ALL construction trades globally. You produce institutional-grade cost estimates that match or exceed the quality of top firms like Turner & Townsend, Rider Levett Bucknall, and AECOM.
 
 YOUR CRITICAL ADVANTAGE: You can directly READ and ANALYZE construction drawings, blueprints, and structural plans that are provided to you as images or PDFs. You MUST carefully examine every drawing provided and extract ALL dimensions, member sizes, specifications, quantities, and notes visible on the drawings.
@@ -326,6 +411,9 @@ export async function generateAIEstimate(projectInfo, answers, fileNames, fileBu
             const jsonStr = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
             const result = JSON.parse(jsonStr);
 
+            // Validate and fix grand total calculation
+            validateAndFixTotals(result);
+
             // Tag the result with analysis metadata
             if (result.structuralAnalysis) {
                 result.structuralAnalysis.analysisMethod = hasAnalyzableFiles
@@ -420,6 +508,9 @@ async function generateAIEstimateTextFallback(projectInfo, answers, fileNames, f
     const text = response.content[0].text;
     const jsonStr = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     const result = JSON.parse(jsonStr);
+
+    // Validate and fix grand total calculation
+    validateAndFixTotals(result);
 
     // Tag as text-fallback analysis
     if (result.structuralAnalysis) {
@@ -602,8 +693,15 @@ CRITICAL REQUIREMENTS:
 - The "drawingExtraction" section MUST be populated with specific data read from the drawings (if drawings were provided)
 - The "structuralAnalysis" section MUST reference actual member sizes from drawings, NOT generic assumptions
 - Use current ${new Date().getFullYear()} market rates for the specified region
-- All numbers must be realistic and consistent
-- Grand total must equal sum of all trades + markups
+- All numbers must be realistic and mathematically consistent
+- CRITICAL MATH RULES (you MUST follow these EXACTLY):
+  1. Each trade's "subtotal" MUST equal the sum of its lineItems[].lineTotal values
+  2. "costBreakdown.directCosts" MUST equal the sum of ALL trades[].subtotal values
+  3. Each markup (generalConditions, overhead, profit, contingency, escalation) is calculated as its percentage × directCosts
+  4. "costBreakdown.totalWithMarkups" MUST equal directCosts + generalConditions + overhead + profit + contingency + escalation
+  5. "summary.grandTotal" MUST EXACTLY equal "costBreakdown.totalWithMarkups"
+  6. Each tradesSummary[].amount MUST match the corresponding trades[].subtotal
+  7. VERIFY: After computing all values, double-check that grandTotal = directCosts + sum of all markup amounts. If they don't match, FIX them before outputting
 - Include: Site Work, Concrete/Foundations, Structural (Steel/Rebar), Exterior Envelope, Roofing, Interior Finishes, MEP (Mechanical/Electrical/Plumbing), Fire Protection, Elevators (if applicable), Specialties, General Conditions, etc.
 - For each material, provide the EXACT specification grade (ASTM, IS, EN standard as applicable)`;
 }

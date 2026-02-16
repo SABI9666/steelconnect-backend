@@ -244,7 +244,7 @@ router.post('/contractor/submit', authenticateToken, isContractor, async (req, r
     console.log('[CONTRACTOR] Estimation submission by:', req.user?.email);
     console.log('[CONTRACTOR] Files received:', req.files?.length || 0);
 
-    const { projectTitle, description, contractorName, contractorEmail, designStandard, projectType, region, fileNames } = req.body;
+    const { projectTitle, description, contractorName, contractorEmail, designStandard, projectType, region, scopeOfWork, totalArea, fileNames } = req.body;
     const files = req.files;
 
     // Validate required fields
@@ -323,6 +323,8 @@ router.post('/contractor/submit', authenticateToken, isContractor, async (req, r
     const estimationData = {
       projectTitle,
       description,
+      scopeOfWork: scopeOfWork || '',
+      totalArea: totalArea || '',
       designStandard: designStandard || '',
       projectType: projectType || '',
       region: region || '',

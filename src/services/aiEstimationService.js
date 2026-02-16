@@ -44,11 +44,18 @@ function validateAndFixTotals(result) {
     }
 
     // Step 3: Recalculate markups based on percentages × directCosts
+    // Also cap unreasonable percentages (max 25% per markup category)
     const markupFields = ['generalConditions', 'overhead', 'profit', 'contingency', 'escalation'];
+    const MAX_MARKUP_PERCENT = 25; // No single markup should exceed 25%
     let totalMarkups = 0;
     for (const field of markupFields) {
         const pctField = field + 'Percent';
         if (cb[pctField] != null && cb[pctField] > 0) {
+            // Cap unreasonable markup percentages
+            if (cb[pctField] > MAX_MARKUP_PERCENT) {
+                console.log(`[AI-VALIDATION] ${field} percentage capped: ${cb[pctField]}% -> ${MAX_MARKUP_PERCENT}% (was unreasonably high)`);
+                cb[pctField] = MAX_MARKUP_PERCENT;
+            }
             const recalculated = Math.round(cb.directCosts * (cb[pctField] / 100) * 100) / 100;
             if (Math.abs(recalculated - (cb[field] || 0)) > 1) {
                 console.log(`[AI-VALIDATION] ${field} corrected: ${cb[field]} -> ${recalculated} (${cb[pctField]}% of ${cb.directCosts})`);
@@ -628,7 +635,7 @@ You have been provided with actual construction drawings/blueprints above. You M
 YOUR ACCURACY ON READING THESE DRAWINGS DIRECTLY DETERMINES THE QUALITY OF THE ESTIMATE.`
         : `\nNote: No analyzable drawing files were provided. The estimate will be based on project description and questionnaire answers. For maximum accuracy, upload PDF drawings or images of structural plans.`;
 
-    return `\n\nGenerate a COMPREHENSIVE, WORLD-CLASS construction cost estimate with FULL MATERIAL QUANTITIES AND SPECIFICATIONS for each trade.
+    return `\n\nGenerate a COMPREHENSIVE construction cost estimate with FULL MATERIAL QUANTITIES AND SPECIFICATIONS for each trade. Extract ALL scope, dimensions, member sizes, and specifications directly from the provided drawings/designs.
 ${drawingAnalysisInstruction}
 
 PROJECT INFORMATION:
@@ -787,8 +794,9 @@ CRITICAL REQUIREMENTS:
   5. "summary.grandTotal" MUST EXACTLY equal "costBreakdown.totalWithMarkups"
   6. Each tradesSummary[].amount MUST match the corresponding trades[].subtotal
   7. VERIFY: After computing all values, double-check that grandTotal = directCosts + sum of all markup amounts. If they don't match, FIX them before outputting
-- Include: Site Work, Concrete/Foundations, Structural (Steel/Rebar), Exterior Envelope, Roofing, Interior Finishes, MEP (Mechanical/Electrical/Plumbing), Fire Protection, Elevators (if applicable), Specialties, General Conditions, etc.
-- For each material, provide the EXACT specification grade (ASTM, IS, EN standard as applicable)`;
+- Include ONLY the trades that are visible/relevant in the provided drawings and project description. Extract the scope directly from the design documents.
+- For each material, provide the EXACT specification grade (ASTM, IS, EN standard as applicable)
+- MARKUP PERCENTAGE RULES: Each markup percentage (generalConditionsPercent, overheadPercent, profitPercent, contingencyPercent, escalationPercent) must be a realistic value between 0 and 25. For example: profit should be 5-15%, contingency 5-10%, overhead 5-10%, general conditions 5-10%, escalation 0-5%.`;
 }
 
 function getDefaultQuestions() {

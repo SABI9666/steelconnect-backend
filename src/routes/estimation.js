@@ -244,7 +244,7 @@ router.post('/contractor/submit', authenticateToken, isContractor, async (req, r
     console.log('[CONTRACTOR] Estimation submission by:', req.user?.email);
     console.log('[CONTRACTOR] Files received:', req.files?.length || 0);
 
-    const { projectTitle, description, contractorName, contractorEmail, designStandard, projectType, region, fileNames } = req.body;
+    const { projectTitle, description, contractorName, contractorEmail, designStandard, projectType, region, totalArea, fileNames } = req.body;
     const files = req.files;
 
     // Validate required fields
@@ -323,6 +323,7 @@ router.post('/contractor/submit', authenticateToken, isContractor, async (req, r
     const estimationData = {
       projectTitle,
       description,
+      totalArea: totalArea || '',
       designStandard: designStandard || '',
       projectType: projectType || '',
       region: region || '',
@@ -1923,7 +1924,7 @@ function generateFallbackEstimation(q, title, description) {
 // POST /estimation/ai/questions - Generate smart questionnaire based on project info
 router.post('/ai/questions', authenticateToken, async (req, res) => {
     try {
-        const { projectTitle, description, designStandard, projectType, region, totalArea, scopeOfWork, fileCount, fileNames } = req.body;
+        const { projectTitle, description, designStandard, projectType, region, totalArea, fileCount, fileNames } = req.body;
 
         if (!projectTitle || !description) {
             return res.status(400).json({ success: false, message: 'Project title and description are required' });
@@ -1931,7 +1932,7 @@ router.post('/ai/questions', authenticateToken, async (req, res) => {
 
         console.log(`[AI-ESTIMATION] Generating questions for "${projectTitle}" by ${req.user.email}`);
 
-        const questions = await generateSmartQuestions({ projectTitle, description, designStandard, projectType, region, totalArea, scopeOfWork, fileCount, fileNames });
+        const questions = await generateSmartQuestions({ projectTitle, description, designStandard, projectType, region, totalArea, fileCount, fileNames });
 
         res.json({ success: true, data: questions });
     } catch (error) {
@@ -1966,7 +1967,7 @@ router.post('/ai/generate', authenticateToken, async (req, res) => {
             fileUploadWarning = `File upload skipped: ${uploadErr.message}`;
         }
 
-        const { estimationId, projectTitle, description, designStandard, projectType, region, totalArea, scopeOfWork, answers, fileNames } = req.body;
+        const { estimationId, projectTitle, description, designStandard, projectType, region, totalArea, answers, fileNames } = req.body;
 
         // Parse answers if sent as string (FormData sends strings)
         let parsedAnswers = answers;
@@ -2018,7 +2019,7 @@ router.post('/ai/generate', authenticateToken, async (req, res) => {
 
         // Pass file buffers for Vision-based drawing analysis
         const estimate = await generateAIEstimate(
-            { projectTitle, description, designStandard, projectType, region, totalArea, scopeOfWork },
+            { projectTitle, description, designStandard, projectType, region, totalArea },
             parsedAnswers,
             parsedFileNames || (uploadedFiles.length > 0 ? uploadedFiles.map(f => f.name) : []),
             files || [] // multer file buffers for Claude Vision

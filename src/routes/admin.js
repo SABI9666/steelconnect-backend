@@ -1410,7 +1410,8 @@ router.post('/estimations/:estimationId/retry-ai', async (req, res) => {
             description: estData.description || '',
             designStandard: estData.designStandard || '',
             projectType: estData.projectType || '',
-            region: estData.region || ''
+            region: estData.region || '',
+            totalArea: estData.totalArea || ''
         };
 
         const fileNames = estData.uploadedFiles

@@ -333,7 +333,7 @@ router.post('/contractor/submit', authenticateToken, isContractor, async (req, r
       fileCount: uploadedFiles.length,
       totalFileSize: uploadedFiles.reduce((sum, file) => sum + (file.size || 0), 0),
       status: 'pending',
-      aiStatus: 'generating', // Track AI generation status separately
+      aiStatus: 'pending', // AI will only generate when admin confirms
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       submissionMetadata: {
@@ -350,7 +350,7 @@ router.post('/contractor/submit', authenticateToken, isContractor, async (req, r
     // Return success IMMEDIATELY - don't wait for AI estimate
     res.status(201).json({
       success: true,
-      message: `Estimation submitted successfully with ${uploadedFiles.length} file(s). AI estimate is being generated in the background.`,
+      message: `Estimation submitted successfully with ${uploadedFiles.length} file(s). Admin will review and generate AI estimate.`,
       estimationId: estimationRef.id,
       data: {
         id: estimationRef.id,
@@ -359,23 +359,14 @@ router.post('/contractor/submit', authenticateToken, isContractor, async (req, r
         fileCount: uploadedFiles.length,
         totalFileSizeMB: (estimationData.totalFileSize / (1024 * 1024)).toFixed(2),
         hasAIEstimate: false,
-        aiStatus: 'generating',
+        aiStatus: 'pending',
         status: 'pending',
         createdAt: estimationData.createdAt
       }
     });
 
-    // Fire-and-forget: Generate AI estimate in background AFTER response is sent
-    // This prevents the Claude API call (30-60s) from blocking the upload response
-    // IMPORTANT: Pass file buffers for Vision-based drawing analysis
-    generateAIEstimateBackground(estimationRef.id, {
-      projectTitle, description,
-      designStandard: designStandard || '',
-      projectType: projectType || '',
-      region: region || ''
-    }, parsedFileNames, files).catch(err => {
-      console.error(`[BACKGROUND] Unhandled error in AI generation for ${estimationRef.id}:`, err.message);
-    });
+    // AI estimate is NO LONGER auto-generated on submission.
+    // Admin must explicitly confirm and trigger AI generation from the Admin panel.
 
   } catch (error) {
     console.error('[CONTRACTOR] Error submitting estimation:', error);

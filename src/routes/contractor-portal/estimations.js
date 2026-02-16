@@ -165,7 +165,7 @@ router.post('/submit', authenticateToken, upload.array('files', 20), handleMulte
             try {
                 console.log(`[CONTRACTOR-PORTAL] Starting background AI generation for ${estimationRef.id}`);
                 const aiEstimate = await generateAIEstimate(
-                    { projectTitle: projectTitle.trim(), description: description.trim() },
+                    { projectTitle: projectTitle.trim(), description: description.trim(), scopeOfWork: scopeOfWork || '' },
                     {},
                     fileNames
                 );

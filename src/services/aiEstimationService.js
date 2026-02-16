@@ -308,6 +308,10 @@ async function extractPdfText(fileBuffers) {
 
 export async function generateSmartQuestions(projectInfo) {
     try {
+        const scopeNote = projectInfo.scopeOfWork
+            ? `\n\nCLIENT'S EXACT SCOPE OF ESTIMATION REQUIREMENT:\n---\n${projectInfo.scopeOfWork}\n---\nIMPORTANT: The client has written their exact scope above. Generate questions that are DIRECTLY RELEVANT to the scope items mentioned. Ask clarifying questions about the specific work items, materials, specifications, and quantities mentioned in their scope. Do NOT ask generic questions that are already answered by the scope.`
+            : '';
+
         const prompt = `Based on this project information, generate targeted follow-up questions needed to produce an accurate construction cost estimate.
 
 PROJECT INFO:
@@ -317,6 +321,7 @@ PROJECT INFO:
 - Project Type: ${projectInfo.projectType || 'Not specified'}
 - Region/Location: ${projectInfo.region || 'Not specified'}
 - Files uploaded: ${projectInfo.fileCount} files (${projectInfo.fileNames?.join(', ') || 'N/A'})
+${scopeNote}
 
 NOTE: Analyze the uploaded file names carefully. If DWG/CAD files are present, the user has construction drawings - ask questions about structural details, member sizes, connection types, and specifications that would be found in those drawings. Always ask about total project area/dimensions since this is critical for estimation.
 
@@ -582,6 +587,20 @@ You have been provided with actual construction drawings/blueprints above. You M
 YOUR ACCURACY ON READING THESE DRAWINGS DIRECTLY DETERMINES THE QUALITY OF THE ESTIMATE.`
         : `\nNote: No analyzable drawing files were provided. The estimate will be based on project description and questionnaire answers. For maximum accuracy, upload PDF drawings or images of structural plans.`;
 
+    const scopeSection = projectInfo.scopeOfWork
+        ? `\n\nCLIENT'S EXACT SCOPE OF ESTIMATION REQUIREMENT (MANDATORY - FOLLOW THIS PRECISELY):
+---
+${projectInfo.scopeOfWork}
+---
+IMPORTANT: The above scope written by the client defines EXACTLY what needs to be estimated. You MUST:
+1. Generate cost estimates ONLY for the items/trades/work listed in the client's scope above
+2. Break down each scope item into detailed line items with materials, labor, and equipment costs
+3. If the client mentions specific materials, brands, or specifications, use those in the estimate
+4. The trades in your estimate should directly map to the scope items the client has listed
+5. Do NOT add trades or work items that are NOT mentioned in the client's scope unless they are absolutely essential dependencies
+6. If the scope mentions quantities or dimensions, use those exact values`
+        : '';
+
     return `\n\nGenerate a COMPREHENSIVE, WORLD-CLASS construction cost estimate with FULL MATERIAL QUANTITIES AND SPECIFICATIONS for each trade.
 ${drawingAnalysisInstruction}
 
@@ -592,6 +611,7 @@ PROJECT INFORMATION:
 - Project Type: ${projectInfo.projectType || 'Not specified'}
 - Region/Location: ${projectInfo.region || 'Not specified'}
 - Files: ${fileNames?.join(', ') || 'N/A'}
+${scopeSection}
 
 QUESTIONNAIRE ANSWERS:
 ${JSON.stringify(answers, null, 2)}

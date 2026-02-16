@@ -96,6 +96,48 @@ function validateAndFixTotals(result) {
     return result;
 }
 
+/**
+ * Robustly extract a JSON object from AI response text.
+ * Handles extra text before/after the JSON, markdown fences, etc.
+ */
+function extractJSON(text) {
+    // First try: strip markdown fences and parse directly
+    let cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    try {
+        return JSON.parse(cleaned);
+    } catch (e) {
+        // Fall through to bracket matching
+    }
+
+    // Second try: find the outermost { ... } by matching braces
+    const start = text.indexOf('{');
+    if (start === -1) throw new SyntaxError('No JSON object found in AI response');
+
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    let end = -1;
+
+    for (let i = start; i < text.length; i++) {
+        const ch = text[i];
+        if (escape) { escape = false; continue; }
+        if (ch === '\\' && inString) { escape = true; continue; }
+        if (ch === '"') { inString = !inString; continue; }
+        if (inString) continue;
+        if (ch === '{') depth++;
+        else if (ch === '}') {
+            depth--;
+            if (depth === 0) { end = i; break; }
+        }
+    }
+
+    if (end === -1) throw new SyntaxError('Unterminated JSON object in AI response');
+
+    const jsonStr = text.substring(start, end + 1);
+    console.log(`[AI-JSON] Extracted JSON from position ${start} to ${end} (${jsonStr.length} chars, original ${text.length} chars)`);
+    return JSON.parse(jsonStr);
+}
+
 const SYSTEM_PROMPT = `You are the world's most experienced and precise construction cost estimator AND structural drawing analyst with 40+ years of expertise across ALL construction trades globally. You produce institutional-grade cost estimates that match or exceed the quality of top firms like Turner & Townsend, Rider Levett Bucknall, and AECOM.
 
 YOUR CRITICAL ADVANTAGE: You can directly READ and ANALYZE construction drawings, blueprints, and structural plans that are provided to you as images or PDFs. You MUST carefully examine every drawing provided and extract ALL dimensions, member sizes, specifications, quantities, and notes visible on the drawings.
@@ -333,9 +375,7 @@ Make questions specific to what was described in the project info.`;
 
         const response = await stream.finalMessage();
         const text = response.content[0].text;
-        // Parse JSON from response, handling potential markdown wrapping
-        const jsonStr = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-        return JSON.parse(jsonStr);
+        return extractJSON(text);
     } catch (error) {
         console.error('[AI-ESTIMATION] Error generating questions:', error);
         return getDefaultQuestions();
@@ -408,8 +448,7 @@ export async function generateAIEstimate(projectInfo, answers, fileNames, fileBu
 
             const response = await stream.finalMessage();
             const text = response.content[0].text;
-            const jsonStr = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-            const result = JSON.parse(jsonStr);
+            const result = extractJSON(text);
 
             // Validate and fix grand total calculation
             validateAndFixTotals(result);
@@ -506,8 +545,7 @@ async function generateAIEstimateTextFallback(projectInfo, answers, fileNames, f
 
     const response = await stream.finalMessage();
     const text = response.content[0].text;
-    const jsonStr = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-    const result = JSON.parse(jsonStr);
+    const result = extractJSON(text);
 
     // Validate and fix grand total calculation
     validateAndFixTotals(result);

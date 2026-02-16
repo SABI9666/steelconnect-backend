@@ -261,57 +261,57 @@ function extractJSON(text) {
     return JSON.parse(jsonStr);
 }
 
-const SYSTEM_PROMPT = `You are an expert construction cost estimator. You produce precise, realistic estimates that contractors can actually use for bidding.
+const SYSTEM_PROMPT = `You are an expert construction cost estimator. You produce precise, realistic estimates that contractors can use for bidding.
 
-CORE PRINCIPLE: Accuracy over safety. A good estimate is one that matches the ACTUAL market cost, not an inflated "safe" number. Contractors need realistic numbers to win bids.
+CORE PRINCIPLE: Estimate ONLY what is shown in the drawings. Nothing more, nothing less. The estimate must match what a contractor would actually bid.
+
+SCALE AWARENESS (CRITICAL):
+- FIRST determine the project SCALE from drawings/description: Is this a small job (canopy, gate, railing, small shed < 500 sqft), medium (warehouse, workshop 500-10,000 sqft), or large (factory, multi-story > 10,000 sqft)?
+- Small jobs (< ₹5 lakh / < $6,000): Only 1-3 trades, 2-8 line items total. A gate needs only steel + painting. A canopy needs steel + roofing. DO NOT add foundation, MEP, site work unless shown in drawings.
+- Medium jobs: 3-6 trades, 10-25 line items.
+- Large jobs: 5-12 trades, 20-50 line items.
+- The NUMBER of line items must match the project COMPLEXITY. A simple steel fabrication job does NOT need 15+ line items.
 
 WHEN DRAWINGS ARE PROVIDED:
-- Examine every sheet. Extract dimensions, member sizes, quantities from what you SEE.
-- Count actual members (don't guess). Use drawing scale to derive missing dimensions.
-- Use ACTUAL member sizes from drawings, not assumptions.
+- Examine every sheet. Extract ALL dimensions, member sizes, quantities from what you SEE.
+- Count ACTUAL members. Use drawing scale to derive missing dimensions.
+- Estimate ONLY what is shown in the drawings. If drawings show only a steel canopy, estimate ONLY the canopy - not foundation, not MEP, not finishes.
 
-ESTIMATION ACCURACY (CRITICAL):
-1. unitRate = the ALL-IN installed cost per unit (material + labor + equipment). This must be a REALISTIC mid-market rate for the region.
-2. DO NOT use premium/high-end rates. Use STANDARD MARKET rates.
-3. DO NOT inflate quantities. Show your quantity derivation for each line item.
-4. DO NOT add trades that aren't shown in the drawings or description. A steel structure project does NOT need interior finishes, landscaping, or HVAC unless specifically mentioned.
-5. KEEP IT LEAN. Only include work items that are clearly needed.
+ESTIMATION ACCURACY:
+1. unitRate = ALL-IN installed cost per unit (material + labor + equipment). Use REALISTIC mid-market rates.
+2. DO NOT inflate quantities or rates. Show quantity derivation for each line item.
+3. DO NOT add trades not shown in drawings. A steel gate drawing needs ONLY: steel fabrication + painting/coating.
+4. Each cost item appears ONCE. No double-counting.
+5. For small projects: the total should feel RIGHT for the scale. A simple steel gate is ₹15,000-40,000, not ₹2,00,000+. A car parking canopy is ₹30,000-1,50,000 depending on size, not ₹5,00,000+.
 
-COMMON AI OVERESTIMATION ERRORS (AVOID THESE):
-- Overestimating steel tonnage: A typical single-story industrial building uses 5-15 kg/sqft (50-150 kg/sqm) of steel. A 10,000 sqft building needs ~25-75 tons, NOT 200+ tons.
-- Overestimating concrete: Foundation for a typical building is 10-25% of building area × depth, NOT the full building volume.
-- Double-counting: "Steel fabrication" + "Steel erection" + "Steel supply" as separate items at full rates = 3x actual cost. Use ONE "all-in" line item per material type OR ensure sub-items are properly split.
-- Adding unnecessary trades: Only estimate what is IN the drawings or explicitly requested.
-- Using US rates for India or vice versa: Indian steel is ₹55,000-75,000/MT installed, NOT $3,000/ton converted to INR.
+COMMON OVERESTIMATION ERRORS (AVOID):
+- Treating small jobs like large buildings (adding foundation, MEP, site work to a gate/railing job)
+- Overestimating steel: A small canopy uses 200-800 kg, NOT 5+ tons. Calculate from ACTUAL member sizes × lengths × count.
+- Double-counting: "Steel supply" + "Steel fabrication" + "Steel erection" at full rates = 3x actual cost
+- Using minimum quantities that exceed what drawings show
 
-REFERENCE RATES (use as anchors, adjust for region/complexity):
-India (INR):
-- Structural steel (supply + fabrication + erection): ₹55,000-75,000/MT
-- Concrete (RMC + placing + formwork): ₹5,000-8,000/m³
-- Rebar (supply + cutting + bending + placing): ₹55,000-65,000/MT
-- Roofing sheets (supply + fixing): ₹350-600/sqft
-- PEB structure (all-in): ₹1,200-2,200/sqft built-up area
-- Painting (2 coats): ₹40-80/sqft
+REFERENCE RATES (India INR):
+- Structural steel (supply+fab+erection): ₹55,000-75,000/MT
+- MS steel fabrication (gates, railings, grilles): ₹60,000-90,000/MT
+- Concrete (RMC+placing+formwork): ₹5,000-8,000/m³
+- Rebar (supply+cutting+bending+placing): ₹55,000-65,000/MT
+- Roofing sheets (supply+fixing): ₹350-600/sqft
+- Painting (2 coats epoxy/enamel): ₹40-80/sqft or ₹8,000-15,000/MT for steel
+- Galvanizing: ₹12,000-18,000/MT
 
-US (USD):
+REFERENCE RATES (US USD):
 - Structural steel installed: $2,500-4,000/ton
-- Concrete (complete): $200-350/CY
+- Concrete complete: $200-350/CY
 - Rebar installed: $1,200-1,800/ton
 - Metal roofing: $8-15/sqft
-- PEB structure: $40-100/sqft
 
-COST/SQFT BENCHMARKS (your final estimate MUST fall within these):
-USD: Industrial $60-180/sqft, Commercial $130-300/sqft, PEB $35-100/sqft
-INR: Industrial ₹1,500-4,000/sqft, Commercial ₹2,500-7,000/sqft, PEB ₹1,000-2,500/sqft
-If your result is ABOVE these ranges, you have an error. Re-check quantities and rates.
-
-MATH RULES (MANDATORY):
+MATH RULES:
 1. lineTotal = quantity × unitRate (VERIFY for every item)
 2. trade.subtotal = SUM of lineItems[].lineTotal
 3. directCosts = SUM of trades[].subtotal
 4. Each markup = percentage × directCosts
 5. grandTotal = directCosts + all markups
-6. VERIFY ALL MATH. If it doesn't add up, FIX IT before outputting.
+6. VERIFY ALL MATH before outputting.
 
 Respond ONLY in valid JSON. No markdown, no text outside JSON.`;
 
@@ -784,13 +784,20 @@ PROJECT:
 QUESTIONNAIRE ANSWERS:
 ${JSON.stringify(answers, null, 2)}
 
-WORKED EXAMPLE (for reference - shows correct quantity derivation and math):
-A 10,000 sqft (930 sqm) single-story steel warehouse in India:
-- Structural Steel: 45 MT × ₹65,000/MT = ₹29,25,000 (quantityBasis: "Building 100'x100', 25 columns at ~400kg + 20 beams at ~600kg + bracing ~8MT + misc 5MT")
-- Foundation: 180 m³ concrete × ₹6,500/m³ = ₹11,70,000 (quantityBasis: "25 footings 1.5m×1.5m×0.6m + plinth beam 200m×0.3m×0.4m")
-- Roofing: 10,000 sqft × ₹450/sqft = ₹45,00,000 (quantityBasis: "Building footprint area")
-- Direct costs: ~₹86,00,000, Markups 25%: ~₹21,50,000, Grand total: ~₹1,07,50,000
-- Cost/sqft: ₹1,075/sqft ✓ (within ₹1,000-2,500 PEB/Industrial range)
+WORKED EXAMPLES (match scale to your project):
+
+SMALL PROJECT: Steel car parking canopy 20'x10' in India:
+- Steel (4 columns ISMB150 × 3m + 2 beams ISMB200 × 6m + purlins): 0.6 MT × ₹75,000/MT = ₹45,000
+- Roofing (200 sqft polycarbonate): 200 sqft × ₹65/sqft = ₹13,000
+- Painting: 0.6 MT × ₹10,000/MT = ₹6,000
+- Direct: ₹64,000, Markups 15%: ₹9,600, Grand total: ₹73,600
+- Only 3 line items. NO foundation, NO MEP, NO site work.
+
+MEDIUM PROJECT: Steel warehouse 100'x100' in India:
+- Steel: 45 MT × ₹65,000/MT = ₹29,25,000
+- Foundation: 180 m³ × ₹6,500/m³ = ₹11,70,000
+- Roofing: 10,000 sqft × ₹450/sqft = ₹45,00,000
+- Direct: ~₹86L, Markups 25%: ~₹21.5L, Grand total: ~₹1.07 Cr
 
 Respond in this exact JSON format:
 {
@@ -871,6 +878,18 @@ Respond in this exact JSON format:
     "tradesSummary": [
         { "tradeName": "string", "amount": number, "percentage": number }
     ],
+    "materialBOQ": [
+        {
+            "sNo": number,
+            "material": "string (e.g., 'ISMB 200 Steel Beam')",
+            "specification": "string (e.g., 'IS 2062 Gr E250')",
+            "quantity": number,
+            "unit": "string (MT, m³, sqft, nos, RM, kg)",
+            "unitRate": number,
+            "amount": number,
+            "remarks": "string (source: from drawing / calculated / assumed)"
+        }
+    ],
     "assumptions": ["string array"],
     "exclusions": ["string array"],
     "notes": ["string array"],
@@ -887,11 +906,12 @@ RULES:
 2. trade.subtotal = SUM(lineItems[].lineTotal). directCosts = SUM(trades[].subtotal).
 3. Markups: GC 5-8%, overhead 3-5%, profit 5-10%, contingency 5-10%, escalation 0-3%. Total 20-30%.
 4. grandTotal = directCosts + all markup amounts = costBreakdown.totalWithMarkups.
-5. EVERY lineItem MUST have a "quantityBasis" showing the calculation/derivation.
-6. Only include trades that are IN the drawings or explicitly described. Do NOT add extra trades.
-7. Use MID-MARKET rates, not premium rates. Check against the reference rates in the system prompt.
-8. After computing grandTotal, calculate cost/sqft. If it exceeds the benchmark HIGH for this project type, you have an error - reduce quantities or rates.
-9. VERIFY ALL MATH before outputting.`;
+5. EVERY lineItem MUST have "quantityBasis" showing quantity derivation.
+6. Only include trades IN the drawings or explicitly described. No extra trades.
+7. Use MID-MARKET rates. Check against reference rates in system prompt.
+8. "materialBOQ" MUST list EVERY material needed with specification, quantity, unit, rate, and amount. This is the complete Bill of Quantities that a contractor uses for procurement. Include ALL materials: steel sections, bolts, welding rods, concrete, rebar, roofing sheets, paint, primers, anchor bolts, base plates, etc.
+9. MATCH the project SCALE. Small project = few items, low total. Do NOT over-scope.
+10. VERIFY ALL MATH before outputting.`;
 }
 
 function getDefaultQuestions() {

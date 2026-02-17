@@ -104,12 +104,16 @@ async function classifySheets(fileBuffers) {
 
 function normalizeSheetType(raw) {
     const l = (raw || '').toLowerCase();
-    if (/struct|fram|steel|beam|column|brac|plan|layout|roof|floor/.test(l)) return 'structural';
-    if (/found|foot|pile|pier|caisson|slab.on.grade|sog/.test(l)) return 'foundation';
-    if (/sched|table|list|bom|bill/.test(l)) return 'schedule';
-    if (/elev|section|detail|arch|exterior|facade|clad/.test(l)) return 'elevation';
-    if (/mep|mech|elec|plumb|hvac|fire/.test(l)) return 'mep';
-    if (/site|civil|grad|pav/.test(l)) return 'site';
+    if (/found|foot|pile|pier|caisson|slab.on.grade|sog|pile.cap|raft|mat.found/.test(l)) return 'foundation';
+    if (/sched|table|list|bom|bill|bar.bend|bbs/.test(l)) return 'schedule';
+    if (/peb|pre.?eng/.test(l)) return 'structural';
+    if (/struct|fram|steel|beam|column|brac|roof.fram|floor.fram|mezzanine|crane/.test(l)) return 'structural';
+    if (/elev|section|detail|exterior|facade|clad|envelope/.test(l)) return 'elevation';
+    if (/arch|floor.plan|room|finish|interior|partition|door|window/.test(l)) return 'elevation';
+    if (/mep|mech|elec|plumb|hvac|fire|sprinkler|electrical|sld|lighting/.test(l)) return 'mep';
+    if (/site|civil|grad|pav|landscape|drain|utility|fenc/.test(l)) return 'site';
+    if (/roof.plan|purlin|girt|sheet/.test(l)) return 'structural';
+    if (/cover|title|index/.test(l)) return 'general';
     return 'general';
 }
 
@@ -321,22 +325,31 @@ async function costEstimation(boq, projectInfo, answers) {
             `Calculations: ${JSON.stringify(boq.calculations, null, 2)}\nTotals: ${JSON.stringify(boq.totals, null, 2)}\n\n` +
             ratesReference + steelRatesText + benchText +
             `\nRATE SOURCE TAGGING: Include "rateSource" on each line item:\n- "DB" = from cost database\n- "EST" = AI estimated\nPrefer DB rates.\n\n` +
-            `COMPLETE MATERIAL SCHEDULE REQUIRED: Include a "materialSchedule" section with ALL project materials and TOTAL INSTALLED COSTS:\n` +
-            `- EVERY item needs: quantity, unit, totalCost (installed all-in cost). Do NOT output labor/equipment breakdown - that is computed by post-processor.\n` +
-            `- "steelMembers": [{mark, type, section, grade, count, lengthFt, totalCost, location}] for EVERY steel member\n` +
-            `- "steelSummary": {mainSteelTons, connectionMiscTons, totalSteelTons, steelPSF}\n` +
-            `- "concreteItems": [{element, type, dimensions, count, volumeEachCY, totalCY, concreteGrade, rebarLbsPerCY, rebarTotalLbs, totalCost, calculation}]\n` +
-            `- "concreteSummary": {totalConcreteCY, totalRebarTons}\n` +
-            `- "mepItems": [{category, item, specification, quantity, unit, totalCost, notes}] - ALL plumbing, HVAC, electrical, fire protection\n` +
-            `- "mepSummary": {totalPlumbingCost, totalHVACCost, totalElectricalCost, totalFireProtectionCost, totalMEPCost}\n` +
-            `- "architecturalItems": [{category, item, specification, quantity, unit, totalCost, notes}]\n` +
-            `- "architecturalSummary": {totalArchitecturalCost}\n` +
-            `- "roofingItems": [{item, specification, quantity, unit, totalCost, notes}]\n` +
-            `- "siteworkItems": [{item, specification, quantity, unit, totalCost, notes}]\n` +
-            `- "otherMaterials": [{material, specification, quantity, unit, totalCost, notes}]\n` +
+            `COMPLETE MATERIAL SCHEDULE REQUIRED: Include a "materialSchedule" section with ALL project materials and TOTAL INSTALLED COSTS.\n` +
+            `EVERY item needs: quantity, unit, totalCost (installed all-in cost). Do NOT output labor/equipment breakdown - computed by post-processor.\n` +
+            `Required sections:\n` +
+            `- "steelMembers": [{mark, type, section, grade, count, lengthFt/lengthM, weightPerUnit, totalWeight, totalCost, location, calculation}]\n` +
+            `- "steelSummary": {mainSteelTons, connectionMiscTons, totalSteelTons, steelPSF, weightUnit}\n` +
+            `- "concreteItems": [{element, type, dimensions, count, volumeEach, totalVolume, concreteGrade, rebarIntensity, rebarTotal, totalCost, calculation}]\n` +
+            `- "concreteSummary": {totalVolume, totalRebarTons, volumeUnit}\n` +
+            `- "rebarItems": [{element, barSize, quantity, unit, rebarGrade, totalCost}] — procurement-ready by bar size\n` +
+            `- "rebarSummary": {totalRebarTons, rebarBySize, rebarGrade}\n` +
+            `- "pebItems": [{item, specification, quantity, unit, totalCost}] — if PEB project\n` +
+            `- "pebSummary": {totalPEBWeight, weightUnit, totalPEBCost} — if PEB project\n` +
+            `- "mepItems": [{category, item, specification, quantity, unit, totalCost, notes}] — ALL: Plumbing, HVAC, Electrical, Fire Protection, Elevators, BMS\n` +
+            `- "mepSummary": {totalPlumbingCost, totalHVACCost, totalElectricalCost, totalFireProtectionCost, totalElevatorCost, totalBMSCost, totalMEPCost}\n` +
+            `- "architecturalItems": [{category, item, specification, quantity, unit, totalCost, notes}] — ALL: Doors, Windows, Flooring, Ceiling, Painting, Partitions\n` +
+            `- "architecturalSummary": {totalDoorsCost, totalWindowsCost, totalFlooringCost, totalCeilingCost, totalPaintingCost, totalPartitionsCost, totalArchitecturalCost}\n` +
+            `- "roofingItems": [{item, specification, quantity, unit, totalCost}]\n` +
+            `- "claddingItems": [{item, specification, quantity, unit, totalCost}]\n` +
+            `- "waterproofingItems": [{item, specification, quantity, unit, totalCost}]\n` +
+            `- "siteworkItems": [{item, specification, quantity, unit, totalCost}] — Earthwork, Paving, Drainage, Utilities, Landscaping, Fencing\n` +
+            `- "connectionItems": [{item, specification, quantity, unit, totalCost}] — Bolts, Base plates, Anchors\n` +
+            `- "otherMaterials": [{material, specification, quantity, unit, totalCost}] — Deck, Fireproofing, Misc\n` +
+            `- "safetyTemporary": [{item, specification, quantity, unit, totalCost}] — Scaffolding, Shoring, Safety\n` +
             `- "grandTotalMaterialCost": number\n` +
             `Do NOT include: materialCost, laborHours, laborRate, laborCost, equipmentCost, manpowerSummary, boqMarkups, crewBreakdown (computed by post-processor).\n` +
-            `Focus on ACCURATE quantities and total installed costs. This is a complete construction BOQ.\n\n` +
+            `Quantities must be PROCUREMENT-READY — anyone should be able to purchase materials from this BOQ.\n\n` +
             getCostApplicationPrompt()
     }];
 

@@ -280,6 +280,12 @@ export function detectCurrency(projectInfo) {
         if (/india|mumbai|delhi|bangalore|chennai|kolkata|rupee|inr/.test(blob)) return 'INR';
         if (/dubai|abu dhabi|uae|sharjah|dirham|aed/.test(blob))               return 'AED';
         if (/london|manchester|uk|united kingdom|gbp|pound/.test(blob))        return 'GBP';
+        if (/riyadh|jeddah|saudi|sar/.test(blob))                              return 'SAR';
+        if (/toronto|vancouver|calgary|canada|cad/.test(blob))                 return 'CAD';
+        if (/sydney|melbourne|brisbane|australia|aud/.test(blob))              return 'AUD';
+        if (/singapore|sgd/.test(blob))                                        return 'SGD';
+        if (/germany|france|spain|italy|netherlands|euro|eur/.test(blob))      return 'EUR';
+        if (/paris|berlin|munich|madrid|barcelona|rome|milan/.test(blob))      return 'EUR';
     }
 
     return 'USD';

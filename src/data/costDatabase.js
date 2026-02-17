@@ -104,6 +104,107 @@ export const INDIAN_STEEL_WEIGHTS = {
 };
 
 /**
+ * European Steel Section Weights (kg/m) - EN 10025 / BS EN
+ */
+export const EUROPEAN_STEEL_WEIGHTS = {
+    // HEA (wide flange light)
+    'HEA100': 20.4, 'HEA120': 25.3, 'HEA140': 31.4, 'HEA160': 38.8,
+    'HEA180': 45.2, 'HEA200': 53.8, 'HEA220': 62.6, 'HEA240': 72.2,
+    'HEA260': 82.2, 'HEA280': 92.4, 'HEA300': 106.0, 'HEA320': 117.0,
+    'HEA340': 127.0, 'HEA360': 142.0, 'HEA400': 155.0, 'HEA450': 172.0,
+    'HEA500': 202.0, 'HEA550': 226.0, 'HEA600': 254.0,
+    // HEB (wide flange medium)
+    'HEB100': 26.1, 'HEB120': 34.0, 'HEB140': 43.0, 'HEB160': 54.3,
+    'HEB180': 65.3, 'HEB200': 78.1, 'HEB220': 91.0, 'HEB240': 106.0,
+    'HEB260': 118.0, 'HEB280': 131.0, 'HEB300': 149.0, 'HEB320': 161.0,
+    'HEB340': 171.0, 'HEB360': 181.0, 'HEB400': 197.0, 'HEB450': 218.0,
+    'HEB500': 239.0, 'HEB550': 263.0, 'HEB600': 285.0,
+    // IPE (I-beam European)
+    'IPE80': 6.0, 'IPE100': 8.1, 'IPE120': 10.4, 'IPE140': 12.9,
+    'IPE160': 15.8, 'IPE180': 18.8, 'IPE200': 22.4, 'IPE220': 26.2,
+    'IPE240': 30.7, 'IPE270': 36.1, 'IPE300': 42.2, 'IPE330': 49.1,
+    'IPE360': 57.1, 'IPE400': 66.3, 'IPE450': 77.6, 'IPE500': 90.7,
+    'IPE550': 106.0, 'IPE600': 122.0,
+    // UPN (European channels)
+    'UPN80': 8.6, 'UPN100': 10.6, 'UPN120': 13.4, 'UPN140': 16.0,
+    'UPN160': 18.8, 'UPN180': 22.0, 'UPN200': 25.3, 'UPN220': 29.4,
+    'UPN240': 33.2, 'UPN260': 37.9, 'UPN280': 41.8, 'UPN300': 46.2
+};
+
+/**
+ * British/Australian Steel Section Weights (kg/m)
+ */
+export const BRITISH_STEEL_WEIGHTS = {
+    // UB (Universal Beams)
+    'UB203X133X25': 25.1, 'UB254X146X31': 31.1, 'UB305X165X40': 40.3,
+    'UB356X171X51': 51.0, 'UB406X178X60': 60.1, 'UB457X191X67': 67.1,
+    'UB457X191X74': 74.3, 'UB457X191X82': 82.1, 'UB533X210X82': 82.2,
+    'UB533X210X92': 92.1, 'UB533X210X101': 101.0, 'UB610X229X101': 101.2,
+    'UB610X229X113': 113.0, 'UB610X229X125': 125.1, 'UB610X305X149': 149.2,
+    'UB686X254X125': 125.2, 'UB686X254X140': 140.1, 'UB686X254X152': 152.4,
+    'UB762X267X147': 146.9, 'UB762X267X173': 173.0, 'UB838X292X176': 176.0,
+    'UB914X305X201': 200.9, 'UB914X305X224': 224.2, 'UB914X305X253': 253.4,
+    // UC (Universal Columns)
+    'UC152X152X23': 23.0, 'UC152X152X30': 30.0, 'UC152X152X37': 37.0,
+    'UC203X203X46': 46.1, 'UC203X203X52': 52.0, 'UC203X203X60': 60.0,
+    'UC203X203X71': 71.0, 'UC203X203X86': 86.1, 'UC254X254X73': 73.1,
+    'UC254X254X89': 89.0, 'UC254X254X107': 107.1, 'UC254X254X132': 132.0,
+    'UC305X305X97': 96.9, 'UC305X305X118': 117.9, 'UC305X305X137': 136.9,
+    'UC305X305X158': 158.1, 'UC305X305X198': 198.1, 'UC305X305X240': 240.0,
+    'UC356X368X129': 129.0, 'UC356X368X153': 153.0, 'UC356X368X177': 177.0,
+    'UC356X406X235': 235.1, 'UC356X406X287': 287.1, 'UC356X406X340': 339.9,
+    // PFC (Parallel Flange Channels)
+    'PFC100X50': 10.2, 'PFC125X65': 14.8, 'PFC150X75': 17.9,
+    'PFC150X90': 24.0, 'PFC180X75': 20.8, 'PFC200X75': 23.4,
+    'PFC200X90': 29.7, 'PFC230X75': 25.7, 'PFC230X90': 32.2,
+    'PFC260X75': 27.6, 'PFC260X90': 34.8, 'PFC300X90': 41.4,
+    'PFC380X100': 54.0, 'PFC430X100': 64.4
+};
+
+/**
+ * HSS (Hollow Structural Sections) weights - lb/ft
+ */
+export const HSS_WEIGHTS = {
+    // Square HSS
+    'HSS2X2X3/16': 4.32, 'HSS2X2X1/4': 5.41, 'HSS2.5X2.5X3/16': 5.59,
+    'HSS2.5X2.5X1/4': 7.10, 'HSS3X3X3/16': 6.87, 'HSS3X3X1/4': 8.81,
+    'HSS3X3X5/16': 10.58, 'HSS3X3X3/8': 12.17, 'HSS3.5X3.5X1/4': 10.51,
+    'HSS3.5X3.5X5/16': 12.70, 'HSS3.5X3.5X3/8': 14.72,
+    'HSS4X4X1/4': 12.21, 'HSS4X4X5/16': 14.83, 'HSS4X4X3/8': 17.27,
+    'HSS4X4X1/2': 21.63, 'HSS5X5X1/4': 15.62, 'HSS5X5X5/16': 19.08,
+    'HSS5X5X3/8': 22.37, 'HSS5X5X1/2': 28.43,
+    'HSS6X6X1/4': 19.02, 'HSS6X6X5/16': 23.34, 'HSS6X6X3/8': 27.48,
+    'HSS6X6X1/2': 35.24, 'HSS6X6X5/8': 42.05,
+    'HSS7X7X1/4': 22.42, 'HSS7X7X5/16': 27.59, 'HSS7X7X3/8': 32.58,
+    'HSS7X7X1/2': 42.05, 'HSS8X8X1/4': 25.82, 'HSS8X8X5/16': 31.84,
+    'HSS8X8X3/8': 37.69, 'HSS8X8X1/2': 48.85, 'HSS8X8X5/8': 59.32,
+    'HSS10X10X1/4': 32.63, 'HSS10X10X3/8': 47.90, 'HSS10X10X1/2': 62.46,
+    'HSS10X10X5/8': 76.33, 'HSS12X12X3/8': 58.10, 'HSS12X12X1/2': 76.07,
+    'HSS12X12X5/8': 93.34,
+    // Rectangular HSS (common)
+    'HSS6X4X1/4': 15.62, 'HSS6X4X3/8': 22.37, 'HSS6X4X1/2': 28.43,
+    'HSS8X4X1/4': 19.02, 'HSS8X4X3/8': 27.48, 'HSS8X4X1/2': 35.24,
+    'HSS8X6X1/4': 22.42, 'HSS8X6X3/8': 32.58, 'HSS8X6X1/2': 42.05,
+    'HSS10X6X1/4': 25.82, 'HSS10X6X3/8': 37.69, 'HSS10X6X1/2': 48.85,
+    'HSS12X6X1/4': 29.23, 'HSS12X6X3/8': 42.79, 'HSS12X6X1/2': 55.66,
+    'HSS12X8X3/8': 47.90, 'HSS12X8X1/2': 62.46
+};
+
+/**
+ * PEB Component Weights (kg/sqm of covered area)
+ */
+export const PEB_COMPONENT_WEIGHTS = {
+    primary_frames_light: { weight: 2.5, unit: 'kg/sqm', desc: 'Light duty span <24m' },
+    primary_frames_medium: { weight: 3.5, unit: 'kg/sqm', desc: 'Medium duty span 24-36m' },
+    primary_frames_heavy: { weight: 5.0, unit: 'kg/sqm', desc: 'Heavy duty span >36m or crane' },
+    purlins: { weight: 1.5, unit: 'kg/sqm', desc: 'Z/C purlins' },
+    girts: { weight: 1.2, unit: 'kg/sqm', desc: 'Wall girts' },
+    bracing: { weight: 0.5, unit: 'kg/sqm', desc: 'Vertical + horizontal bracing' },
+    mezzanine: { weight: 25, unit: 'kg/sqm', desc: 'Mezzanine structure (of mezzanine area)' },
+    crane_beam: { weight: 15, unit: 'kg/m', desc: 'Crane beam per meter span' }
+};
+
+/**
  * Unit Rates by Currency/Region (2025-2026 market rates)
  * All rates are INSTALLED costs (material + labor + equipment)
  */
@@ -220,11 +321,131 @@ export const UNIT_RATES = {
         structural_steel: {
             light: { rate: 3200, unit: 'tonne', desc: 'Light sections, installed', range: [2600, 3800] },
             medium: { rate: 2800, unit: 'tonne', desc: 'Medium sections, installed', range: [2200, 3400] },
-            heavy: { rate: 2500, unit: 'tonne', desc: 'Heavy sections, installed', range: [2000, 3000] }
+            heavy: { rate: 2500, unit: 'tonne', desc: 'Heavy sections, installed', range: [2000, 3000] },
+            hss: { rate: 3500, unit: 'tonne', desc: 'Hollow sections, installed', range: [2800, 4200] }
         },
         concrete: {
             C30: { rate: 120, unit: 'cum', desc: 'C30 concrete, placed', range: [95, 150] },
-            C40: { rate: 140, unit: 'cum', desc: 'C40 concrete, placed', range: [110, 175] }
+            C40: { rate: 140, unit: 'cum', desc: 'C40 concrete, placed', range: [110, 175] },
+            C50: { rate: 165, unit: 'cum', desc: 'C50 concrete, placed', range: [130, 200] }
+        },
+        rebar: {
+            B500B: { rate: 1100, unit: 'tonne', desc: 'B500B rebar, placed', range: [850, 1400] }
+        },
+        roofing: {
+            standing_seam: { rate: 55, unit: 'sqm', desc: 'Standing seam metal roof', range: [40, 75] },
+            single_ply: { rate: 45, unit: 'sqm', desc: 'Single-ply membrane', range: [32, 60] }
+        },
+        mep: {
+            hvac: { rate: 80, unit: 'sqm', desc: 'HVAC commercial', range: [55, 120] },
+            plumbing: { rate: 45, unit: 'sqm', desc: 'Plumbing', range: [30, 65] },
+            electrical: { rate: 65, unit: 'sqm', desc: 'Electrical', range: [45, 95] },
+            fire_protection: { rate: 25, unit: 'sqm', desc: 'Fire protection', range: [18, 35] }
+        }
+    },
+    EUR: {
+        structural_steel: {
+            light: { rate: 3600, unit: 'tonne', desc: 'Light sections (IPE/HEA), installed', range: [2900, 4300] },
+            medium: { rate: 3200, unit: 'tonne', desc: 'Medium sections (HEB), installed', range: [2600, 3800] },
+            heavy: { rate: 2800, unit: 'tonne', desc: 'Heavy sections, installed', range: [2200, 3400] },
+            hss: { rate: 3800, unit: 'tonne', desc: 'Hollow sections, installed', range: [3000, 4600] }
+        },
+        concrete: {
+            C30: { rate: 130, unit: 'cum', desc: 'C30 concrete, placed', range: [100, 165] },
+            C40: { rate: 155, unit: 'cum', desc: 'C40 concrete, placed', range: [120, 190] },
+            C50: { rate: 180, unit: 'cum', desc: 'C50 concrete, placed', range: [140, 220] }
+        },
+        rebar: {
+            B500B: { rate: 1200, unit: 'tonne', desc: 'B500B rebar, placed', range: [950, 1500] }
+        },
+        roofing: {
+            standing_seam: { rate: 60, unit: 'sqm', desc: 'Standing seam metal roof', range: [45, 80] },
+            single_ply: { rate: 50, unit: 'sqm', desc: 'Single-ply membrane', range: [35, 65] }
+        },
+        mep: {
+            hvac: { rate: 90, unit: 'sqm', desc: 'HVAC commercial', range: [60, 130] },
+            plumbing: { rate: 50, unit: 'sqm', desc: 'Plumbing', range: [35, 70] },
+            electrical: { rate: 70, unit: 'sqm', desc: 'Electrical', range: [50, 100] },
+            fire_protection: { rate: 28, unit: 'sqm', desc: 'Fire protection', range: [20, 38] }
+        }
+    },
+    SAR: {
+        structural_steel: {
+            light: { rate: 12500, unit: 'MT', desc: 'Light sections, installed', range: [10000, 15000] },
+            medium: { rate: 11000, unit: 'MT', desc: 'Medium sections, installed', range: [9000, 13500] },
+            heavy: { rate: 10000, unit: 'MT', desc: 'Heavy sections, installed', range: [8000, 12000] },
+            hss: { rate: 13500, unit: 'MT', desc: 'Hollow sections, installed', range: [10500, 16500] }
+        },
+        concrete: {
+            C30: { rate: 800, unit: 'cum', desc: 'C30 concrete, placed', range: [650, 1000] },
+            C40: { rate: 950, unit: 'cum', desc: 'C40 concrete, placed', range: [750, 1150] }
+        },
+        rebar: {
+            grade500: { rate: 5500, unit: 'MT', desc: 'Grade 500 rebar, placed', range: [4200, 6800] }
+        },
+        mep: {
+            hvac: { rate: 250, unit: 'sqm', desc: 'HVAC commercial', range: [170, 370] },
+            plumbing: { rate: 130, unit: 'sqm', desc: 'Plumbing', range: [85, 190] },
+            electrical: { rate: 190, unit: 'sqm', desc: 'Electrical', range: [130, 280] },
+            fire_protection: { rate: 70, unit: 'sqm', desc: 'Fire protection', range: [50, 100] }
+        }
+    },
+    CAD: {
+        structural_steel: {
+            light: { rate: 4200, unit: 'tonne', desc: 'Light sections, installed', range: [3400, 5000] },
+            medium: { rate: 3600, unit: 'tonne', desc: 'Medium sections, installed', range: [2900, 4300] },
+            heavy: { rate: 3200, unit: 'tonne', desc: 'Heavy sections, installed', range: [2600, 3800] },
+            hss: { rate: 4800, unit: 'tonne', desc: 'Hollow sections, installed', range: [3800, 5800] }
+        },
+        concrete: {
+            '3000psi': { rate: 250, unit: 'cy', desc: '3000 PSI concrete, placed', range: [200, 310] },
+            '4000psi': { rate: 280, unit: 'cy', desc: '4000 PSI concrete, placed', range: [225, 350] },
+            '5000psi': { rate: 320, unit: 'cy', desc: '5000 PSI concrete, placed', range: [260, 400] }
+        },
+        rebar: {
+            grade60: { rate: 1800, unit: 'ton', desc: 'Grade 60 rebar, placed', range: [1400, 2200] }
+        },
+        mep: {
+            hvac: { rate: 30, unit: 'sf', desc: 'HVAC commercial', range: [20, 45] },
+            plumbing: { rate: 16, unit: 'sf', desc: 'Plumbing', range: [10, 24] },
+            electrical: { rate: 24, unit: 'sf', desc: 'Electrical', range: [16, 36] },
+            fire_protection: { rate: 7, unit: 'sf', desc: 'Fire protection', range: [5, 10] }
+        }
+    },
+    AUD: {
+        structural_steel: {
+            light: { rate: 5200, unit: 'tonne', desc: 'Light sections, installed', range: [4200, 6200] },
+            medium: { rate: 4500, unit: 'tonne', desc: 'Medium sections, installed', range: [3600, 5400] },
+            heavy: { rate: 4000, unit: 'tonne', desc: 'Heavy sections, installed', range: [3200, 4800] },
+            hss: { rate: 5800, unit: 'tonne', desc: 'Hollow sections, installed', range: [4600, 7000] }
+        },
+        concrete: {
+            '32mpa': { rate: 280, unit: 'cum', desc: '32 MPa concrete, placed', range: [220, 350] },
+            '40mpa': { rate: 320, unit: 'cum', desc: '40 MPa concrete, placed', range: [250, 400] },
+            '50mpa': { rate: 380, unit: 'cum', desc: '50 MPa concrete, placed', range: [300, 470] }
+        },
+        rebar: {
+            D500N: { rate: 2200, unit: 'tonne', desc: 'D500N rebar, placed', range: [1700, 2800] }
+        },
+        mep: {
+            hvac: { rate: 120, unit: 'sqm', desc: 'HVAC commercial', range: [80, 180] },
+            plumbing: { rate: 65, unit: 'sqm', desc: 'Plumbing', range: [45, 95] },
+            electrical: { rate: 95, unit: 'sqm', desc: 'Electrical', range: [65, 140] },
+            fire_protection: { rate: 35, unit: 'sqm', desc: 'Fire protection', range: [25, 50] }
+        }
+    },
+    SGD: {
+        structural_steel: {
+            light: { rate: 4800, unit: 'tonne', desc: 'Light sections, installed', range: [3800, 5800] },
+            medium: { rate: 4200, unit: 'tonne', desc: 'Medium sections, installed', range: [3400, 5000] },
+            heavy: { rate: 3800, unit: 'tonne', desc: 'Heavy sections, installed', range: [3000, 4600] }
+        },
+        concrete: {
+            C40: { rate: 200, unit: 'cum', desc: 'Grade 40 concrete, placed', range: [160, 250] },
+            C50: { rate: 240, unit: 'cum', desc: 'Grade 50 concrete, placed', range: [190, 300] }
+        },
+        rebar: {
+            grade500: { rate: 1800, unit: 'tonne', desc: 'Grade 500 rebar, placed', range: [1400, 2200] }
         }
     }
 };
@@ -320,12 +541,89 @@ export const LOCATION_FACTORS = {
     'glasgow': { factor: 0.90, currency: 'GBP', country: 'GB' },
     'bristol': { factor: 0.95, currency: 'GBP', country: 'GB' },
 
-    // Other
+    // European Cities
+    'paris': { factor: 1.20, currency: 'EUR', country: 'FR' },
+    'lyon': { factor: 1.00, currency: 'EUR', country: 'FR' },
+    'marseille': { factor: 0.95, currency: 'EUR', country: 'FR' },
+    'berlin': { factor: 1.05, currency: 'EUR', country: 'DE' },
+    'munich': { factor: 1.15, currency: 'EUR', country: 'DE' },
+    'frankfurt': { factor: 1.12, currency: 'EUR', country: 'DE' },
+    'hamburg': { factor: 1.08, currency: 'EUR', country: 'DE' },
+    'amsterdam': { factor: 1.15, currency: 'EUR', country: 'NL' },
+    'rotterdam': { factor: 1.05, currency: 'EUR', country: 'NL' },
+    'madrid': { factor: 0.95, currency: 'EUR', country: 'ES' },
+    'barcelona': { factor: 1.00, currency: 'EUR', country: 'ES' },
+    'rome': { factor: 1.05, currency: 'EUR', country: 'IT' },
+    'milan': { factor: 1.12, currency: 'EUR', country: 'IT' },
+    'dublin': { factor: 1.10, currency: 'EUR', country: 'IE' },
+    'brussels': { factor: 1.08, currency: 'EUR', country: 'BE' },
+    'vienna': { factor: 1.08, currency: 'EUR', country: 'AT' },
+    'zurich': { factor: 1.40, currency: 'CHF', country: 'CH' },
+    'stockholm': { factor: 1.15, currency: 'SEK', country: 'SE' },
+    'copenhagen': { factor: 1.18, currency: 'DKK', country: 'DK' },
+    'oslo': { factor: 1.25, currency: 'NOK', country: 'NO' },
+    'helsinki': { factor: 1.12, currency: 'EUR', country: 'FI' },
+    'warsaw': { factor: 0.75, currency: 'PLN', country: 'PL' },
+    'prague': { factor: 0.80, currency: 'CZK', country: 'CZ' },
+    'budapest': { factor: 0.70, currency: 'HUF', country: 'HU' },
+    'lisbon': { factor: 0.85, currency: 'EUR', country: 'PT' },
+    'athens': { factor: 0.80, currency: 'EUR', country: 'GR' },
+
+    // Canada
     'toronto': { factor: 1.10, currency: 'CAD', country: 'CA' },
     'vancouver': { factor: 1.15, currency: 'CAD', country: 'CA' },
+    'calgary': { factor: 1.05, currency: 'CAD', country: 'CA' },
+    'edmonton': { factor: 1.02, currency: 'CAD', country: 'CA' },
+    'montreal': { factor: 1.00, currency: 'CAD', country: 'CA' },
+    'ottawa': { factor: 1.05, currency: 'CAD', country: 'CA' },
+    'winnipeg': { factor: 0.95, currency: 'CAD', country: 'CA' },
+
+    // Australia
     'sydney': { factor: 1.15, currency: 'AUD', country: 'AU' },
     'melbourne': { factor: 1.10, currency: 'AUD', country: 'AU' },
-    'singapore': { factor: 1.20, currency: 'SGD', country: 'SG' }
+    'brisbane': { factor: 1.05, currency: 'AUD', country: 'AU' },
+    'perth': { factor: 1.12, currency: 'AUD', country: 'AU' },
+    'adelaide': { factor: 1.00, currency: 'AUD', country: 'AU' },
+    'canberra': { factor: 1.08, currency: 'AUD', country: 'AU' },
+
+    // Southeast Asia
+    'singapore': { factor: 1.20, currency: 'SGD', country: 'SG' },
+    'kuala lumpur': { factor: 0.70, currency: 'MYR', country: 'MY' },
+    'bangkok': { factor: 0.65, currency: 'THB', country: 'TH' },
+    'jakarta': { factor: 0.55, currency: 'IDR', country: 'ID' },
+    'ho chi minh': { factor: 0.50, currency: 'VND', country: 'VN' },
+    'manila': { factor: 0.55, currency: 'PHP', country: 'PH' },
+
+    // East Asia
+    'tokyo': { factor: 1.30, currency: 'JPY', country: 'JP' },
+    'osaka': { factor: 1.15, currency: 'JPY', country: 'JP' },
+    'seoul': { factor: 1.10, currency: 'KRW', country: 'KR' },
+    'hong kong': { factor: 1.35, currency: 'HKD', country: 'HK' },
+    'taipei': { factor: 0.90, currency: 'TWD', country: 'TW' },
+    'shanghai': { factor: 0.85, currency: 'CNY', country: 'CN' },
+    'beijing': { factor: 0.90, currency: 'CNY', country: 'CN' },
+    'shenzhen': { factor: 0.85, currency: 'CNY', country: 'CN' },
+
+    // Africa
+    'johannesburg': { factor: 0.70, currency: 'ZAR', country: 'ZA' },
+    'cape town': { factor: 0.72, currency: 'ZAR', country: 'ZA' },
+    'lagos': { factor: 0.60, currency: 'NGN', country: 'NG' },
+    'nairobi': { factor: 0.55, currency: 'KES', country: 'KE' },
+    'cairo': { factor: 0.50, currency: 'EGP', country: 'EG' },
+    'casablanca': { factor: 0.60, currency: 'MAD', country: 'MA' },
+
+    // South America
+    'sao paulo': { factor: 0.75, currency: 'BRL', country: 'BR' },
+    'rio de janeiro': { factor: 0.78, currency: 'BRL', country: 'BR' },
+    'mexico city': { factor: 0.65, currency: 'MXN', country: 'MX' },
+    'bogota': { factor: 0.55, currency: 'COP', country: 'CO' },
+    'santiago': { factor: 0.70, currency: 'CLP', country: 'CL' },
+    'buenos aires': { factor: 0.60, currency: 'ARS', country: 'AR' },
+    'lima': { factor: 0.55, currency: 'PEN', country: 'PE' },
+
+    // New Zealand
+    'auckland': { factor: 1.10, currency: 'NZD', country: 'NZ' },
+    'wellington': { factor: 1.05, currency: 'NZD', country: 'NZ' }
 };
 
 /**
@@ -377,7 +675,40 @@ export const BENCHMARK_RANGES = {
         commercial: { low: 130, mid: 220, high: 320, unit: 'sqft', label: 'Commercial Office' },
         residential: { low: 100, mid: 180, high: 260, unit: 'sqft', label: 'Residential' },
         healthcare: { low: 250, mid: 420, high: 600, unit: 'sqft', label: 'Healthcare' },
-        educational: { low: 170, mid: 260, high: 360, unit: 'sqft', label: 'Educational' }
+        educational: { low: 170, mid: 260, high: 360, unit: 'sqft', label: 'Educational' },
+        peb: { low: 35, mid: 65, high: 100, unit: 'sqft', label: 'Pre-Engineered Building' },
+        hospitality: { low: 180, mid: 300, high: 450, unit: 'sqft', label: 'Hospitality' }
+    },
+    EUR: {
+        industrial: { low: 80, mid: 135, high: 200, unit: 'sqft', label: 'Industrial/Warehouse' },
+        commercial: { low: 140, mid: 240, high: 340, unit: 'sqft', label: 'Commercial Office' },
+        residential: { low: 110, mid: 195, high: 280, unit: 'sqft', label: 'Residential' },
+        healthcare: { low: 270, mid: 450, high: 650, unit: 'sqft', label: 'Healthcare' },
+        educational: { low: 185, mid: 280, high: 390, unit: 'sqft', label: 'Educational' },
+        hospitality: { low: 190, mid: 320, high: 480, unit: 'sqft', label: 'Hospitality' },
+        peb: { low: 38, mid: 72, high: 110, unit: 'sqft', label: 'Pre-Engineered Building' }
+    },
+    SAR: {
+        industrial: { low: 320, mid: 580, high: 850, unit: 'sqft', label: 'Industrial/Warehouse' },
+        commercial: { low: 650, mid: 1100, high: 1500, unit: 'sqft', label: 'Commercial Office' },
+        residential: { low: 450, mid: 750, high: 1100, unit: 'sqft', label: 'Residential' },
+        healthcare: { low: 1100, mid: 1900, high: 2700, unit: 'sqft', label: 'Healthcare' },
+        hospitality: { low: 750, mid: 1300, high: 1900, unit: 'sqft', label: 'Hospitality' },
+        peb: { low: 160, mid: 320, high: 480, unit: 'sqft', label: 'Pre-Engineered Building' }
+    },
+    CAD: {
+        industrial: { low: 100, mid: 175, high: 260, unit: 'sqft', label: 'Industrial/Warehouse' },
+        commercial: { low: 190, mid: 320, high: 450, unit: 'sqft', label: 'Commercial Office' },
+        residential: { low: 150, mid: 240, high: 320, unit: 'sqft', label: 'Residential' },
+        healthcare: { low: 380, mid: 640, high: 900, unit: 'sqft', label: 'Healthcare' },
+        peb: { low: 50, mid: 100, high: 155, unit: 'sqft', label: 'Pre-Engineered Building' }
+    },
+    AUD: {
+        industrial: { low: 120, mid: 210, high: 310, unit: 'sqft', label: 'Industrial/Warehouse' },
+        commercial: { low: 230, mid: 380, high: 530, unit: 'sqft', label: 'Commercial Office' },
+        residential: { low: 180, mid: 290, high: 400, unit: 'sqft', label: 'Residential' },
+        healthcare: { low: 450, mid: 760, high: 1060, unit: 'sqft', label: 'Healthcare' },
+        peb: { low: 60, mid: 120, high: 180, unit: 'sqft', label: 'Pre-Engineered Building' }
     }
 };
 
@@ -414,10 +745,38 @@ export function getSteelWeightPerFoot(sectionName) {
         return { weight: INDIAN_STEEL_WEIGHTS[normalized], unit: 'kg/m' };
     }
 
+    // Try European sections (HEA, HEB, IPE, UPN)
+    if (EUROPEAN_STEEL_WEIGHTS[normalized]) {
+        return { weight: EUROPEAN_STEEL_WEIGHTS[normalized], unit: 'kg/m' };
+    }
+
+    // Try British/Australian sections (UB, UC, PFC)
+    if (BRITISH_STEEL_WEIGHTS[normalized]) {
+        return { weight: BRITISH_STEEL_WEIGHTS[normalized], unit: 'kg/m' };
+    }
+
+    // Try HSS table
+    if (HSS_WEIGHTS[normalized]) {
+        return { weight: HSS_WEIGHTS[normalized], unit: 'lb/ft' };
+    }
+
     // Fallback: parse the weight from the section name (W24x68 -> 68 lb/ft)
     const wMatch = normalized.match(/^W(\d+)X(\d+(?:\.\d+)?)$/);
     if (wMatch) {
         return { weight: parseFloat(wMatch[2]), unit: 'lb/ft' };
+    }
+
+    // British UB/UC format: UB533X210X82 -> 82 kg/m
+    const ubMatch = normalized.match(/^(UB|UC|PFC)(\d+)X(\d+)X(\d+(?:\.\d+)?)$/);
+    if (ubMatch) {
+        return { weight: parseFloat(ubMatch[4]), unit: 'kg/m' };
+    }
+
+    // European IPE/HEA/HEB: try to parse from section designation
+    const euroMatch = normalized.match(/^(IPE|HEA|HEB|UPN)(\d+)$/);
+    if (euroMatch) {
+        // Check if it's in the table (already handled above), otherwise estimate
+        return null;
     }
 
     return null;
@@ -444,10 +803,10 @@ export function getLocationFactor(location) {
     if (/\bindia\b/i.test(location) || /\bIN\b/.test(location)) {
         return { factor: 1.0, currency: 'INR', country: 'IN' };
     }
-    if (/\buae\b|\bunited arab\b/i.test(location)) {
+    if (/\buae\b|\bunited arab\b|\bemirati\b/i.test(location)) {
         return { factor: 1.0, currency: 'AED', country: 'AE' };
     }
-    if (/\buk\b|\bunited kingdom\b|\bengland\b/i.test(location)) {
+    if (/\buk\b|\bunited kingdom\b|\bengland\b|\bscotland\b|\bwales\b/i.test(location)) {
         return { factor: 1.0, currency: 'GBP', country: 'GB' };
     }
     if (/\bcanada\b/i.test(location)) {
@@ -456,8 +815,107 @@ export function getLocationFactor(location) {
     if (/\baustralia\b/i.test(location)) {
         return { factor: 1.0, currency: 'AUD', country: 'AU' };
     }
-    if (/\bsaudi\b/i.test(location)) {
+    if (/\bsaudi\b|\bksa\b/i.test(location)) {
         return { factor: 1.0, currency: 'SAR', country: 'SA' };
+    }
+    if (/\bsingapore\b/i.test(location)) {
+        return { factor: 1.0, currency: 'SGD', country: 'SG' };
+    }
+    if (/\bgermany\b|\bdeutschland\b/i.test(location)) {
+        return { factor: 1.0, currency: 'EUR', country: 'DE' };
+    }
+    if (/\bfrance\b/i.test(location)) {
+        return { factor: 1.0, currency: 'EUR', country: 'FR' };
+    }
+    if (/\bspain\b/i.test(location)) {
+        return { factor: 1.0, currency: 'EUR', country: 'ES' };
+    }
+    if (/\bitaly\b/i.test(location)) {
+        return { factor: 1.0, currency: 'EUR', country: 'IT' };
+    }
+    if (/\bnetherlands\b|\bholland\b/i.test(location)) {
+        return { factor: 1.0, currency: 'EUR', country: 'NL' };
+    }
+    if (/\bireland\b/i.test(location)) {
+        return { factor: 1.0, currency: 'EUR', country: 'IE' };
+    }
+    if (/\bbelgium\b/i.test(location)) {
+        return { factor: 1.0, currency: 'EUR', country: 'BE' };
+    }
+    if (/\baustria\b/i.test(location)) {
+        return { factor: 1.0, currency: 'EUR', country: 'AT' };
+    }
+    if (/\bportugal\b/i.test(location)) {
+        return { factor: 1.0, currency: 'EUR', country: 'PT' };
+    }
+    if (/\bgreece\b/i.test(location)) {
+        return { factor: 1.0, currency: 'EUR', country: 'GR' };
+    }
+    if (/\bfinland\b/i.test(location)) {
+        return { factor: 1.0, currency: 'EUR', country: 'FI' };
+    }
+    if (/\bjapan\b/i.test(location)) {
+        return { factor: 1.0, currency: 'JPY', country: 'JP' };
+    }
+    if (/\bchina\b/i.test(location)) {
+        return { factor: 1.0, currency: 'CNY', country: 'CN' };
+    }
+    if (/\bkorea\b/i.test(location)) {
+        return { factor: 1.0, currency: 'KRW', country: 'KR' };
+    }
+    if (/\bmalaysia\b/i.test(location)) {
+        return { factor: 1.0, currency: 'MYR', country: 'MY' };
+    }
+    if (/\bthai\b/i.test(location)) {
+        return { factor: 1.0, currency: 'THB', country: 'TH' };
+    }
+    if (/\bindonesia\b/i.test(location)) {
+        return { factor: 1.0, currency: 'IDR', country: 'ID' };
+    }
+    if (/\bphilippine\b/i.test(location)) {
+        return { factor: 1.0, currency: 'PHP', country: 'PH' };
+    }
+    if (/\bvietnam\b/i.test(location)) {
+        return { factor: 1.0, currency: 'VND', country: 'VN' };
+    }
+    if (/\bsouth africa\b/i.test(location)) {
+        return { factor: 1.0, currency: 'ZAR', country: 'ZA' };
+    }
+    if (/\bnigeria\b/i.test(location)) {
+        return { factor: 1.0, currency: 'NGN', country: 'NG' };
+    }
+    if (/\bkenya\b/i.test(location)) {
+        return { factor: 1.0, currency: 'KES', country: 'KE' };
+    }
+    if (/\begypt\b/i.test(location)) {
+        return { factor: 1.0, currency: 'EGP', country: 'EG' };
+    }
+    if (/\bbrazil\b/i.test(location)) {
+        return { factor: 1.0, currency: 'BRL', country: 'BR' };
+    }
+    if (/\bmexico\b/i.test(location)) {
+        return { factor: 1.0, currency: 'MXN', country: 'MX' };
+    }
+    if (/\bcolombia\b/i.test(location)) {
+        return { factor: 1.0, currency: 'COP', country: 'CO' };
+    }
+    if (/\bchile\b/i.test(location)) {
+        return { factor: 1.0, currency: 'CLP', country: 'CL' };
+    }
+    if (/\bnew zealand\b/i.test(location)) {
+        return { factor: 1.0, currency: 'NZD', country: 'NZ' };
+    }
+    if (/\bqatar\b/i.test(location)) {
+        return { factor: 1.0, currency: 'QAR', country: 'QA' };
+    }
+    if (/\boman\b/i.test(location)) {
+        return { factor: 1.0, currency: 'OMR', country: 'OM' };
+    }
+    if (/\bkuwait\b/i.test(location)) {
+        return { factor: 1.0, currency: 'KWD', country: 'KW' };
+    }
+    if (/\bbahrain\b/i.test(location)) {
+        return { factor: 1.0, currency: 'BHD', country: 'BH' };
     }
 
     // Default US
@@ -529,6 +987,10 @@ export function classifySteelWeight(weightPerFoot) {
 export default {
     STEEL_WEIGHT_TABLE,
     INDIAN_STEEL_WEIGHTS,
+    EUROPEAN_STEEL_WEIGHTS,
+    BRITISH_STEEL_WEIGHTS,
+    HSS_WEIGHTS,
+    PEB_COMPONENT_WEIGHTS,
     UNIT_RATES,
     LOCATION_FACTORS,
     BENCHMARK_RANGES,

@@ -223,20 +223,27 @@ Extract every dimension and specification visible in the elevations and sections
 /**
  * Pass 3: Quantity Takeoff Prompt
  * Cross-references extracted data and calculates quantities.
+ * Can be called with or without parameters:
+ * - With params: standalone usage embedding data directly in the prompt
+ * - Without params: returns instructions only (data provided separately by engine)
  */
 export function getQuantityTakeoffPrompt(extractedData, costDatabaseRates) {
-    return `You are a senior quantity surveyor performing a detailed quantity takeoff. You have been given extracted data from construction drawings.
-
+    const dataSection = extractedData != null ? `
 EXTRACTED DATA FROM DRAWINGS:
 ${JSON.stringify(extractedData, null, 2)}
+` : '';
 
+    const ratesSection = costDatabaseRates != null ? `
+COST DATABASE RATES FOR REFERENCE:
+${JSON.stringify(costDatabaseRates, null, 2)}
+` : '';
+
+    return `You are a senior quantity surveyor performing a detailed quantity takeoff. You have been given extracted data from construction drawings.
+${dataSection}
 STEEL WEIGHT REFERENCE (number after 'x' in W-shapes = approximate lb/ft):
 W24x68 = 68 lb/ft, W14x48 = 48 lb/ft, W21x44 = 44 lb/ft, W18x35 = 35 lb/ft, W16x26 = 26 lb/ft, W12x19 = 19 lb/ft, W10x12 = 12 lb/ft
 HSS: use manufacturer weight tables. Typical HSS6x6x3/8 = 27.5 lb/ft, HSS8x8x1/2 = 48.9 lb/ft
-
-COST DATABASE RATES FOR REFERENCE:
-${JSON.stringify(costDatabaseRates, null, 2)}
-
+${ratesSection}
 INSTRUCTIONS:
 1. CROSS-REFERENCE plan counts with schedule quantities. If plan shows 12 beams but schedule says 14, use the higher number and note the discrepancy.
 2. CALCULATE STEEL TONNAGE for each member type:
@@ -291,18 +298,27 @@ SHOW ALL CALCULATIONS. Every number must be traceable.`;
 /**
  * Pass 4: Cost Application Prompt
  * Applies unit rates to the Bill of Quantities.
+ * Can be called with or without parameters:
+ * - With params: standalone usage embedding data directly in the prompt
+ * - Without params: returns instructions only (data provided separately by engine)
  */
 export function getCostApplicationPrompt(billOfQuantities, unitRates, locationFactor) {
-    return `You are applying cost rates to a Bill of Quantities for a construction project.
-
+    const boqSection = billOfQuantities != null ? `
 BILL OF QUANTITIES:
 ${JSON.stringify(billOfQuantities, null, 2)}
+` : '';
 
+    const ratesSection = unitRates != null ? `
 DATABASE UNIT RATES (location-adjusted):
 ${JSON.stringify(unitRates, null, 2)}
+` : '';
 
+    const locationSection = locationFactor != null ? `
 LOCATION FACTOR: ${locationFactor}
+` : '';
 
+    return `You are applying cost rates to a Bill of Quantities for a construction project.
+${boqSection}${ratesSection}${locationSection}
 INSTRUCTIONS:
 1. For EACH item in the BOQ, apply the appropriate unit rate.
 2. If a rate exists in the DATABASE RATES above, use it and tag rateSource: "DB"
@@ -328,18 +344,24 @@ CRITICAL: lineTotal = quantity × unitRate for EVERY line item. Verify this.`;
 
 /**
  * Pass 5: Validation Prompt (used if AI-based validation is needed)
+ * Can be called with or without parameters.
  */
 export function getValidationPrompt(estimate, benchmarkRange) {
-    return `Review this construction cost estimate for accuracy and reasonableness.
-
+    const summarySection = estimate ? `
 ESTIMATE SUMMARY:
 - Grand Total: ${estimate?.summary?.grandTotal}
 - Cost per Unit: ${estimate?.summary?.costPerUnit} ${estimate?.summary?.unitLabel}
 - Project Type: ${estimate?.summary?.projectType}
 - Location: ${estimate?.summary?.location}
+` : '';
 
-BENCHMARK RANGE for this project type:
-${benchmarkRange ? `Low: ${benchmarkRange.low}, Mid: ${benchmarkRange.mid}, High: ${benchmarkRange.high} per ${benchmarkRange.unit}` : 'No benchmark available'}
+    const benchmarkSection = benchmarkRange
+        ? `BENCHMARK RANGE for this project type:\nLow: ${benchmarkRange.low}, Mid: ${benchmarkRange.mid}, High: ${benchmarkRange.high} per ${benchmarkRange.unit}`
+        : 'No benchmark available';
+
+    return `Review this construction cost estimate for accuracy and reasonableness.
+${summarySection}
+${benchmarkSection}
 
 Check for:
 1. Any line items with unreasonable unit rates

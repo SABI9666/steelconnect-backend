@@ -320,20 +320,23 @@ async function costEstimation(boq, projectInfo, answers) {
             `Calculations: ${JSON.stringify(boq.calculations, null, 2)}\nTotals: ${JSON.stringify(boq.totals, null, 2)}\n\n` +
             ratesReference + steelRatesText + benchText +
             `\nRATE SOURCE TAGGING: Include "rateSource" on each line item:\n- "DB" = from cost database\n- "EST" = AI estimated\nPrefer DB rates.\n\n` +
-            `COMPLETE MATERIAL SCHEDULE REQUIRED: Include a "materialSchedule" section with ALL project materials:\n` +
-            `- "steelMembers": [{mark, type, section, grade, count, lengthEach, lengthFt, weightPerFt, totalWeightLbs, totalWeightTons, calculation, location}] for EVERY steel member\n` +
-            `- "steelSummary": {mainSteelTons, connectionMiscTons, totalSteelTons, steelPSF}\n` +
-            `- "concreteItems": [{element, type, dimensions, count, volumeEachCY, totalCY, concreteGrade, rebarLbsPerCY, rebarTotalLbs, calculation}]\n` +
-            `- "concreteSummary": {totalConcreteCY, totalRebarTons}\n` +
-            `- "mepItems": [{category, item, specification, quantity, unit, unitRate, totalCost, notes}] - ALL plumbing, HVAC, electrical, fire protection\n` +
+            `COMPLETE MATERIAL SCHEDULE REQUIRED: Include a "materialSchedule" section with ALL project materials INCLUDING LABOR AND MARKUPS:\n` +
+            `- EVERY item MUST include: materialCost, laborHours, laborRate, laborCost, equipmentCost (if applicable), totalCost (= materialCost + laborCost + equipmentCost)\n` +
+            `- "steelMembers": [{mark, type, section, grade, count, lengthEach, lengthFt, weightPerFt, totalWeightLbs, totalWeightTons, materialCost, laborHours, laborRate, laborCost, equipmentCost, totalCost, calculation, location}]\n` +
+            `- "steelSummary": {mainSteelTons, connectionMiscTons, totalSteelTons, steelPSF, totalMaterialCost, totalLaborCost, totalSteelCost}\n` +
+            `- "concreteItems": [{element, type, dimensions, count, volumeEachCY, totalCY, concreteGrade, rebarLbsPerCY, rebarTotalLbs, materialCost, laborHours, laborRate, laborCost, equipmentCost, totalCost, calculation}]\n` +
+            `- "concreteSummary": {totalConcreteCY, totalRebarTons, totalMaterialCost, totalLaborCost, totalConcreteCost}\n` +
+            `- "mepItems": [{category, item, specification, quantity, unit, materialCost, laborHours, laborRate, laborCost, totalCost, notes}]\n` +
             `- "mepSummary": {totalPlumbingCost, totalHVACCost, totalElectricalCost, totalFireProtectionCost, totalMEPCost}\n` +
-            `- "architecturalItems": [{category, item, specification, quantity, unit, unitRate, totalCost, notes}] - doors, windows, flooring, finishes, ceiling, paint\n` +
-            `- "architecturalSummary": {totalArchitecturalCost}\n` +
-            `- "roofingItems": [{item, specification, quantity, unit, unitRate, totalCost, notes}]\n` +
-            `- "siteworkItems": [{item, specification, quantity, unit, unitRate, totalCost, notes}]\n` +
-            `- "otherMaterials": [{material, specification, quantity, unit, unitRate, totalCost, notes}]\n` +
+            `- "architecturalItems": [{category, item, specification, quantity, unit, materialCost, laborHours, laborRate, laborCost, totalCost, notes}]\n` +
+            `- "architecturalSummary": {totalMaterialCost, totalLaborCost, totalArchitecturalCost}\n` +
+            `- "roofingItems": [{item, specification, quantity, unit, materialCost, laborHours, laborRate, laborCost, totalCost, notes}]\n` +
+            `- "siteworkItems": [{item, specification, quantity, unit, materialCost, laborHours, laborRate, laborCost, equipmentCost, totalCost, notes}]\n` +
+            `- "otherMaterials": [{material, specification, quantity, unit, materialCost, laborHours, laborRate, laborCost, totalCost, notes}]\n` +
+            `- "manpowerSummary": {totalLaborHours, totalLaborCost, totalMaterialCost, totalEquipmentCost, crewBreakdown: [{trade, crew, headcount, durationWeeks, laborHours, laborCost}], estimatedProjectDuration}\n` +
+            `- "boqMarkups": {subtotalDirectCost, generalConditionsPercent, generalConditions, overheadPercent, overhead, profitPercent, profit, contingencyPercent, contingency, escalationPercent, escalation, totalMarkups, grandTotalWithMarkups}\n` +
             `- "totalMaterialWeight": summary string, "grandTotalMaterialCost": number\n` +
-            `EVERY item must have unitRate and totalCost. This is a complete construction BOQ with prices.\n\n` +
+            `EVERY item must have material cost + labor breakdown + totalCost. Include manpower summary and all markups (contingency, profit, overhead, GC, escalation).\n\n` +
             getCostApplicationPrompt()
     }];
 

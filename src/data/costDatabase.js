@@ -100,7 +100,38 @@ export const INDIAN_STEEL_WEIGHTS = {
     'ISLB600': 72.8,
     'ISWB150': 17.0, 'ISWB175': 21.3, 'ISWB200': 28.4, 'ISWB225': 33.9,
     'ISWB250': 40.9, 'ISWB300': 48.1, 'ISWB350': 56.9, 'ISWB400': 66.7,
-    'ISWB450': 79.4, 'ISWB500': 95.2, 'ISWB550': 112.5, 'ISWB600': 133.7
+    'ISWB450': 79.4, 'ISWB500': 95.2, 'ISWB550': 112.5, 'ISWB600': 133.7,
+    // ISA (Indian Standard Angles) - kg/m
+    'ISA20X20X3': 0.9, 'ISA25X25X3': 1.1, 'ISA25X25X4': 1.5, 'ISA25X25X5': 1.8,
+    'ISA30X30X3': 1.4, 'ISA30X30X5': 2.2, 'ISA35X35X3': 1.6, 'ISA35X35X5': 2.6,
+    'ISA40X40X3': 1.8, 'ISA40X40X5': 3.0, 'ISA40X40X6': 3.5,
+    'ISA45X45X3': 2.1, 'ISA45X45X5': 3.4, 'ISA45X45X6': 4.0,
+    'ISA50X50X3': 2.3, 'ISA50X50X5': 3.8, 'ISA50X50X6': 4.5, 'ISA50X50X8': 5.8,
+    'ISA55X55X5': 4.2, 'ISA55X55X6': 5.0, 'ISA55X55X8': 6.5,
+    'ISA60X60X5': 4.5, 'ISA60X60X6': 5.4, 'ISA60X60X8': 7.0, 'ISA60X60X10': 8.6,
+    'ISA65X65X5': 4.9, 'ISA65X65X6': 5.8, 'ISA65X65X8': 7.7, 'ISA65X65X10': 9.4,
+    'ISA70X70X5': 5.3, 'ISA70X70X6': 6.3, 'ISA70X70X8': 8.3, 'ISA70X70X10': 10.3,
+    'ISA75X75X5': 5.7, 'ISA75X75X6': 6.8, 'ISA75X75X8': 8.9, 'ISA75X75X10': 11.0,
+    'ISA80X80X6': 7.3, 'ISA80X80X8': 9.6, 'ISA80X80X10': 11.8,
+    'ISA90X90X6': 8.2, 'ISA90X90X8': 10.8, 'ISA90X90X10': 13.4, 'ISA90X90X12': 15.8,
+    'ISA100X100X6': 9.2, 'ISA100X100X8': 12.1, 'ISA100X100X10': 14.9, 'ISA100X100X12': 17.7,
+    'ISA110X110X8': 13.4, 'ISA110X110X10': 16.6, 'ISA110X110X12': 19.7,
+    'ISA120X120X8': 14.7, 'ISA120X120X10': 18.2, 'ISA120X120X12': 21.6,
+    'ISA130X130X8': 15.9, 'ISA130X130X10': 19.7, 'ISA130X130X12': 23.5,
+    'ISA150X150X10': 22.9, 'ISA150X150X12': 27.3, 'ISA150X150X15': 33.8,
+    'ISA150X150X18': 40.1, 'ISA200X200X12': 36.6, 'ISA200X200X15': 45.4,
+    'ISA200X200X18': 54.0, 'ISA200X200X25': 73.9,
+    // Common MS (Mild Steel) sections by alternate names — kg/m
+    'MSANGLE50X50X5': 3.8, 'MSANGLE50X50X6': 4.5, 'MSANGLE40X40X5': 3.0,
+    'MSANGLE60X60X6': 5.4, 'MSANGLE65X65X6': 5.8, 'MSANGLE75X75X6': 6.8,
+    'MSANGLE75X75X8': 8.9, 'MSANGLE100X100X8': 12.1, 'MSANGLE100X100X10': 14.9,
+    'MSCHANNEL75': 6.8, 'MSCHANNEL100': 9.2, 'MSCHANNEL100X50X6': 7.1,
+    'MSCHANNEL125': 12.7, 'MSCHANNEL150': 16.0, 'MSCHANNEL200': 22.1,
+    'MSIBEAM100': 11.5, 'MSIBEAM120X60X6': 9.5, 'MSIBEAM125': 13.0,
+    'MSIBEAM150': 14.9, 'MSIBEAM200': 25.4, 'MSIBEAM250': 37.3,
+    // ISHB (Indian Standard Heavy/Column sections)
+    'ISHB150': 27.1, 'ISHB200': 37.3, 'ISHB225': 43.1, 'ISHB250': 51.0,
+    'ISHB300': 58.8, 'ISHB350': 66.7, 'ISHB400': 77.4, 'ISHB450': 87.2
 };
 
 /**
@@ -775,8 +806,55 @@ export function getSteelWeightPerFoot(sectionName) {
     // European IPE/HEA/HEB: try to parse from section designation
     const euroMatch = normalized.match(/^(IPE|HEA|HEB|UPN)(\d+)$/);
     if (euroMatch) {
-        // Check if it's in the table (already handled above), otherwise estimate
         return null;
+    }
+
+    // MS Angle: "MSANGLE50X50X5" or "MS ANGLE 50×50×5mm" -> look up ISA equivalent
+    const msAngleMatch = normalized.match(/(?:MS\s*)?ANGLE\s*(\d+)\s*[X×]\s*(\d+)\s*[X×]\s*(\d+)/i);
+    if (msAngleMatch) {
+        const key = `ISA${msAngleMatch[1]}X${msAngleMatch[2]}X${msAngleMatch[3]}`;
+        if (INDIAN_STEEL_WEIGHTS[key]) return { weight: INDIAN_STEEL_WEIGHTS[key], unit: 'kg/m' };
+        const altKey = `MSANGLE${msAngleMatch[1]}X${msAngleMatch[2]}X${msAngleMatch[3]}`;
+        if (INDIAN_STEEL_WEIGHTS[altKey]) return { weight: INDIAN_STEEL_WEIGHTS[altKey], unit: 'kg/m' };
+        // Estimate: (A+B-T)*T*0.00785
+        const a = parseInt(msAngleMatch[1]), b = parseInt(msAngleMatch[2]), t = parseInt(msAngleMatch[3]);
+        return { weight: Math.round((a + b - t) * t * 0.00785 * 100) / 100, unit: 'kg/m' };
+    }
+
+    // MS Channel: "MSCHANNEL100X50X6" or "MS Channel 100×50×6mm"
+    const msChannelMatch = normalized.match(/(?:MS\s*)?CHANNEL\s*(\d+)(?:\s*[X×]\s*(\d+)\s*[X×]\s*(\d+))?/i);
+    if (msChannelMatch) {
+        const h = msChannelMatch[1];
+        if (msChannelMatch[2] && msChannelMatch[3]) {
+            const key = `MSCHANNEL${h}X${msChannelMatch[2]}X${msChannelMatch[3]}`;
+            if (INDIAN_STEEL_WEIGHTS[key]) return { weight: INDIAN_STEEL_WEIGHTS[key], unit: 'kg/m' };
+        }
+        const ismcKey = `ISMC${h}`;
+        if (INDIAN_STEEL_WEIGHTS[ismcKey]) return { weight: INDIAN_STEEL_WEIGHTS[ismcKey], unit: 'kg/m' };
+        const altKey = `MSCHANNEL${h}`;
+        if (INDIAN_STEEL_WEIGHTS[altKey]) return { weight: INDIAN_STEEL_WEIGHTS[altKey], unit: 'kg/m' };
+    }
+
+    // MS I-Beam: "MSI-BEAM120X60X6" or "MS I-Beam 120×60×6mm"
+    const msIBeamMatch = normalized.match(/(?:MS\s*)?I[- ]?BEAM\s*(\d+)(?:\s*[X×]\s*(\d+)\s*[X×]\s*(\d+))?/i);
+    if (msIBeamMatch) {
+        const h = msIBeamMatch[1];
+        if (msIBeamMatch[2] && msIBeamMatch[3]) {
+            const key = `MSIBEAM${h}X${msIBeamMatch[2]}X${msIBeamMatch[3]}`;
+            if (INDIAN_STEEL_WEIGHTS[key]) return { weight: INDIAN_STEEL_WEIGHTS[key], unit: 'kg/m' };
+        }
+        const ismbKey = `ISMB${h}`;
+        if (INDIAN_STEEL_WEIGHTS[ismbKey]) return { weight: INDIAN_STEEL_WEIGHTS[ismbKey], unit: 'kg/m' };
+        const altKey = `MSIBEAM${h}`;
+        if (INDIAN_STEEL_WEIGHTS[altKey]) return { weight: INDIAN_STEEL_WEIGHTS[altKey], unit: 'kg/m' };
+    }
+
+    // ISA direct match with dimensions: ISA50X50X5
+    const isaMatch = normalized.match(/^ISA(\d+)X(\d+)X(\d+)$/);
+    if (isaMatch) {
+        // Not in table but valid ISA format - estimate
+        const a = parseInt(isaMatch[1]), b = parseInt(isaMatch[2]), t = parseInt(isaMatch[3]);
+        return { weight: Math.round((a + b - t) * t * 0.00785 * 100) / 100, unit: 'kg/m' };
     }
 
     return null;

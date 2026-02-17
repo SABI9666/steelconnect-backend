@@ -10,6 +10,7 @@ import { getSheetClassificationPrompt, getStructuralExtractionPrompt, getFoundat
 import { getLocationFactor, getUnitRate, getBenchmarkRange, getSteelWeightPerFoot, classifySteelWeight, UNIT_RATES } from '../data/costDatabase.js';
 import { lookupSteelRate, detectCurrency, adjustForLocation } from './costLookupService.js';
 import { validateEstimate } from './validationEngine.js';
+import { enrichEstimateWithLaborAndMarkups } from './estimatePostProcessor.js';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -320,23 +321,22 @@ async function costEstimation(boq, projectInfo, answers) {
             `Calculations: ${JSON.stringify(boq.calculations, null, 2)}\nTotals: ${JSON.stringify(boq.totals, null, 2)}\n\n` +
             ratesReference + steelRatesText + benchText +
             `\nRATE SOURCE TAGGING: Include "rateSource" on each line item:\n- "DB" = from cost database\n- "EST" = AI estimated\nPrefer DB rates.\n\n` +
-            `COMPLETE MATERIAL SCHEDULE REQUIRED: Include a "materialSchedule" section with ALL project materials INCLUDING LABOR AND MARKUPS:\n` +
-            `- EVERY item MUST include: materialCost, laborHours, laborRate, laborCost, equipmentCost (if applicable), totalCost (= materialCost + laborCost + equipmentCost)\n` +
-            `- "steelMembers": [{mark, type, section, grade, count, lengthEach, lengthFt, weightPerFt, totalWeightLbs, totalWeightTons, materialCost, laborHours, laborRate, laborCost, equipmentCost, totalCost, calculation, location}]\n` +
-            `- "steelSummary": {mainSteelTons, connectionMiscTons, totalSteelTons, steelPSF, totalMaterialCost, totalLaborCost, totalSteelCost}\n` +
-            `- "concreteItems": [{element, type, dimensions, count, volumeEachCY, totalCY, concreteGrade, rebarLbsPerCY, rebarTotalLbs, materialCost, laborHours, laborRate, laborCost, equipmentCost, totalCost, calculation}]\n` +
-            `- "concreteSummary": {totalConcreteCY, totalRebarTons, totalMaterialCost, totalLaborCost, totalConcreteCost}\n` +
-            `- "mepItems": [{category, item, specification, quantity, unit, materialCost, laborHours, laborRate, laborCost, totalCost, notes}]\n` +
+            `COMPLETE MATERIAL SCHEDULE REQUIRED: Include a "materialSchedule" section with ALL project materials and TOTAL INSTALLED COSTS:\n` +
+            `- EVERY item needs: quantity, unit, totalCost (installed all-in cost). Do NOT output labor/equipment breakdown - that is computed by post-processor.\n` +
+            `- "steelMembers": [{mark, type, section, grade, count, lengthFt, totalCost, location}] for EVERY steel member\n` +
+            `- "steelSummary": {mainSteelTons, connectionMiscTons, totalSteelTons, steelPSF}\n` +
+            `- "concreteItems": [{element, type, dimensions, count, volumeEachCY, totalCY, concreteGrade, rebarLbsPerCY, rebarTotalLbs, totalCost, calculation}]\n` +
+            `- "concreteSummary": {totalConcreteCY, totalRebarTons}\n` +
+            `- "mepItems": [{category, item, specification, quantity, unit, totalCost, notes}] - ALL plumbing, HVAC, electrical, fire protection\n` +
             `- "mepSummary": {totalPlumbingCost, totalHVACCost, totalElectricalCost, totalFireProtectionCost, totalMEPCost}\n` +
-            `- "architecturalItems": [{category, item, specification, quantity, unit, materialCost, laborHours, laborRate, laborCost, totalCost, notes}]\n` +
-            `- "architecturalSummary": {totalMaterialCost, totalLaborCost, totalArchitecturalCost}\n` +
-            `- "roofingItems": [{item, specification, quantity, unit, materialCost, laborHours, laborRate, laborCost, totalCost, notes}]\n` +
-            `- "siteworkItems": [{item, specification, quantity, unit, materialCost, laborHours, laborRate, laborCost, equipmentCost, totalCost, notes}]\n` +
-            `- "otherMaterials": [{material, specification, quantity, unit, materialCost, laborHours, laborRate, laborCost, totalCost, notes}]\n` +
-            `- "manpowerSummary": {totalLaborHours, totalLaborCost, totalMaterialCost, totalEquipmentCost, crewBreakdown: [{trade, crew, headcount, durationWeeks, laborHours, laborCost}], estimatedProjectDuration}\n` +
-            `- "boqMarkups": {subtotalDirectCost, generalConditionsPercent, generalConditions, overheadPercent, overhead, profitPercent, profit, contingencyPercent, contingency, escalationPercent, escalation, totalMarkups, grandTotalWithMarkups}\n` +
-            `- "totalMaterialWeight": summary string, "grandTotalMaterialCost": number\n` +
-            `EVERY item must have material cost + labor breakdown + totalCost. Include manpower summary and all markups (contingency, profit, overhead, GC, escalation).\n\n` +
+            `- "architecturalItems": [{category, item, specification, quantity, unit, totalCost, notes}]\n` +
+            `- "architecturalSummary": {totalArchitecturalCost}\n` +
+            `- "roofingItems": [{item, specification, quantity, unit, totalCost, notes}]\n` +
+            `- "siteworkItems": [{item, specification, quantity, unit, totalCost, notes}]\n` +
+            `- "otherMaterials": [{material, specification, quantity, unit, totalCost, notes}]\n` +
+            `- "grandTotalMaterialCost": number\n` +
+            `Do NOT include: materialCost, laborHours, laborRate, laborCost, equipmentCost, manpowerSummary, boqMarkups, crewBreakdown (computed by post-processor).\n` +
+            `Focus on ACCURATE quantities and total installed costs. This is a complete construction BOQ.\n\n` +
             getCostApplicationPrompt()
     }];
 
@@ -568,7 +568,16 @@ export async function runMultiPassEstimation(projectInfo, answers, fileNames, fi
 
         // PASS 5: Validation
         await notifyPassUpdate(onPassUpdate, 'pass5', 'in_progress', { description: getPassStatusDescription('pass5'), startedAt: new Date().toISOString() });
-        const finalEstimate = await validation(estimate, projectInfo, measurementData);
+        const validatedEstimate = await validation(estimate, projectInfo, measurementData);
+
+        // Post-process: enrich with labor breakdown, manpower summary, crew, markups (computed in code, not AI)
+        const currency = validatedEstimate.summary?.currency || projectInfo.currency || 'USD';
+        enrichEstimateWithLaborAndMarkups(validatedEstimate, {
+            currency, location: projectInfo.region || projectInfo.location || '',
+            totalArea: projectInfo.totalArea, projectType: projectInfo.projectType
+        });
+
+        const finalEstimate = validatedEstimate;
         const elapsed = Math.round((Date.now() - startTime) / 1000);
 
         finalEstimate._multiPassMeta = {

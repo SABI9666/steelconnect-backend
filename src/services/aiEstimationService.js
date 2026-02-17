@@ -2,6 +2,7 @@
 // with Vision-based Drawing Analysis + Intelligent PDF Measurement Extraction
 import Anthropic from '@anthropic-ai/sdk';
 import { extractMeasurementsFromPDFs, formatExtractionForAI } from './pdfMeasurementExtractor.js';
+import { enrichEstimateWithLaborAndMarkups } from './estimatePostProcessor.js';
 
 const anthropic = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY
@@ -587,6 +588,13 @@ export async function generateAIEstimate(projectInfo, answers, fileNames, fileBu
             // Validate and fix grand total calculation
             validateAndFixTotals(result);
 
+            // Post-process: enrich with labor breakdown, manpower summary, crew, markups (computed in code)
+            enrichEstimateWithLaborAndMarkups(result, {
+                currency: result.summary?.currency || answers?.currency || 'USD',
+                location: answers?.region || projectInfo?.region || '',
+                totalArea: projectInfo?.totalArea, projectType: projectInfo?.projectType
+            });
+
             // Tag the result with analysis metadata
             if (result.structuralAnalysis) {
                 result.structuralAnalysis.analysisMethod = hasAnalyzableFiles
@@ -710,6 +718,13 @@ async function generateAIEstimateTextFallback(projectInfo, answers, fileNames, f
     // Validate and fix grand total calculation
     validateAndFixTotals(result);
 
+    // Post-process: enrich with labor breakdown, manpower summary, crew, markups (computed in code)
+    enrichEstimateWithLaborAndMarkups(result, {
+        currency: result.summary?.currency || 'USD',
+        location: projectInfo?.region || '',
+        totalArea: projectInfo?.totalArea, projectType: projectInfo?.projectType
+    });
+
     // Tag as text-fallback analysis
     if (result.structuralAnalysis) {
         result.structuralAnalysis.analysisMethod = hasTextContent
@@ -821,66 +836,31 @@ Respond in this exact JSON format:
     },
     "materialSchedule": {
         "steelMembers": [
-            { "mark": "B1", "type": "Beam", "section": "W24x68", "grade": "ASTM A992 Gr50", "count": 12, "lengthEach": "30'-0\"", "lengthFt": 30, "weightPerFt": 68, "totalWeightLbs": 24480, "totalWeightTons": 12.24, "materialCost": 24480, "laborHours": 96, "laborRate": 65, "laborCost": 6240, "equipmentCost": 2400, "totalCost": 33120, "calculation": "12 x 68 lb/ft x 30 ft = 24,480 lbs = 12.24 tons", "location": "Roof level" }
+            { "mark": "B1", "type": "Beam", "section": "W24x68", "grade": "ASTM A992 Gr50", "count": 12, "lengthEach": "30'-0\"", "lengthFt": 30, "totalCost": 33120, "location": "Roof level" }
         ],
-        "steelSummary": { "mainSteelTons": 0, "connectionMiscTons": 0, "totalSteelTons": 0, "steelPSF": 0, "totalMaterialCost": 0, "totalLaborCost": 0, "totalSteelCost": 0 },
+        "steelSummary": { "mainSteelTons": 0, "connectionMiscTons": 0, "totalSteelTons": 0, "steelPSF": 0 },
         "concreteItems": [
-            { "element": "Spread Footings F1", "type": "Footing", "dimensions": "6'x6'x2'", "count": 20, "volumeEachCY": 2.67, "totalCY": 53.3, "concreteGrade": "4000 PSI", "rebarLbsPerCY": 120, "rebarTotalLbs": 6396, "materialCost": 8000, "laborHours": 160, "laborRate": 45, "laborCost": 7200, "equipmentCost": 1600, "totalCost": 16800, "calculation": "20 x (6x6x2)/27 = 53.3 CY" }
+            { "element": "Spread Footings F1", "type": "Footing", "dimensions": "6'x6'x2'", "count": 20, "volumeEachCY": 2.67, "totalCY": 53.3, "concreteGrade": "4000 PSI", "rebarLbsPerCY": 120, "rebarTotalLbs": 6396, "totalCost": 16800, "calculation": "20 x (6x6x2)/27 = 53.3 CY" }
         ],
-        "concreteSummary": { "totalConcreteCY": 0, "totalRebarTons": 0, "totalMaterialCost": 0, "totalLaborCost": 0, "totalConcreteCost": 0 },
+        "concreteSummary": { "totalConcreteCY": 0, "totalRebarTons": 0 },
         "mepItems": [
-            { "category": "Plumbing", "item": "4\" PVC Drain Pipe", "specification": "Schedule 40 PVC", "quantity": 500, "unit": "LF", "materialCost": 3000, "laborHours": 40, "laborRate": 55, "laborCost": 2200, "totalCost": 5200, "notes": "Main drain lines" },
-            { "category": "HVAC", "item": "Split AC Units 2-ton", "specification": "Inverter type", "quantity": 8, "unit": "EA", "materialCost": 16000, "laborHours": 32, "laborRate": 60, "laborCost": 1920, "totalCost": 17920, "notes": "Per mechanical schedule" },
-            { "category": "Electrical", "item": "Main Distribution Panel", "specification": "200A 3-phase", "quantity": 1, "unit": "EA", "materialCost": 3500, "laborHours": 16, "laborRate": 65, "laborCost": 1040, "totalCost": 4540, "notes": "Per SLD" }
+            { "category": "Plumbing", "item": "4\" PVC Drain Pipe", "specification": "Schedule 40 PVC", "quantity": 500, "unit": "LF", "totalCost": 5200, "notes": "Main drain lines" },
+            { "category": "Electrical", "item": "Main Distribution Panel", "specification": "200A 3-phase", "quantity": 1, "unit": "EA", "totalCost": 4540, "notes": "Per SLD" }
         ],
         "mepSummary": { "totalPlumbingCost": 0, "totalHVACCost": 0, "totalElectricalCost": 0, "totalFireProtectionCost": 0, "totalMEPCost": 0 },
         "architecturalItems": [
-            { "category": "Doors", "item": "Hollow Metal Door 3'x7'", "specification": "18GA HM frame", "quantity": 12, "unit": "EA", "materialCost": 6000, "laborHours": 48, "laborRate": 45, "laborCost": 2160, "totalCost": 8160, "notes": "Per door schedule" },
-            { "category": "Windows", "item": "Aluminum Window 5'x4'", "specification": "Powder coated", "quantity": 20, "unit": "EA", "materialCost": 8000, "laborHours": 40, "laborRate": 45, "laborCost": 1800, "totalCost": 9800, "notes": "Per window schedule" },
-            { "category": "Flooring", "item": "Vitrified Tile 600x600", "specification": "Double charge", "quantity": 5000, "unit": "SF", "materialCost": 25000, "laborHours": 200, "laborRate": 40, "laborCost": 8000, "totalCost": 33000, "notes": "Ground floor" },
-            { "category": "Ceiling", "item": "Grid Ceiling 2x2", "specification": "Mineral fiber", "quantity": 4500, "unit": "SF", "materialCost": 18000, "laborHours": 90, "laborRate": 42, "laborCost": 3780, "totalCost": 21780, "notes": "Office areas" },
-            { "category": "Paint", "item": "Interior Paint", "specification": "2 coats over primer", "quantity": 8000, "unit": "SF", "materialCost": 8000, "laborHours": 120, "laborRate": 35, "laborCost": 4200, "totalCost": 12200, "notes": "All walls" }
+            { "category": "Doors", "item": "Hollow Metal Door 3'x7'", "specification": "18GA HM frame", "quantity": 12, "unit": "EA", "totalCost": 8160, "notes": "Per door schedule" }
         ],
-        "architecturalSummary": { "totalMaterialCost": 0, "totalLaborCost": 0, "totalArchitecturalCost": 0 },
+        "architecturalSummary": { "totalArchitecturalCost": 0 },
         "roofingItems": [
-            { "item": "Standing Seam Metal Roof", "specification": "0.5mm color coated", "quantity": 9600, "unit": "SF", "materialCost": 57600, "laborHours": 240, "laborRate": 50, "laborCost": 12000, "totalCost": 69600, "notes": "Complete roof area" }
+            { "item": "Standing Seam Metal Roof", "specification": "0.5mm color coated", "quantity": 9600, "unit": "SF", "totalCost": 69600, "notes": "Complete roof area" }
         ],
         "siteworkItems": [
-            { "item": "Earthwork/Grading", "specification": "Cut and fill", "quantity": 500, "unit": "CY", "materialCost": 0, "laborHours": 40, "laborRate": 45, "laborCost": 1800, "equipmentCost": 4000, "totalCost": 5800, "notes": "Site preparation" }
+            { "item": "Earthwork/Grading", "specification": "Cut and fill", "quantity": 500, "unit": "CY", "totalCost": 5800, "notes": "Site preparation" }
         ],
         "otherMaterials": [
-            { "material": "Metal Deck", "specification": "1.5\" 20GA composite", "quantity": 9600, "unit": "SF", "materialCost": 28800, "laborHours": 120, "laborRate": 50, "laborCost": 6000, "totalCost": 34800, "notes": "Roof deck" }
+            { "material": "Metal Deck", "specification": "1.5\" 20GA composite", "quantity": 9600, "unit": "SF", "totalCost": 34800, "notes": "Roof deck" }
         ],
-        "manpowerSummary": {
-            "totalLaborHours": 0,
-            "totalLaborCost": 0,
-            "totalMaterialCost": 0,
-            "totalEquipmentCost": 0,
-            "crewBreakdown": [
-                { "trade": "Structural Steel", "crew": "Ironworkers", "headcount": 6, "durationWeeks": 4, "laborHours": 960, "laborCost": 0 },
-                { "trade": "Concrete", "crew": "Concrete crew", "headcount": 8, "durationWeeks": 3, "laborHours": 960, "laborCost": 0 },
-                { "trade": "MEP", "crew": "Plumber + Electrician + HVAC tech", "headcount": 4, "durationWeeks": 6, "laborHours": 960, "laborCost": 0 },
-                { "trade": "Architectural Finishes", "crew": "Carpenters + Painters + Tilers", "headcount": 8, "durationWeeks": 5, "laborHours": 1600, "laborCost": 0 },
-                { "trade": "General Labor", "crew": "Helpers + cleanup", "headcount": 4, "durationWeeks": 8, "laborHours": 1280, "laborCost": 0 }
-            ],
-            "estimatedProjectDuration": "string (e.g., '14-18 weeks')"
-        },
-        "boqMarkups": {
-            "subtotalDirectCost": 0,
-            "generalConditionsPercent": 7,
-            "generalConditions": 0,
-            "overheadPercent": 6,
-            "overhead": 0,
-            "profitPercent": 8,
-            "profit": 0,
-            "contingencyPercent": 7,
-            "contingency": 0,
-            "escalationPercent": 2,
-            "escalation": 0,
-            "totalMarkups": 0,
-            "grandTotalWithMarkups": 0
-        },
-        "totalMaterialWeight": "Steel: 45.2 tons, Concrete: 120 CY, Rebar: 8.5 tons",
         "grandTotalMaterialCost": 0
     },
     "costBreakdown": {
@@ -928,20 +908,19 @@ CRITICAL RULES:
    If your estimate is outside these ranges, re-examine your unit rates and quantities for errors.
 10. Include ONLY trades visible/relevant in the drawings and project description.
 11. VERIFY ALL MATH before outputting. Sum up every lineTotal, check every trade subtotal, verify directCosts, verify grandTotal.
-12. MATERIAL SCHEDULE (CRITICAL): The "materialSchedule" must be a COMPLETE Bill of Materials with QUANTITIES, PRICES, AND LABOR:
-    - EVERY item MUST include: quantity, unit, materialCost, laborHours, laborRate, laborCost, equipmentCost, totalCost (= materialCost + laborCost + equipmentCost)
-    - steelMembers: Every beam, column, brace, joist, purlin, girt with mark, section, count, length, weight, materialCost, laborHours, laborRate, laborCost, equipmentCost, totalCost, calculation
-    - concreteItems: Every footing, slab, grade beam, wall with dimensions, count, volume, materialCost, laborHours, laborRate, laborCost, equipmentCost, totalCost, rebar estimate
-    - mepItems: ALL plumbing, HVAC, electrical, fire protection. Each with materialCost, laborHours, laborRate, laborCost, totalCost
-    - architecturalItems: ALL doors, windows, flooring, finishes, ceilings, painting. Each with materialCost, laborHours, laborRate, laborCost, totalCost
-    - roofingItems: Roof sheets, insulation, flashing, gutters. Each with materialCost, laborHours, laborRate, laborCost, totalCost
-    - siteworkItems: Earthwork, paving, landscaping, fencing. Each with materialCost, laborHours, laborRate, laborCost, equipmentCost, totalCost
-    - otherMaterials: Metal deck, bolts, sealants, misc. Each with materialCost, laborHours, laborRate, laborCost, totalCost
-    - Include category summaries with totalMaterialCost, totalLaborCost, and totalCost for each category
-    - MANPOWER SUMMARY (manpowerSummary): totalLaborHours, totalLaborCost, totalMaterialCost, totalEquipmentCost, crewBreakdown (array of {trade, crew, headcount, durationWeeks, laborHours, laborCost}), estimatedProjectDuration
-    - BOQ MARKUPS (boqMarkups): subtotalDirectCost, generalConditionsPercent + amount (5-8%), overheadPercent + amount (5-8%), profitPercent + amount (5-10%), contingencyPercent + amount (5-10%), escalationPercent + amount (0-3%), totalMarkups, grandTotalWithMarkups
-    - grandTotalMaterialCost = sum of ALL material costs across all categories
-    - This is a WORLD-CLASS complete construction BOQ with material + labor + equipment breakdown and markups`;
+12. MATERIAL SCHEDULE (CRITICAL): The "materialSchedule" must be a COMPLETE Bill of Materials with QUANTITIES AND TOTAL INSTALLED COSTS:
+    - EVERY item needs: quantity, unit, totalCost (installed all-in cost). Do NOT output labor/equipment breakdown - that is computed separately.
+    - steelMembers: Every beam, column, brace, joist, purlin, girt with mark, section, grade, count, lengthFt, totalCost, location
+    - concreteItems: Every footing, slab, grade beam, wall with dimensions, count, volumeEachCY, totalCY, concreteGrade, rebarLbsPerCY, rebarTotalLbs, totalCost, calculation
+    - mepItems: ALL plumbing, HVAC, electrical, fire protection. Each with category, item, specification, quantity, unit, totalCost
+    - architecturalItems: ALL doors, windows, flooring, finishes, ceilings, painting. Each with category, item, specification, quantity, unit, totalCost
+    - roofingItems: Roof sheets, insulation, flashing, gutters. Each with item, specification, quantity, unit, totalCost
+    - siteworkItems: Earthwork, paving, landscaping, fencing. Each with item, specification, quantity, unit, totalCost
+    - otherMaterials: Metal deck, bolts, sealants, misc. Each with material, specification, quantity, unit, totalCost
+    - Include category summaries (steelSummary, concreteSummary, mepSummary, architecturalSummary)
+    - grandTotalMaterialCost = sum of ALL material costs
+    - Do NOT include: materialCost, laborHours, laborRate, laborCost, equipmentCost, manpowerSummary, boqMarkups, crewBreakdown (these are computed by post-processor)
+    - This is a WORLD-CLASS complete construction BOQ - extract EVERY item from drawings, schedules, notes, and specs`;
 }
 
 function getDefaultQuestions() {

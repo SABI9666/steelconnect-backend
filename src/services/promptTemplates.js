@@ -135,7 +135,15 @@ Respond in this exact JSON format:
     "notes": "Any additional structural notes observed"
 }
 
-Be extremely precise. Count every member visible on the plans.`;
+Be extremely precise. Count EVERY member visible on the plans.
+
+CRITICAL EXTRACTION RULES:
+- Do NOT skip any member. If a beam mark B1 appears 12 times on the grid, count = 12.
+- Extract member sizes EXACTLY as shown: "W24x68" not "W24", "ISMB450" not "ISMB".
+- Cross-reference plan marks with beam/column schedules if both are visible.
+- For PEB buildings: extract EVERY purlin and girt spacing, primary frame sizes.
+- List ALL member marks even if they appear only once.
+- If a drawing has a schedule table (Beam Schedule, Column Schedule), extract EVERY row.`;
 }
 
 /**
@@ -254,7 +262,16 @@ Respond in this exact JSON format:
     "totalSteelWeight": "Calculated from schedule if shown"
 }
 
-Transcribe every row from every schedule exactly as shown in the drawings. Do not skip any entries.`;
+Transcribe EVERY row from EVERY schedule exactly as shown in the drawings. Do NOT skip any entries.
+
+CRITICAL: This is the most important pass for accuracy. Schedules contain the definitive material quantities.
+- If a beam schedule shows 15 rows, return ALL 15 rows.
+- If a BBS (bar bending schedule) has bar marks a through z, return ALL of them.
+- Extract EXACT section sizes: "W24x68" not just "W24", "ISMB450" not just "ISMB".
+- Extract EXACT quantities and weights from the schedule tables.
+- If the schedule shows a "Total Weight" row, capture it in totalSteelWeight.
+- For door/window schedules: extract EVERY door/window mark with exact sizes and quantities.
+- Missing even one schedule row will cause procurement errors.`;
 }
 
 /**
@@ -444,8 +461,9 @@ LOCATION FACTOR: ${locationFactor}
 ${boqSection}${ratesSection}${locationSection}
 INSTRUCTIONS:
 1. For EACH item in the BOQ, apply the appropriate unit rate.
-2. If a rate exists in the DATABASE RATES above, use it and tag rateSource: "DB"
-3. If no database rate exists, estimate a reasonable ${new Date().getFullYear()} market rate and tag rateSource: "EST"
+2. ALWAYS USE DATABASE RATES when available — these are location-adjusted regional market rates. Tag rateSource: "DB".
+3. If no database rate exists, estimate a reasonable ${new Date().getFullYear()} market rate for the specific project region and tag rateSource: "EST". Rates will be validated against regional benchmarks.
+4. CRITICAL: Every material extracted from drawings MUST appear as a line item. Do not skip any material.
 4. Group items into CSI Division trades. Include ALL relevant trades:
    - Division 02: Sitework (earthwork, grading, paving, utilities, landscaping, fencing)
    - Division 03: Concrete (footings, slabs, grade beams, walls, pile caps, elevated slabs)

@@ -3,6 +3,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { extractMeasurementsFromPDFs, formatExtractionForAI } from './pdfMeasurementExtractor.js';
 import { enrichEstimateWithLaborAndMarkups } from './estimatePostProcessor.js';
+import { getLocationFactor, UNIT_RATES, BENCHMARK_RANGES } from '../data/costDatabase.js';
+import { detectCurrency } from './costLookupService.js';
 
 const anthropic = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY
@@ -210,30 +212,37 @@ const SYSTEM_PROMPT = `You are a precise construction cost estimator with 40+ ye
 
 You can READ construction drawings/blueprints provided as PDFs or images. Extract ALL dimensions, member sizes, specs, and quantities directly from drawings.
 
-STEEL SECTIONS: Recognize AISC W-shapes, IS (ISMB/ISMC), BS/EN (UB/UC/HEA/HEB/IPE), AS, PEB, HSS, cold-formed.
-Weight extraction: W24x68=68 lb/ft. For Indian/Euro sections, use standard weight tables.
+STEEL SECTIONS: Recognize AISC W-shapes (W24x68), IS (ISMB450, ISMC300), BS/EN (UB533x210x82, UC305x305x97, HEA200, HEB300, IPE300), AS, PEB (Z-purlins, C-purlins, tapered I), HSS, cold-formed.
+Weight extraction: W24x68=68 lb/ft, ISMB450=72.4 kg/m, IPE300=42.2 kg/m, HEA200=53.8 kg/m, HEB200=78.1 kg/m.
 
-DRAWING ANALYSIS: 1) Inventory sheets 2) Extract dimensions 3) Read member sizes 4) Count systematically 5) Calculate quantities 6) Verify against rules of thumb.
+COMPLETE MATERIAL EXTRACTION (CRITICAL):
+- Extract EVERY material from drawings. Do not skip any steel member, concrete element, or rebar detail.
+- For each steel member: mark, EXACT section size, count (grid-by-grid), length, grade.
+- For each concrete element: type, dimensions, count, concrete grade, rebar spacing.
+- For each rebar spec: bar size, spacing, grade, element it belongs to.
+- For schedules (beam/column/door/window): transcribe EVERY row, EVERY entry.
+- Cross-reference plan counts with schedule quantities. Use the HIGHER number if they differ.
+
+DRAWING ANALYSIS: 1) Inventory sheets 2) Extract dimensions 3) Read member sizes 4) Count systematically grid-by-grid 5) Calculate quantities with shown formulas 6) Verify against rules of thumb.
 
 CALCULATION FORMULAS:
-- Steel: weight/ft × length × count ÷ 2000 = tons (or ÷ 1000 for kg/m→MT)
+- Steel: weight/ft × length × count ÷ 2000 = tons (or weight_kg/m × length_m × count ÷ 1000 = MT)
 - Concrete: L×W×D per element, convert to CY (÷27) or cum
-- Rebar: by element type (footings 120 lbs/CY, slabs 80, grade beams 150, columns 200)
+- Rebar: by element type (footings 120 lbs/CY, slabs 80, grade beams 150, columns 200, retaining walls 180)
 - Connection material: 8-12% of main steel
 - Waste: steel 3%, concrete 5%, rebar 7%
 
 ACCURACY RULES:
-1. Use CURRENT ${new Date().getFullYear()} market rates for the specified region
-2. DO NOT inflate or pad unit rates - use realistic mid-market pricing
+1. Use CURRENT ${new Date().getFullYear()} market rates for the SPECIFIED REGION
+2. DO NOT inflate or pad unit rates - use realistic mid-market pricing for that region
 3. DO NOT double-count: each cost item appears ONCE
 4. lineTotal = quantity × unitRate. trade.subtotal = SUM(lineItems). directCosts = SUM(trades). grandTotal = directCosts + markups.
 5. VERIFY all math before outputting
 6. Include ALL relevant trades: structural, concrete, rebar, MEP, architectural, roofing, cladding, sitework
 7. Markups: general conditions 5-8%, overhead 5-8%, profit 5-10%, contingency 5-10%, escalation 0-3%
-8. Show calculation traces in "drawingNotes"
-9. Quantities must be PROCUREMENT-READY
-
-SPECIFIC RATES will be provided per-request from the cost database. Use those DB rates when available.
+8. Show calculation traces in "drawingNotes" — EVERY tonnage and volume calculation must be traceable
+9. Quantities must be PROCUREMENT-READY — anyone should be able to buy materials from these numbers
+10. REGION-SPECIFIC RATES will be provided from the cost database. ALWAYS use DB rates when available.
 
 You must respond ONLY in valid JSON format. No markdown, no explanation outside JSON.`;
 
@@ -725,6 +734,24 @@ You have been provided with actual construction drawings/blueprints above. You M
 YOUR ACCURACY ON READING THESE DRAWINGS DIRECTLY DETERMINES THE QUALITY OF THE ESTIMATE.`
         : `\nNote: No analyzable drawing files were provided. The estimate will be based on project description and questionnaire answers. For maximum accuracy, upload PDF drawings or images of structural plans.`;
 
+    // Inject regional rates from cost database
+    const region = answers?.region || projectInfo?.region || '';
+    const detectedCurrency = detectCurrency({ ...projectInfo, answers }) || 'USD';
+    const locationData = getLocationFactor(region);
+    const locFactor = locationData.factor;
+    const currencyRates = UNIT_RATES[detectedCurrency] || UNIT_RATES.USD;
+    const benchmarks = BENCHMARK_RANGES[detectedCurrency] || BENCHMARK_RANGES.USD;
+
+    // Build compact rate reference for this region
+    const rateLines = [];
+    for (const [category, rates] of Object.entries(currencyRates)) {
+        for (const [subtype, data] of Object.entries(rates)) {
+            const adjRate = Math.round(data.rate * locFactor);
+            const adjRange = data.range.map(r => Math.round(r * locFactor));
+            rateLines.push(`${category}.${subtype}: ${adjRate}/${data.unit} (range ${adjRange[0]}-${adjRange[1]})`);
+        }
+    }
+
     return `\n\nGenerate a PRECISE, REALISTIC construction cost estimate. Extract scope, dimensions, and specs directly from the provided drawings/designs.
 ${drawingAnalysisInstruction}
 
@@ -736,6 +763,14 @@ PROJECT INFORMATION:
 - Region/Location: ${projectInfo.region || 'Not specified'}
 - Total Area: ${projectInfo.totalArea || 'Not specified'}
 - Files: ${fileNames?.join(', ') || 'N/A'}
+
+REGIONAL UNIT RATES (${detectedCurrency}, location factor ${locFactor}x for ${region || 'default'}):
+${rateLines.join('\n')}
+
+BENCHMARK RANGES for ${detectedCurrency}:
+${Object.entries(benchmarks).map(([type, bm]) => `${type}: ${bm.low}-${bm.high}/${bm.unit}`).join(', ')}
+
+USE THESE REGIONAL RATES for every matching material. Tag rateSource: "DB" when using them.
 
 QUESTIONNAIRE ANSWERS:
 ${JSON.stringify(answers, null, 2)}

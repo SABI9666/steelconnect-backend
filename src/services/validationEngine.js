@@ -192,27 +192,66 @@ function quantityReasonablenessCheck(estimate, projectInfo) {
 
 function matchRateCategory(desc, unit, curr) {
   const d = desc.toLowerCase(), u = unit.toLowerCase();
-  if (/steel|w\d+x|hss|joist/i.test(d) && /ton/i.test(u)) {
-    if (/hss|tube|hollow/i.test(d)) return ['structural_steel', 'hss'];
+  // Structural Steel
+  if (/steel|w\d+x|hss|joist|ismb|ismc|hea|heb|ipe|ub\d|uc\d|pfc/i.test(d) && /ton|mt/i.test(u)) {
+    if (/hss|tube|hollow|shs|rhs|chs/i.test(d)) return ['structural_steel', 'hss'];
     if (/joist/i.test(d)) return ['structural_steel', 'joists'];
-    if (/misc|connection|plate|angle/i.test(d)) return ['structural_steel', 'misc_steel'];
-    if (/light/i.test(d)) return ['structural_steel', 'light'];
-    if (/heavy/i.test(d)) return ['structural_steel', 'heavy'];
+    if (/misc|connection|plate|angle|gusset|base.plate|stiffener/i.test(d)) return ['structural_steel', 'misc_steel'];
+    if (/peb|pre.eng|purlin|girt|z.section|c.section/i.test(d)) return ['structural_steel', curr === 'INR' ? 'peb' : 'light'];
+    if (/light|w\d+x\d{1,2}$|ismb[123]\d{2}|ipe[12]\d{2}|hea[12]\d{2}/i.test(d)) return ['structural_steel', 'light'];
+    if (/heavy|w\d+x[2-9]\d{2}|ismb[5-9]\d{2}|heb[4-9]\d{2}/i.test(d)) return ['structural_steel', 'heavy'];
     return ['structural_steel', 'medium'];
   }
-  if (/concrete|slab|footing|foundation/i.test(d) && /cy|cum|m³/i.test(u))
-    return ['concrete', curr === 'INR' ? 'M30' : curr === 'AED' ? 'C40' : '4000psi'];
-  if (/slab.on.grade|sog/i.test(d) && /sf|sqft/i.test(u)) return ['concrete', 'slab_on_grade'];
-  if (/rebar|reinforc|tmt/i.test(d) && /ton|mt/i.test(u))
-    return ['rebar', curr === 'INR' ? 'Fe500' : curr === 'AED' ? 'grade460' : 'grade60'];
+  // Metal Deck
+  if (/deck|metal.deck/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['structural_steel', 'deck'];
+  // Concrete (volumetric)
+  if (/concrete|slab|footing|foundation|grade.beam|pile.cap|raft|retaining/i.test(d) && /cy|cum|m³|m3/i.test(u)) {
+    if (curr === 'INR') return ['concrete', /m40|m45|m50/i.test(d) ? 'M40' : /m25/i.test(d) ? 'M25' : 'M30'];
+    if (curr === 'AED' || curr === 'GBP' || curr === 'EUR' || curr === 'SAR') return ['concrete', /c50/i.test(d) ? 'C50' : /c30/i.test(d) ? 'C30' : 'C40'];
+    return ['concrete', /5000/i.test(d) ? '5000psi' : /3000/i.test(d) ? '3000psi' : '4000psi'];
+  }
+  // Concrete (area-based)
+  if (/slab.on.grade|sog/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['concrete', 'slab_on_grade'];
+  if (/elevated.slab/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['concrete', 'elevated_slab'];
+  if (/formwork.*wall|wall.*formwork/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['concrete', 'formwork_wall'];
+  if (/formwork.*col|col.*formwork/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['concrete', 'formwork_column'];
+  // Rebar
+  if (/rebar|reinforc|tmt|bar.bend|bbs/i.test(d) && /ton|mt/i.test(u)) {
+    if (curr === 'INR') return ['rebar', /fe500d/i.test(d) ? 'Fe500D' : 'Fe500'];
+    if (curr === 'AED') return ['rebar', /500/i.test(d) ? 'grade500' : 'grade460'];
+    if (curr === 'GBP' || curr === 'EUR') return ['rebar', 'B500B'];
+    if (curr === 'AUD') return ['rebar', 'D500N'];
+    return ['rebar', /75/i.test(d) ? 'grade75' : 'grade60'];
+  }
+  if (/wwf|welded.wire/i.test(d) && /sf|sqft/i.test(u)) return ['rebar', 'wwf'];
+  // Masonry
+  if (/cmu|masonry|block.*wall/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['masonry', /12/i.test(d) ? 'cmu_12' : 'cmu_8'];
+  if (/brick/i.test(d) && /sf|sqft|sqm/i.test(u)) return curr === 'INR' ? ['masonry', 'brick_230'] : ['masonry', 'brick_veneer'];
+  if (/aac|autoclaved/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['masonry', 'aac_200'];
+  // Roofing
   if (/standing.seam|metal.roof/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['roofing', 'standing_seam'];
-  if (/tpo|single.ply/i.test(d) && /sf|sqft/i.test(u)) return ['roofing', 'tpo_single_ply'];
-  if (/hvac|mechanical/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['mep', 'hvac'];
-  if (/plumbing/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['mep', 'plumbing'];
-  if (/electrical/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['mep', 'electrical'];
-  if (/fire.prot|sprinkler/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['mep', 'fire_protection'];
-  if (/deck|metal.deck/i.test(d) && /sf|sqft/i.test(u)) return ['structural_steel', 'deck'];
-  if (/cmu|masonry|block.*wall/i.test(d) && /sf|sqft/i.test(u)) return ['masonry', /12/.test(d) ? 'cmu_12' : 'cmu_8'];
+  if (/tpo|single.ply/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['roofing', 'tpo_single_ply'];
+  if (/built.up|bur/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['roofing', 'built_up'];
+  if (/sandwich.panel|puf|insulated.panel/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['roofing', curr === 'INR' ? 'sandwich_panel' : 'standing_seam'];
+  if (/metal.sheet|profile.sheet|color.coated/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['roofing', curr === 'INR' ? 'metal_sheet' : 'standing_seam'];
+  if (/insulation|rigid.insul/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['roofing', 'insulation'];
+  // MEP
+  if (/hvac|mechanical|air.cond|ahu|ductwork|vrf|chiller/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['mep', 'hvac'];
+  if (/plumbing|piping|fixture|water.heater|pump|drain/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['mep', 'plumbing'];
+  if (/electrical|wiring|lighting|panel|generator|transformer/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['mep', 'electrical'];
+  if (/fire.prot|sprinkler|fire.alarm|smoke.detect/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['mep', 'fire_protection'];
+  // Sitework
+  if (/excavat|bulk.excav/i.test(d) && /cy|cum|m³/i.test(u)) return ['sitework', 'excavation'];
+  if (/backfill|compacted.fill/i.test(d) && /cy|cum|m³/i.test(u)) return ['sitework', 'backfill'];
+  if (/grading|fine.grad/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['sitework', 'grading'];
+  if (/asphalt|asphalt.pav/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['sitework', 'paving_asphalt'];
+  if (/concrete.pav/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['sitework', 'paving_concrete'];
+  // Finishes
+  if (/drywall|gypsum|gyp.board/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['finishes', 'drywall'];
+  if (/paint|painting/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['finishes', 'painting'];
+  if (/vct|vinyl.tile/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['finishes', 'flooring_vct'];
+  if (/carpet/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['finishes', 'flooring_carpet'];
+  if (/ceiling.*tile|act|acoustic.ceil/i.test(d) && /sf|sqft|sqm/i.test(u)) return ['finishes', 'ceiling_act'];
   return null;
 }
 
@@ -235,14 +274,27 @@ function unitRateValidation(estimate, currency, location) {
           const dbRate = Math.round(rateData.rate * factor);
           const dbRange = rateData.range.map(r => Math.round(r * factor));
           dbBacked++; li.rateSource = 'DB';
+          li.dbRate = dbRate;
+          li.dbRange = dbRange;
           const deviation = Math.abs(rate - dbRate) / dbRate;
-          if (deviation > 1.0) {
+
+          // AGGRESSIVE RATE CORRECTION: Use regional DB rate when AI deviates significantly
+          // This ensures material costs match the selected region's actual market rates
+          if (rate < dbRange[0] || rate > dbRange[1]) {
+            // Rate is outside the DB range for this region - replace with DB mid rate
+            const oldRate = li.unitRate;
             li.unitRate = dbRate;
             li.lineTotal = Math.round((Number(li.quantity) || 0) * dbRate * 100) / 100;
-            issues.push({ severity: 'critical', category: 'unitRate', message: `"${li.description}" rate ${rate}/${li.unit} deviates >100% from DB ${dbRate}. Auto-corrected.`, autoFixed: true });
-          } else if (deviation > 0.5) {
-            issues.push({ severity: 'warning', category: 'unitRate', message: `"${li.description}" rate ${rate}/${li.unit} deviates ${(deviation * 100).toFixed(0)}% from DB ${dbRate} (range: ${dbRange[0]}-${dbRange[1]}).`, autoFixed: false });
+            const severity = deviation > 0.5 ? 'critical' : 'warning';
+            issues.push({ severity, category: 'unitRate', message: `"${li.description}" rate ${oldRate}→${dbRate}/${li.unit} (regional DB: ${dbRange[0]}-${dbRange[1]}). Corrected to ${location || 'regional'} market rate.`, autoFixed: true });
+          } else if (deviation > 0.15) {
+            // Rate is within range but >15% from mid - nudge toward DB mid
+            const nudgedRate = Math.round((rate * 0.4 + dbRate * 0.6));
+            li.unitRate = nudgedRate;
+            li.lineTotal = Math.round((Number(li.quantity) || 0) * nudgedRate * 100) / 100;
+            issues.push({ severity: 'info', category: 'unitRate', message: `"${li.description}" rate ${rate}→${nudgedRate}/${li.unit} (nudged toward regional DB ${dbRate}).`, autoFixed: true });
           }
+          // else: rate is close to DB - keep AI rate
         } else { aiEstimated++; li.rateSource = 'EST'; }
       } else { aiEstimated++; li.rateSource = 'EST'; }
     }
@@ -337,7 +389,91 @@ function crossTradeConsistency(estimate) {
   return issues;
 }
 
-// ============ 7. CONFIDENCE SCORE ============
+// ============ 7. PDF MEASUREMENT CROSS-CHECK ============
+
+function pdfMeasurementCrossCheck(estimate, measurementData) {
+  const issues = [];
+  if (!measurementData || !estimate?.trades) return issues;
+
+  // Get PDF-extracted member counts and sizes
+  const pdfMembers = measurementData.combined?.memberSizes || measurementData.memberSizes || {};
+  const pdfSchedules = measurementData.combined?.scheduleEntries || measurementData.scheduleEntries || [];
+  const pdfDimensions = measurementData.combined?.dimensions || measurementData.dimensions || {};
+
+  // Count AI-estimated steel members
+  const ms = estimate.materialSchedule;
+  const aiSteelMembers = ms?.steelMembers || [];
+  let aiSteelCount = aiSteelMembers.reduce((s, m) => s + (Number(m.count) || 0), 0);
+
+  // Count PDF-extracted steel members from schedules
+  let pdfSteelCount = 0;
+  if (Array.isArray(pdfSchedules)) {
+    pdfSteelCount = pdfSchedules.reduce((s, entry) => s + (Number(entry.qty) || 1), 0);
+  }
+
+  // Count PDF-extracted member sizes
+  const pdfWShapes = (pdfMembers.wShapes || []).length;
+  const pdfIndian = (pdfMembers.indianSections || []).length;
+  const pdfEuro = (pdfMembers.euroSections || []).length;
+  const pdfHSS = (pdfMembers.hss || []).length;
+  const totalPdfSections = pdfWShapes + pdfIndian + pdfEuro + pdfHSS;
+
+  // Cross-check: PDF found sections but AI has none
+  if (totalPdfSections > 0 && aiSteelMembers.length === 0) {
+    issues.push({ severity: 'critical', category: 'pdfCrossCheck',
+      message: `PDF extraction found ${totalPdfSections} steel sections but AI estimate has no steel members. Steel may be missing from estimate.`, autoFixed: false });
+  }
+
+  // Cross-check: PDF schedule count vs AI member count
+  if (pdfSteelCount > 0 && aiSteelCount > 0) {
+    const diff = Math.abs(pdfSteelCount - aiSteelCount) / Math.max(pdfSteelCount, aiSteelCount);
+    if (diff > 0.3) {
+      issues.push({ severity: 'warning', category: 'pdfCrossCheck',
+        message: `PDF schedules show ~${pdfSteelCount} steel members but AI estimated ${aiSteelCount} (${Math.round(diff * 100)}% difference). Review member counts.`, autoFixed: false });
+    }
+  }
+
+  // Cross-check: PDF found dimensions but AI area seems wrong
+  const pdfAreas = pdfDimensions.areas || [];
+  if (pdfAreas.length > 0 && estimate.summary?.totalArea) {
+    const aiArea = parseArea(estimate.summary.totalArea);
+    // Find largest area from PDF (likely the footprint)
+    const maxPdfArea = Math.max(...pdfAreas.map(a => Number(a.value) || 0));
+    if (maxPdfArea > 0 && aiArea > 0) {
+      const areaDiff = Math.abs(maxPdfArea - aiArea) / Math.max(maxPdfArea, aiArea);
+      if (areaDiff > 0.5) {
+        issues.push({ severity: 'warning', category: 'pdfCrossCheck',
+          message: `PDF shows area ~${maxPdfArea.toLocaleString()} but estimate uses ${aiArea.toLocaleString()}. Area mismatch may affect quantities.`, autoFixed: false });
+      }
+    }
+  }
+
+  // Cross-check: PDF found concrete grades vs estimate
+  const pdfConcreteGrades = measurementData.combined?.materialSpecs?.concreteGrades ||
+                            measurementData.materialSpecs?.concreteGrades || [];
+  if (pdfConcreteGrades.length > 0) {
+    const aiConcreteItems = ms?.concreteItems || [];
+    if (aiConcreteItems.length === 0 && pdfConcreteGrades.length > 0) {
+      issues.push({ severity: 'warning', category: 'pdfCrossCheck',
+        message: `PDF shows concrete grades (${pdfConcreteGrades.slice(0, 3).join(', ')}) but no concrete items in estimate.`, autoFixed: false });
+    }
+  }
+
+  // Cross-check: PDF found rebar specs vs estimate
+  const pdfRebarSpecs = measurementData.combined?.materialSpecs?.rebarSpecs ||
+                        measurementData.materialSpecs?.rebarSpecs || [];
+  if (pdfRebarSpecs.length > 0) {
+    const aiRebarItems = ms?.rebarItems || [];
+    if (aiRebarItems.length === 0) {
+      issues.push({ severity: 'warning', category: 'pdfCrossCheck',
+        message: `PDF shows rebar specs (${pdfRebarSpecs.slice(0, 3).join(', ')}) but no rebar items in estimate. Rebar cost may be missing.`, autoFixed: false });
+    }
+  }
+
+  return issues;
+}
+
+// ============ 8. CONFIDENCE SCORE ============
 
 function computeConfidenceScore(issues, estimate, rateSummary, benchmark, measurementData) {
   let score = 100;
@@ -397,6 +533,7 @@ export function validateEstimate(estimate, projectInfo, measurementData) {
   const { issues: compIssues, tradeCompleteness } = tradeCompletenessCheck(estimate, pt);
   allIssues.push(...compIssues);
   allIssues.push(...crossTradeConsistency(estimate));
+  allIssues.push(...pdfMeasurementCrossCheck(estimate, measurementData));
 
   const { confidenceScore, confidenceLevel } = computeConfidenceScore(allIssues, estimate, rateSourceSummary, benchmarkComparison, measurementData);
   return { issues: allIssues, confidenceScore, confidenceLevel, benchmarkComparison, rateSourceSummary, tradeCompleteness };

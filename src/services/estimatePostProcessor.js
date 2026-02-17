@@ -626,9 +626,9 @@ export function enrichEstimateWithLaborAndMarkups(estimate, projectInfo = {}) {
         isPEB,
         currency,
         steelMembers: (ms.steelMembers || []).map(m => ({
-            mark: m.mark, section: m.section, grade: m.grade,
-            count: m.count, lengthFt: m.lengthFt, weightTons: m.totalWeightTons,
-            procurementQty: m.procurementQty
+            mark: m.mark || '', section: m.section || '', grade: m.grade || '',
+            count: m.count || 0, lengthFt: m.lengthFt || 0, weightTons: m.totalWeightTons || 0,
+            procurementQty: m.procurementQty || 0
         })),
         concreteByGrade: groupConcreteByGrade(ms.concreteItems || []),
         rebarByElement: (ms.concreteItems || []).filter(c => c.rebarTotalLbs > 0).map(c => ({

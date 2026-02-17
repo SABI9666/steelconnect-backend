@@ -23,6 +23,25 @@ import { extractMeasurementsFromPDFs } from '../services/pdfMeasurementExtractor
 
 const router = express.Router();
 
+/**
+ * Recursively remove undefined values from an object before saving to Firestore.
+ * Firestore rejects documents containing undefined values.
+ */
+function sanitizeForFirestore(obj) {
+    if (obj === null || obj === undefined) return null;
+    if (typeof obj !== 'object') return obj;
+    if (obj instanceof Date) return obj;
+    if (Array.isArray(obj)) {
+        return obj.map(item => sanitizeForFirestore(item));
+    }
+    const cleaned = {};
+    for (const [key, value] of Object.entries(obj)) {
+        if (value === undefined) continue;
+        cleaned[key] = sanitizeForFirestore(value);
+    }
+    return cleaned;
+}
+
 // Enhanced multer configuration for multiple PDF uploads (large files + high qty)
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -176,7 +195,7 @@ async function generateAIEstimateBackground(estimationId, projectInfo, fileNames
 
     // Update the estimation document with the AI result
     const updateData = {
-      aiEstimate,
+      aiEstimate: sanitizeForFirestore(aiEstimate),
       aiGeneratedAt: new Date().toISOString(),
       aiStatus: 'completed',
       estimatedAmount: aiEstimate?.summary?.grandTotal || aiEstimate?.summary?.totalEstimate || 0,
@@ -2075,7 +2094,7 @@ router.post('/ai/generate', authenticateToken, async (req, res) => {
                 const doc = await docRef.get();
                 if (doc.exists) {
                     const updateData = {
-                        aiEstimate: estimate,
+                        aiEstimate: sanitizeForFirestore(estimate),
                         aiGeneratedAt: new Date().toISOString(),
                         aiAnswers: parsedAnswers,
                         status: 'completed',
@@ -2101,7 +2120,7 @@ router.post('/ai/generate', authenticateToken, async (req, res) => {
                     uploadedFiles,
                     fileCount: uploadedFiles.length,
                     totalFileSize: uploadedFiles.reduce((sum, f) => sum + (f.size || 0), 0),
-                    aiEstimate: estimate,
+                    aiEstimate: sanitizeForFirestore(estimate),
                     aiGeneratedAt: new Date().toISOString(),
                     aiAnswers: parsedAnswers,
                     estimatedAmount: estimate?.summary?.grandTotal || estimate?.summary?.totalEstimate || 0,

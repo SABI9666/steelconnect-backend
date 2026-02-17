@@ -569,10 +569,10 @@ export async function generateAIEstimate(projectInfo, answers, fileNames, fileBu
         try {
             const stream = await anthropic.messages.stream({
                 model: 'claude-opus-4-20250514',
-                max_tokens: 64000,
+                max_tokens: 32000,
                 thinking: {
                     type: 'enabled',
-                    budget_tokens: 16000
+                    budget_tokens: 10000
                 },
                 system: SYSTEM_PROMPT,
                 messages: [{ role: 'user', content: messageContent }]
@@ -692,10 +692,10 @@ async function generateAIEstimateTextFallback(projectInfo, answers, fileNames, f
 
     const stream = await anthropic.messages.stream({
         model: 'claude-opus-4-20250514',
-        max_tokens: 64000,
+        max_tokens: 32000,
         thinking: {
             type: 'enabled',
-            budget_tokens: 16000
+            budget_tokens: 10000
         },
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: fallbackContent }]

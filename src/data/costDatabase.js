@@ -984,6 +984,132 @@ export function classifySteelWeight(weightPerFoot) {
     return 'heavy';
 }
 
+// ─── MACHINERY / EQUIPMENT DAILY RENTAL RATES ────────────────────────────────
+export const MACHINERY_RATES = {
+    USD: {
+        mobile_crane_50t: { desc: 'Mobile Crane 50-ton', rate: 2800 },
+        mobile_crane_25t: { desc: 'Mobile Crane 25-ton', rate: 1800 },
+        concrete_pump: { desc: 'Concrete Pump (truck-mounted)', rate: 1500 },
+        transit_mixer: { desc: 'Transit Mixer 8m³', rate: 900 },
+        excavator_20t: { desc: 'Excavator 20-ton (CAT 320)', rate: 1200 },
+        backhoe_loader: { desc: 'Backhoe Loader (CAT 420)', rate: 650 },
+        boom_lift: { desc: 'Boom Lift 60ft', rate: 500 },
+        welding_machine: { desc: 'Welding Machine 400A', rate: 120 },
+        generator: { desc: 'Generator 100kVA', rate: 350 },
+        compactor: { desc: 'Vibratory Roller Compactor', rate: 550 },
+        forklift: { desc: 'Forklift 5-ton', rate: 400 }
+    },
+    INR: {
+        mobile_crane_50t: { desc: 'Hydra Crane 50T', rate: 45000 },
+        mobile_crane_25t: { desc: 'Hydra Crane 25T', rate: 28000 },
+        mobile_crane_20t: { desc: 'Hydra Crane 20T', rate: 22000 },
+        concrete_pump: { desc: 'Concrete Pump (Schwing/Putzmeister)', rate: 35000 },
+        transit_mixer: { desc: 'Transit Mixer 6m³', rate: 18000 },
+        excavator_20t: { desc: 'Excavator PC200 (Komatsu/JCB)', rate: 25000 },
+        excavator_pc200: { desc: 'Excavator PC200', rate: 25000 },
+        backhoe_loader: { desc: 'JCB 3DX Backhoe Loader', rate: 12000 },
+        jcb: { desc: 'JCB 3DX', rate: 12000 },
+        boom_lift: { desc: 'Boom Lift 40ft', rate: 8000 },
+        welding_machine: { desc: 'Welding Machine 400A', rate: 1500 },
+        generator: { desc: 'DG Set 62.5kVA', rate: 6000 },
+        compactor: { desc: 'Vibratory Roller 10T', rate: 10000 },
+        bar_bending: { desc: 'Bar Bending Machine', rate: 2500 },
+        bar_cutting: { desc: 'Bar Cutting Machine', rate: 2500 },
+        forklift: { desc: 'Forklift 3-ton', rate: 7000 }
+    },
+    AED: {
+        mobile_crane_50t: { desc: 'Mobile Crane 50-ton', rate: 8500 },
+        mobile_crane_25t: { desc: 'Mobile Crane 25-ton', rate: 5500 },
+        concrete_pump: { desc: 'Concrete Pump (truck-mounted)', rate: 5000 },
+        transit_mixer: { desc: 'Transit Mixer 8m³', rate: 3200 },
+        excavator_20t: { desc: 'Excavator 20-ton', rate: 4000 },
+        backhoe_loader: { desc: 'Backhoe Loader', rate: 2200 },
+        boom_lift: { desc: 'Boom Lift 60ft', rate: 1800 },
+        welding_machine: { desc: 'Welding Machine 400A', rate: 450 },
+        generator: { desc: 'Generator 100kVA', rate: 1200 },
+        compactor: { desc: 'Vibratory Roller Compactor', rate: 2000 },
+        forklift: { desc: 'Forklift 5-ton', rate: 1400 }
+    },
+    GBP: {
+        mobile_crane_50t: { desc: 'Mobile Crane 50-tonne', rate: 2200 },
+        mobile_crane_25t: { desc: 'Mobile Crane 25-tonne', rate: 1400 },
+        concrete_pump: { desc: 'Concrete Pump (truck-mounted)', rate: 1200 },
+        transit_mixer: { desc: 'Transit Mixer 6m³', rate: 700 },
+        excavator_20t: { desc: 'Excavator 20-tonne (JCB/CAT)', rate: 950 },
+        backhoe_loader: { desc: 'JCB Backhoe Loader', rate: 500 },
+        boom_lift: { desc: 'Boom Lift 60ft', rate: 400 },
+        welding_machine: { desc: 'Welding Machine 400A', rate: 95 },
+        generator: { desc: 'Generator 100kVA', rate: 280 },
+        compactor: { desc: 'Vibratory Roller Compactor', rate: 450 },
+        forklift: { desc: 'Forklift 5-tonne', rate: 320 }
+    },
+    EUR: {
+        mobile_crane_50t: { desc: 'Mobile Crane 50-tonne', rate: 2500 },
+        mobile_crane_25t: { desc: 'Mobile Crane 25-tonne', rate: 1600 },
+        concrete_pump: { desc: 'Concrete Pump (truck-mounted)', rate: 1400 },
+        transit_mixer: { desc: 'Transit Mixer 8m³', rate: 800 },
+        excavator_20t: { desc: 'Excavator 20-tonne', rate: 1100 },
+        backhoe_loader: { desc: 'Backhoe Loader', rate: 580 },
+        boom_lift: { desc: 'Boom Lift 18m', rate: 450 },
+        welding_machine: { desc: 'Welding Machine 400A', rate: 110 },
+        generator: { desc: 'Generator 100kVA', rate: 320 },
+        compactor: { desc: 'Vibratory Roller Compactor', rate: 500 },
+        forklift: { desc: 'Forklift 5-tonne', rate: 360 }
+    },
+    SAR: {
+        mobile_crane_50t: { desc: 'Mobile Crane 50-ton', rate: 9500 },
+        mobile_crane_25t: { desc: 'Mobile Crane 25-ton', rate: 6200 },
+        concrete_pump: { desc: 'Concrete Pump (truck-mounted)', rate: 5500 },
+        transit_mixer: { desc: 'Transit Mixer 8m³', rate: 3500 },
+        excavator_20t: { desc: 'Excavator 20-ton', rate: 4500 },
+        backhoe_loader: { desc: 'Backhoe Loader', rate: 2500 },
+        boom_lift: { desc: 'Boom Lift 60ft', rate: 2000 },
+        welding_machine: { desc: 'Welding Machine 400A', rate: 500 },
+        generator: { desc: 'Generator 100kVA', rate: 1400 },
+        compactor: { desc: 'Vibratory Roller Compactor', rate: 2200 },
+        forklift: { desc: 'Forklift 5-ton', rate: 1500 }
+    },
+    CAD: {
+        mobile_crane_50t: { desc: 'Mobile Crane 50-ton', rate: 3500 },
+        mobile_crane_25t: { desc: 'Mobile Crane 25-ton', rate: 2200 },
+        concrete_pump: { desc: 'Concrete Pump (truck-mounted)', rate: 1800 },
+        transit_mixer: { desc: 'Transit Mixer 8m³', rate: 1100 },
+        excavator_20t: { desc: 'Excavator 20-ton', rate: 1500 },
+        backhoe_loader: { desc: 'Backhoe Loader', rate: 800 },
+        boom_lift: { desc: 'Boom Lift 60ft', rate: 600 },
+        welding_machine: { desc: 'Welding Machine 400A', rate: 150 },
+        generator: { desc: 'Generator 100kVA', rate: 420 },
+        compactor: { desc: 'Vibratory Roller Compactor', rate: 680 },
+        forklift: { desc: 'Forklift 5-ton', rate: 480 }
+    },
+    AUD: {
+        mobile_crane_50t: { desc: 'Mobile Crane 50-tonne', rate: 3800 },
+        mobile_crane_25t: { desc: 'Mobile Crane 25-tonne', rate: 2400 },
+        concrete_pump: { desc: 'Concrete Pump (truck-mounted)', rate: 2000 },
+        transit_mixer: { desc: 'Transit Mixer 6m³', rate: 1200 },
+        excavator_20t: { desc: 'Excavator 20-tonne', rate: 1600 },
+        backhoe_loader: { desc: 'Backhoe Loader', rate: 850 },
+        boom_lift: { desc: 'Boom Lift 60ft', rate: 650 },
+        welding_machine: { desc: 'Welding Machine 400A', rate: 160 },
+        generator: { desc: 'Generator 100kVA', rate: 450 },
+        compactor: { desc: 'Vibratory Roller Compactor', rate: 720 },
+        forklift: { desc: 'Forklift 5-tonne', rate: 520 }
+    },
+    SGD: {
+        mobile_crane_50t: { desc: 'Mobile Crane 50-ton', rate: 3200 },
+        mobile_crane_25t: { desc: 'Mobile Crane 25-ton', rate: 2000 },
+        concrete_pump: { desc: 'Concrete Pump (truck-mounted)', rate: 1700 },
+        transit_mixer: { desc: 'Transit Mixer 6m³', rate: 1000 },
+        excavator_20t: { desc: 'Excavator 20-ton', rate: 1400 },
+        backhoe_loader: { desc: 'Backhoe Loader', rate: 750 },
+        boom_lift: { desc: 'Boom Lift 60ft', rate: 580 },
+        welding_machine: { desc: 'Welding Machine 400A', rate: 140 },
+        generator: { desc: 'Generator 100kVA', rate: 400 },
+        compactor: { desc: 'Vibratory Roller Compactor', rate: 650 },
+        forklift: { desc: 'Forklift 5-ton', rate: 460 }
+    }
+};
+
 export default {
     STEEL_WEIGHT_TABLE,
     INDIAN_STEEL_WEIGHTS,
@@ -995,6 +1121,7 @@ export default {
     LOCATION_FACTORS,
     BENCHMARK_RANGES,
     REBAR_WEIGHTS,
+    MACHINERY_RATES,
     getSteelWeightPerFoot,
     getLocationFactor,
     getUnitRate,

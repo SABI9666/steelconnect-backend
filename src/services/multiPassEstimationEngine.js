@@ -320,6 +320,20 @@ async function costEstimation(boq, projectInfo, answers) {
             `Calculations: ${JSON.stringify(boq.calculations, null, 2)}\nTotals: ${JSON.stringify(boq.totals, null, 2)}\n\n` +
             ratesReference + steelRatesText + benchText +
             `\nRATE SOURCE TAGGING: Include "rateSource" on each line item:\n- "DB" = from cost database\n- "EST" = AI estimated\nPrefer DB rates.\n\n` +
+            `COMPLETE MATERIAL SCHEDULE REQUIRED: Include a "materialSchedule" section with ALL project materials:\n` +
+            `- "steelMembers": [{mark, type, section, grade, count, lengthEach, lengthFt, weightPerFt, totalWeightLbs, totalWeightTons, calculation, location}] for EVERY steel member\n` +
+            `- "steelSummary": {mainSteelTons, connectionMiscTons, totalSteelTons, steelPSF}\n` +
+            `- "concreteItems": [{element, type, dimensions, count, volumeEachCY, totalCY, concreteGrade, rebarLbsPerCY, rebarTotalLbs, calculation}]\n` +
+            `- "concreteSummary": {totalConcreteCY, totalRebarTons}\n` +
+            `- "mepItems": [{category, item, specification, quantity, unit, unitRate, totalCost, notes}] - ALL plumbing, HVAC, electrical, fire protection\n` +
+            `- "mepSummary": {totalPlumbingCost, totalHVACCost, totalElectricalCost, totalFireProtectionCost, totalMEPCost}\n` +
+            `- "architecturalItems": [{category, item, specification, quantity, unit, unitRate, totalCost, notes}] - doors, windows, flooring, finishes, ceiling, paint\n` +
+            `- "architecturalSummary": {totalArchitecturalCost}\n` +
+            `- "roofingItems": [{item, specification, quantity, unit, unitRate, totalCost, notes}]\n` +
+            `- "siteworkItems": [{item, specification, quantity, unit, unitRate, totalCost, notes}]\n` +
+            `- "otherMaterials": [{material, specification, quantity, unit, unitRate, totalCost, notes}]\n` +
+            `- "totalMaterialWeight": summary string, "grandTotalMaterialCost": number\n` +
+            `EVERY item must have unitRate and totalCost. This is a complete construction BOQ with prices.\n\n` +
             getCostApplicationPrompt()
     }];
 

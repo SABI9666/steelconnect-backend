@@ -819,6 +819,42 @@ Respond in this exact JSON format:
         "analysisMethod": "string",
         "filesAnalyzed": ["file names analyzed"]
     },
+    "materialSchedule": {
+        "steelMembers": [
+            { "mark": "B1", "type": "Beam", "section": "W24x68", "grade": "ASTM A992 Gr50", "count": 12, "lengthEach": "30'-0\"", "lengthFt": 30, "weightPerFt": 68, "totalWeightLbs": 24480, "totalWeightTons": 12.24, "unitRate": 3200, "unitRateLabel": "per ton installed", "totalCost": 39168, "calculation": "12 x 68 lb/ft x 30 ft = 24,480 lbs = 12.24 tons", "location": "Roof level" }
+        ],
+        "steelSummary": { "mainSteelTons": 0, "connectionMiscTons": 0, "totalSteelTons": 0, "steelPSF": 0, "totalSteelCost": 0 },
+        "concreteItems": [
+            { "element": "Spread Footings F1", "type": "Footing", "dimensions": "6'x6'x2'", "count": 20, "volumeEachCY": 2.67, "totalCY": 53.3, "concreteGrade": "4000 PSI", "rebarLbsPerCY": 120, "rebarTotalLbs": 6396, "unitRate": 250, "unitRateLabel": "per CY in-place", "totalCost": 13325, "calculation": "20 x (6x6x2)/27 = 53.3 CY" }
+        ],
+        "concreteSummary": { "totalConcreteCY": 0, "totalRebarTons": 0, "totalConcreteCost": 0 },
+        "mepItems": [
+            { "category": "Plumbing", "item": "4\" PVC Drain Pipe", "specification": "Schedule 40 PVC", "quantity": 500, "unit": "LF", "unitRate": 12, "totalCost": 6000, "notes": "Main drain lines per plumbing layout" },
+            { "category": "HVAC", "item": "Split AC Units 2-ton", "specification": "Inverter type", "quantity": 8, "unit": "EA", "unitRate": 2500, "totalCost": 20000, "notes": "Per mechanical schedule" },
+            { "category": "Electrical", "item": "Main Distribution Panel", "specification": "200A 3-phase", "quantity": 1, "unit": "EA", "unitRate": 5000, "totalCost": 5000, "notes": "Per SLD" }
+        ],
+        "mepSummary": { "totalPlumbingCost": 0, "totalHVACCost": 0, "totalElectricalCost": 0, "totalFireProtectionCost": 0, "totalMEPCost": 0 },
+        "architecturalItems": [
+            { "category": "Doors", "item": "Hollow Metal Door 3'x7'", "specification": "18GA HM frame, flush door", "quantity": 12, "unit": "EA", "unitRate": 850, "totalCost": 10200, "notes": "Per door schedule" },
+            { "category": "Windows", "item": "Aluminum Sliding Window 5'x4'", "specification": "Powder coated", "quantity": 20, "unit": "EA", "unitRate": 600, "totalCost": 12000, "notes": "Per window schedule" },
+            { "category": "Flooring", "item": "Vitrified Tile 600x600", "specification": "Double charge", "quantity": 5000, "unit": "SF", "unitRate": 8, "totalCost": 40000, "notes": "Ground floor" },
+            { "category": "Wall Finish", "item": "Gypsum Board Partition", "specification": "12.5mm both sides, 75mm stud", "quantity": 2000, "unit": "SF", "unitRate": 12, "totalCost": 24000, "notes": "Interior partitions" },
+            { "category": "Ceiling", "item": "Grid Ceiling 2x2", "specification": "Mineral fiber tiles", "quantity": 4500, "unit": "SF", "unitRate": 6, "totalCost": 27000, "notes": "All office areas" },
+            { "category": "Paint", "item": "Interior Emulsion Paint", "specification": "2 coats over primer", "quantity": 8000, "unit": "SF", "unitRate": 2.5, "totalCost": 20000, "notes": "All walls" }
+        ],
+        "architecturalSummary": { "totalArchitecturalCost": 0 },
+        "roofingItems": [
+            { "item": "Standing Seam Metal Roof", "specification": "0.5mm color coated", "quantity": 9600, "unit": "SF", "unitRate": 8.5, "totalCost": 81600, "notes": "Complete roof area" }
+        ],
+        "siteworkItems": [
+            { "item": "Earthwork/Grading", "specification": "Cut and fill", "quantity": 500, "unit": "CY", "unitRate": 15, "totalCost": 7500, "notes": "Site preparation" }
+        ],
+        "otherMaterials": [
+            { "material": "Metal Deck", "specification": "1.5\" 20GA composite", "quantity": 9600, "unit": "SF", "unitRate": 4, "totalCost": 38400, "notes": "Roof deck" }
+        ],
+        "totalMaterialWeight": "Steel: 45.2 tons, Concrete: 120 CY, Rebar: 8.5 tons",
+        "grandTotalMaterialCost": 0
+    },
     "costBreakdown": {
         "directCosts": number,
         "generalConditions": number,
@@ -863,7 +899,19 @@ CRITICAL RULES:
    - PEB/Pre-engineered: $40-120/sqft (USD), ₹1,200-3,000/sqft (INR)
    If your estimate is outside these ranges, re-examine your unit rates and quantities for errors.
 10. Include ONLY trades visible/relevant in the drawings and project description.
-11. VERIFY ALL MATH before outputting. Sum up every lineTotal, check every trade subtotal, verify directCosts, verify grandTotal.`;
+11. VERIFY ALL MATH before outputting. Sum up every lineTotal, check every trade subtotal, verify directCosts, verify grandTotal.
+12. MATERIAL SCHEDULE (CRITICAL): The "materialSchedule" must be a COMPLETE Bill of Materials with QUANTITIES AND PRICES:
+    - EVERY item MUST include: quantity, unit, unitRate (price per unit), totalCost (= quantity x unitRate)
+    - steelMembers: Every beam, column, brace, joist, purlin, girt with mark, section, count, length, weight, unitRate (per ton), totalCost, calculation
+    - concreteItems: Every footing, slab, grade beam, wall with dimensions, count, volume, unitRate (per CY), totalCost, rebar estimate
+    - mepItems: ALL plumbing (pipes, fittings, fixtures, water heaters), HVAC (AC units, ducts, grilles, thermostats), electrical (panels, wiring, conduit, switches, outlets, lighting, DB), fire protection (sprinklers, alarms). Each with unitRate & totalCost
+    - architecturalItems: ALL doors, windows, flooring, wall finishes, ceilings, painting, waterproofing, insulation, countertops, cabinetry. Each with unitRate & totalCost
+    - roofingItems: Roof sheets, insulation, flashing, gutters, downspouts. Each with unitRate & totalCost
+    - siteworkItems: Earthwork, paving, landscaping, fencing, drainage. Each with unitRate & totalCost
+    - otherMaterials: Metal deck, bolts, anchor rods, sealants, misc. Each with unitRate & totalCost
+    - Include category summaries with total costs (steelSummary.totalSteelCost, mepSummary.totalMEPCost, etc.)
+    - grandTotalMaterialCost = sum of ALL material costs
+    - This is a WORLD-CLASS complete construction BOQ - extract EVERY item from drawings, schedules, notes, and specs`;
 }
 
 function getDefaultQuestions() {

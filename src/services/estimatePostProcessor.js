@@ -308,10 +308,15 @@ export function enrichEstimateWithLaborAndMarkups(estimate, projectInfo = {}) {
     if (!estimate) return estimate;
 
     const currency = projectInfo.currency || detectCurrencyFromEstimate(estimate) || 'USD';
-    const location = projectInfo.location || '';
+    const location = projectInfo.location || projectInfo.region || '';
     const locFactor = getLocationFactor(location).factor || 1.0;
     const productivity = LABOR_PRODUCTIVITY[currency] || LABOR_PRODUCTIVITY.USD;
-    const laborRates = HOURLY_LABOR_RATES[currency] || HOURLY_LABOR_RATES.USD;
+    const baseLaborRates = HOURLY_LABOR_RATES[currency] || HOURLY_LABOR_RATES.USD;
+    // Apply regional location factor to labor rates (e.g., NYC 1.32x, Houston 0.92x)
+    const laborRates = {};
+    for (const [key, rate] of Object.entries(baseLaborRates)) {
+        laborRates[key] = Math.round(rate * locFactor * 100) / 100;
+    }
 
     const ms = estimate.materialSchedule;
     if (!ms) return estimate;

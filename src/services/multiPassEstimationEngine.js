@@ -14,8 +14,9 @@ import { enrichEstimateWithLaborAndMarkups } from './estimatePostProcessor.js';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-// Constants
-const MODEL = 'claude-opus-4-20250514';
+// Constants - Use Sonnet for cost efficiency (5x cheaper than Opus)
+// Override with ESTIMATION_AI_MODEL env var for max accuracy
+const MODEL = process.env.ESTIMATION_AI_MODEL || 'claude-sonnet-4-5-20250929';
 const MAX_TOKENS_CLASSIFY = 16000;
 const MAX_TOKENS_EXTRACT = 16000;
 const MAX_TOKENS_TAKEOFF = 32000;

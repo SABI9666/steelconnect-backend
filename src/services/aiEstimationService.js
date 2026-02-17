@@ -8,6 +8,10 @@ const anthropic = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY
 });
 
+// AI Model Selection - Use Sonnet for cost efficiency (5x cheaper than Opus, still highly capable)
+// Override with ESTIMATION_AI_MODEL env var if needed (e.g., 'claude-opus-4-20250514' for max accuracy)
+const AI_MODEL = process.env.ESTIMATION_AI_MODEL || 'claude-sonnet-4-5-20250929';
+
 // Maximum total size of file content to send to Claude (25MB base64 ≈ ~18MB raw files)
 const MAX_VISION_PAYLOAD_BYTES = 18 * 1024 * 1024;
 // Maximum pages per PDF to analyze (Claude supports up to 100 pages)
@@ -202,114 +206,34 @@ function extractJSON(text) {
     return JSON.parse(jsonStr);
 }
 
-const SYSTEM_PROMPT = `You are the world's most precise construction cost estimator with 40+ years of global experience across EVERY building type, structural system, and region worldwide. You produce estimates that match actual construction costs within 5-10%, on par with top firms (Turner & Townsend, RLB, AECOM, Rider Levett Bucknall, Currie & Brown).
+const SYSTEM_PROMPT = `You are a precise construction cost estimator with 40+ years of global experience. You produce estimates within 5-10% accuracy.
 
-You can READ construction drawings/blueprints provided as PDFs or images. When drawings are provided, extract ALL dimensions, member sizes, specs, and quantities directly from them.
+You can READ construction drawings/blueprints provided as PDFs or images. Extract ALL dimensions, member sizes, specs, and quantities directly from drawings.
 
-GLOBAL STEEL SECTION STANDARDS (recognize ALL of these):
-- AISC (USA): W-shapes (W24x68), S-shapes, C-channels, HSS (HSS8x8x1/2), pipes, angles (L4x4x1/2), WT-shapes
-- IS (India): ISMB (ISMB450), ISMC, ISLB, ISWB, ISHB, ISA — weights in kg/m
-- BS/EN (UK/Europe): UB (UB533x210x82), UC, HEA, HEB, IPE, SHS, RHS, CHS, PFC — weights in kg/m
-- AS (Australia): UB, UC, PFC, EA, UA, SHS, RHS, CHS — weights in kg/m
-- PEB/Pre-Engineered: tapered I-sections, built-up sections, Z/C purlins, girts
-- Cold-formed: C-sections, Z-sections, hat sections, deck profiles
+STEEL SECTIONS: Recognize AISC W-shapes, IS (ISMB/ISMC), BS/EN (UB/UC/HEA/HEB/IPE), AS, PEB, HSS, cold-formed.
+Weight extraction: W24x68=68 lb/ft. For Indian/Euro sections, use standard weight tables.
 
-DRAWING ANALYSIS METHODOLOGY (follow this exact sequence):
-STEP 1 - INVENTORY: List every drawing sheet, its type (plan/elevation/section/detail/schedule), and its scale
-STEP 2 - DIMENSIONS: Extract ALL building dimensions from plans: overall footprint, grid spacings, bay sizes, floor-to-floor heights, eave/ridge heights
-STEP 3 - MEMBER SIZES: Read EVERY member callout/mark (B1, C2, etc.) and its corresponding size from schedules or callouts. Recognize all global section formats.
-STEP 4 - COUNT: Go grid-by-grid and count members systematically. Cross-reference plan counts with schedule quantities.
-STEP 5 - CALCULATE: Compute quantities using standard formulas:
-   - Steel tonnage: weight-per-foot × length × count ÷ 2000 (for lb/ft) OR weight-per-meter × length × count ÷ 1000 (for kg/m)
-   - W-shapes: number after 'x' = approximate lb/ft (W24x68 = 68 lb/ft)
-   - Indian sections: ISMB400 ≈ 61.6 kg/m, ISMB450 ≈ 72.4 kg/m, ISMB500 ≈ 86.9 kg/m
-   - European sections: IPE300 ≈ 42.2 kg/m, HEA200 ≈ 53.8 kg/m, HEB200 ≈ 78.1 kg/m
-   - Concrete volume: Length × Width × Depth for each element (footings, slabs, grade beams, walls, pile caps)
-   - Rebar: estimate by element type — footings 120 lbs/CY, slabs 80 lbs/CY, grade beams 150 lbs/CY, columns 200 lbs/CY, retaining walls 180 lbs/CY
-   - Area takeoffs: measure from grid dimensions, not assumptions
-STEP 6 - VERIFY: Check each quantity against rules of thumb:
-   - Steel: 5-15 psf for steel buildings, 3-8 psf for light commercial, 2-5 kg/sqm for PEB
-   - Concrete: footings ~0.5-1.5 CY per column, SOG 4-8" typical, elevated slabs 6-12"
-   - Rebar: 80-200 lbs/CY depending on element type and seismic zone
+DRAWING ANALYSIS: 1) Inventory sheets 2) Extract dimensions 3) Read member sizes 4) Count systematically 5) Calculate quantities 6) Verify against rules of thumb.
 
-ESTIMATION ACCURACY RULES (CRITICAL):
+CALCULATION FORMULAS:
+- Steel: weight/ft × length × count ÷ 2000 = tons (or ÷ 1000 for kg/m→MT)
+- Concrete: L×W×D per element, convert to CY (÷27) or cum
+- Rebar: by element type (footings 120 lbs/CY, slabs 80, grade beams 150, columns 200)
+- Connection material: 8-12% of main steel
+- Waste: steel 3%, concrete 5%, rebar 7%
+
+ACCURACY RULES:
 1. Use CURRENT ${new Date().getFullYear()} market rates for the specified region
-2. Unit rates must reflect actual material + labor + equipment costs in the local market
-3. DO NOT inflate, pad, or add safety margins to unit rates - use realistic mid-market pricing
-4. DO NOT double-count: each cost item appears ONCE in lineItems only
-5. Keep estimates lean and accurate - a client should take this to a contractor and get matching bids
-6. STRUCTURAL STEEL RATES (installed, ${new Date().getFullYear()}):
-   - USA: Light $3,000-4,500/ton, Medium $2,500-3,500/ton, Heavy $2,200-3,000/ton, HSS $3,500-5,500/ton
-   - India: ₹55,000-85,000/MT conventional, ₹45,000-65,000/MT PEB
-   - UAE: AED 8,000-14,000/MT
-   - UK: £2,500-4,000/tonne
-   - Europe: €2,800-4,500/tonne
-   - Saudi Arabia: SAR 9,000-15,000/MT
-   - Canada: CAD 3,200-5,000/tonne
-   - Australia: AUD 4,000-6,500/tonne
-7. CONCRETE RATES (in-place, all-in with formwork):
-   - USA: 3000psi $150-250/CY, 4000psi $175-300/CY, 5000psi $200-350/CY
-   - India: M25 ₹4,500-6,000/m³, M30 ₹5,000-7,000/m³, M40 ₹6,000-8,500/m³
-   - UAE: C30 AED 600-900/m³, C40 AED 700-1,100/m³
-   - UK: C30 £100-160/m³, C40 £120-190/m³
-8. REBAR RATES (in-place with tying):
-   - USA: $1,200-2,000/ton (varies #3-#11)
-   - India: Fe500 ₹50,000-65,000/MT, Fe500D ₹55,000-70,000/MT
-   - UAE: AED 3,500-6,000/MT
-9. ALL CONSTRUCTION TRADES - include every relevant trade:
-   a. STRUCTURAL: Steel framing, connections, bolts, welding, metal deck, shear studs
-   b. CONCRETE & FOUNDATIONS: Footings, grade beams, pile caps, piles/caissons, SOG, elevated slabs, retaining walls, formwork
-   c. REBAR/REINFORCING: By bar size, with BBS (Bar Bending Schedule) quantities where applicable
-   d. MASONRY: CMU, brick veneer, stone, mortar, grout, reinforcing
-   e. ROOFING: Metal roofing, built-up, single-ply, insulation, flashing, gutters, downspouts
-   f. CLADDING/ENVELOPE: Metal wall panels, curtain wall, precast panels, EIFS, insulation
-   g. WATERPROOFING: Below-grade, above-grade, sealants, expansion joints
-   h. DOORS & WINDOWS: HM doors, wood doors, overhead/rolling doors, storefronts, glazing
-   i. FLOORING: Concrete polish, epoxy, VCT, carpet, tile, hardwood
-   j. CEILING: ACT/grid ceiling, gypsum, exposed structure
-   k. PAINTING: Interior, exterior, fireproofing, intumescent
-   l. PARTITIONS: Metal stud/drywall, demountable, glass partitions
-   m. MECHANICAL/HVAC: AHUs, ductwork, piping, controls, VRF, split units, chillers
-   n. PLUMBING: Piping, fixtures, water heaters, pumps, drainage
-   o. ELECTRICAL: Panels, wiring, lighting, receptacles, generators, transformers, LV systems
-   p. FIRE PROTECTION: Sprinkler systems, fire alarm, extinguishers, smoke detection
-   q. ELEVATORS/LIFTS: Passenger, freight, escalators
-   r. BMS/AUTOMATION: Building management systems, access control, CCTV
-   s. SITEWORK: Earthwork, grading, paving, curbs, storm drainage, water/sewer, landscaping, fencing
-   t. PEB-SPECIFIC: Primary frames, purlins/girts, bracing, sheeting, ridge/gutter, accessories, mezzanine
-   u. SPECIALTIES: Crane systems, conveyor, cold storage, clean rooms, loading docks
-   v. TEMPORARY WORKS: Scaffolding, shoring, temporary power, site offices, safety provisions
-10. BENCHMARK CHECK - cross-check cost/sqft against these ranges:
-   - Industrial/Warehouse: $80-200/sqft | ₹2,000-5,000/sqft | AED 300-800/sqft | £70-180/sqft | €80-200/sqft
-   - Commercial Office: $150-350/sqft | ₹3,000-8,000/sqft | AED 600-1,400/sqft | £130-300/sqft | €140-320/sqft
-   - Residential: $120-250/sqft | ₹1,500-4,500/sqft | AED 400-1,000/sqft | £100-220/sqft | €110-240/sqft
-   - Healthcare: $300-700/sqft | ₹5,000-15,000/sqft | AED 1,000-2,500/sqft | £250-600/sqft
-   - PEB/Pre-engineered: $40-120/sqft | ₹1,200-3,000/sqft | AED 150-450/sqft | £35-100/sqft
-   - Educational: $200-400/sqft | ₹3,000-7,000/sqft | AED 500-1,200/sqft
-   - Hospitality: $200-500/sqft | ₹4,000-10,000/sqft | AED 700-1,800/sqft
-   - Data Center: $400-1,000/sqft | ₹8,000-20,000/sqft
-   - Cold Storage: $150-350/sqft | ₹3,000-8,000/sqft
-   If your estimate falls outside these ranges, RECALCULATE before outputting.
+2. DO NOT inflate or pad unit rates - use realistic mid-market pricing
+3. DO NOT double-count: each cost item appears ONCE
+4. lineTotal = quantity × unitRate. trade.subtotal = SUM(lineItems). directCosts = SUM(trades). grandTotal = directCosts + markups.
+5. VERIFY all math before outputting
+6. Include ALL relevant trades: structural, concrete, rebar, MEP, architectural, roofing, cladding, sitework
+7. Markups: general conditions 5-8%, overhead 5-8%, profit 5-10%, contingency 5-10%, escalation 0-3%
+8. Show calculation traces in "drawingNotes"
+9. Quantities must be PROCUREMENT-READY
 
-QUANTITY CALCULATION RULES:
-1. For steel: ALWAYS show your calculation. Example: "12 beams × W24x68 × 30'-0" = 12 × 68 lb/ft × 30 ft = 24,480 lbs = 12.24 tons"
-2. For concrete: ALWAYS show volume calculation. Example: "24 footings × 6'×6'×2' = 24 × 72 CF = 1,728 CF = 64 CY"
-3. Cross-reference beam schedule quantities with plan counts - they MUST match
-4. Include connection material: typically 8-12% of main steel tonnage
-5. Include waste factors: steel 2-5%, concrete 5-8%, rebar 5-10%
-6. For PEB: weight = 2-5 kg/sqm roof area for primary frames, add purlins (1-2 kg/sqm), sheeting (5-7 kg/sqm)
-7. For rebar BBS: estimate by element type and provide procurement-ready tonnages per bar size where possible
-8. Quantities must be PROCUREMENT-READY: anyone should be able to purchase materials directly from these quantities
-
-MATH RULES (MANDATORY - VERIFY BEFORE OUTPUTTING):
-1. lineTotal = quantity × unitRate (for EVERY line item)
-2. trade.subtotal = SUM of all lineItems[].lineTotal in that trade
-3. directCosts = SUM of all trades[].subtotal
-4. Each markup = its percentage × directCosts
-5. totalWithMarkups = directCosts + SUM of all markups
-6. grandTotal = totalWithMarkups
-7. After computing everything, VERIFY all math. If anything doesn't add up, FIX it.
-8. Show your quantity calculation traces in the "drawingNotes" field
+SPECIFIC RATES will be provided per-request from the cost database. Use those DB rates when available.
 
 You must respond ONLY in valid JSON format. No markdown, no explanation outside JSON.`;
 
@@ -515,7 +439,7 @@ Focus questions on:
 Make questions specific to what was described in the project info.`;
 
         const stream = await anthropic.messages.stream({
-            model: 'claude-opus-4-20250514',
+            model: AI_MODEL,
             max_tokens: 6000,
             system: SYSTEM_PROMPT,
             messages: [{ role: 'user', content: prompt }]
@@ -613,7 +537,7 @@ export async function generateAIEstimate(projectInfo, answers, fileNames, fileBu
         // Call Claude with streaming (required for large vision payloads that take >10 min)
         try {
             const stream = await anthropic.messages.stream({
-                model: 'claude-opus-4-20250514',
+                model: AI_MODEL,
                 max_tokens: 32000,
                 thinking: {
                     type: 'enabled',

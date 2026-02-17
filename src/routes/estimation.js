@@ -20,6 +20,8 @@ import { sendEstimationResultNotification } from '../utils/emailService.js';
 import { generateSmartQuestions, generateAIEstimate } from '../services/aiEstimationService.js';
 import { runMultiPassEstimation } from '../services/multiPassEstimationEngine.js';
 import { extractMeasurementsFromPDFs } from '../services/pdfMeasurementExtractor.js';
+import { generateCacheKey, getCachedEstimate, setCachedEstimate, getCacheStats } from '../services/estimationCache.js';
+import { generateQuickEstimate } from '../services/quickEstimationEngine.js';
 
 const router = express.Router();
 
@@ -172,25 +174,36 @@ async function generateAIEstimateBackground(estimationId, projectInfo, fileNames
       }
     };
 
-    // Try multi-pass estimation first, fall back to single-pass
+    // Check cache first - avoid re-processing same PDFs
+    const cacheKey = generateCacheKey(fileBuffers || [], projectInfo, {});
+    const cachedResult = getCachedEstimate(cacheKey);
     let aiEstimate;
-    try {
-      aiEstimate = await runMultiPassEstimation(
-        projectInfo,
-        {}, // No questionnaire answers in single-submit flow
-        fileNames,
-        fileBuffers || [],
-        { estimationId, onPassUpdate }
-      );
-      console.log(`[BACKGROUND] Multi-pass estimation completed for ${estimationId}`);
-    } catch (multiPassErr) {
-      console.warn(`[BACKGROUND] Multi-pass failed, falling back to single-pass: ${multiPassErr.message}`);
-      aiEstimate = await generateAIEstimate(
-        projectInfo,
-        {},
-        fileNames,
-        fileBuffers || []
-      );
+
+    if (cachedResult) {
+      console.log(`[BACKGROUND] Cache HIT for estimation ${estimationId} - skipping AI calls`);
+      aiEstimate = cachedResult;
+    } else {
+      // Try multi-pass estimation first, fall back to single-pass
+      try {
+        aiEstimate = await runMultiPassEstimation(
+          projectInfo,
+          {}, // No questionnaire answers in single-submit flow
+          fileNames,
+          fileBuffers || [],
+          { estimationId, onPassUpdate }
+        );
+        console.log(`[BACKGROUND] Multi-pass estimation completed for ${estimationId}`);
+      } catch (multiPassErr) {
+        console.warn(`[BACKGROUND] Multi-pass failed, falling back to single-pass: ${multiPassErr.message}`);
+        aiEstimate = await generateAIEstimate(
+          projectInfo,
+          {},
+          fileNames,
+          fileBuffers || []
+        );
+      }
+      // Cache the result for future requests with same files
+      setCachedEstimate(cacheKey, aiEstimate);
     }
 
     // Update the estimation document with the AI result
@@ -2016,7 +2029,7 @@ router.post('/ai/generate', authenticateToken, async (req, res) => {
             fileUploadWarning = `File upload skipped: ${uploadErr.message}`;
         }
 
-        const { estimationId, projectTitle, description, designStandard, projectType, region, totalArea, answers, fileNames } = req.body;
+        const { estimationId, projectTitle, description, designStandard, projectType, region, totalArea, answers, fileNames, estimationTier } = req.body;
 
         // Parse answers if sent as string (FormData sends strings)
         let parsedAnswers = answers;
@@ -2034,7 +2047,9 @@ router.post('/ai/generate', authenticateToken, async (req, res) => {
             return res.status(400).json({ success: false, message: 'Project info and answers are required' });
         }
 
-        console.log(`[AI-ESTIMATION] Generating estimate for "${projectTitle}" by ${req.user.email}`);
+        // Estimation tier: 'quick' (free, database), 'standard' (single-pass AI), 'detailed' (multi-pass AI)
+        const tier = (estimationTier || 'standard').toLowerCase();
+        console.log(`[AI-ESTIMATION] Generating ${tier.toUpperCase()} estimate for "${projectTitle}" by ${req.user.email}`);
 
         // Upload files to Firebase Storage if included
         let uploadedFiles = [];
@@ -2066,23 +2081,45 @@ router.post('/ai/generate', authenticateToken, async (req, res) => {
             }
         }
 
-        // Use multi-pass estimation engine with fallback to single-pass
+        // Route estimation based on tier selection
         const projectInfoObj = { projectTitle, description, designStandard, projectType, region, totalArea };
         const fileNamesArr = parsedFileNames || (uploadedFiles.length > 0 ? uploadedFiles.map(f => f.name) : []);
         const fileBuffersArr = files || [];
         let estimate;
-        try {
-            estimate = await runMultiPassEstimation(
-                projectInfoObj,
-                parsedAnswers,
-                fileNamesArr,
-                fileBuffersArr,
-                { estimationId }
-            );
-            console.log(`[AI-ESTIMATION] Multi-pass estimation completed`);
-        } catch (multiPassErr) {
-            console.warn(`[AI-ESTIMATION] Multi-pass failed, using single-pass fallback: ${multiPassErr.message}`);
+
+        // Check cache first (for standard/detailed tiers)
+        const cacheKey = tier !== 'quick' ? generateCacheKey(fileBuffersArr, projectInfoObj, parsedAnswers) : null;
+        const cachedResult = cacheKey ? getCachedEstimate(cacheKey) : null;
+
+        if (cachedResult) {
+            console.log(`[AI-ESTIMATION] Cache HIT - reusing previous ${tier} estimate`);
+            estimate = cachedResult;
+        } else if (tier === 'quick') {
+            // QUICK TIER: Zero AI calls, instant, uses cost database only
+            console.log(`[AI-ESTIMATION] Using QUICK estimation (zero AI cost)`);
+            estimate = generateQuickEstimate(projectInfoObj, parsedAnswers);
+        } else if (tier === 'standard') {
+            // STANDARD TIER: Single-pass AI (Sonnet), good balance of cost vs accuracy
+            console.log(`[AI-ESTIMATION] Using STANDARD estimation (single-pass AI)`);
             estimate = await generateAIEstimate(projectInfoObj, parsedAnswers, fileNamesArr, fileBuffersArr);
+            if (cacheKey) setCachedEstimate(cacheKey, estimate);
+        } else {
+            // DETAILED TIER: Multi-pass AI with fallback to single-pass
+            console.log(`[AI-ESTIMATION] Using DETAILED estimation (multi-pass AI)`);
+            try {
+                estimate = await runMultiPassEstimation(
+                    projectInfoObj,
+                    parsedAnswers,
+                    fileNamesArr,
+                    fileBuffersArr,
+                    { estimationId }
+                );
+                console.log(`[AI-ESTIMATION] Multi-pass estimation completed`);
+            } catch (multiPassErr) {
+                console.warn(`[AI-ESTIMATION] Multi-pass failed, using single-pass fallback: ${multiPassErr.message}`);
+                estimate = await generateAIEstimate(projectInfoObj, parsedAnswers, fileNamesArr, fileBuffersArr);
+            }
+            if (cacheKey) setCachedEstimate(cacheKey, estimate);
         }
 
         // Always save AI result - create new document or update existing
@@ -2143,7 +2180,10 @@ router.post('/ai/generate', authenticateToken, async (req, res) => {
             success: true,
             data: estimate,
             estimationId: savedEstimationId,
-            fileCount: uploadedFiles.length
+            fileCount: uploadedFiles.length,
+            estimationTier: tier,
+            estimationMethod: tier === 'quick' ? 'Database (zero AI cost)' : tier === 'standard' ? 'Single-pass AI' : 'Multi-pass AI',
+            cached: !!cachedResult
         };
         if (fileUploadWarning) {
             responseData.warning = fileUploadWarning;

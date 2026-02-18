@@ -419,7 +419,7 @@ router.post('/prospects/send-invite', async (req, res) => {
         if (!prospectIds || !Array.isArray(prospectIds) || prospectIds.length === 0) {
             return res.status(400).json({ success: false, message: 'Select at least one prospect' });
         }
-        const finalSubject = subject || 'You are invited to join SteelConnect';
+        const finalSubject = subject || 'Your SteelConnect account is ready';
         const results = { sent: 0, failed: 0, errors: [] };
         const batchSize = 10;
 
@@ -432,18 +432,12 @@ router.post('/prospects/send-invite', async (req, res) => {
                     const prospect = doc.data();
 
                     const body = emailBody || `
-                        <h2 style="font-size:20px; font-weight:700; color:#0f172a; margin:0 0 16px 0;">You're Invited to Join SteelConnect</h2>
+                        <h2 style="font-size:20px; font-weight:700; color:#0f172a; margin:0 0 16px 0;">Your SteelConnect Account is Ready</h2>
                         <p style="font-size:15px; color:#334155; margin:0 0 14px 0; line-height:1.7;">Hi there,</p>
-                        <p style="font-size:15px; color:#334155; margin:0 0 14px 0; line-height:1.7;">We noticed your interest in SteelConnect — the professional platform for steel construction professionals.</p>
-                        <p style="font-size:15px; color:#334155; margin:0 0 14px 0; line-height:1.7;">Here's what you get when you sign up:</p>
-                        <ul style="font-size:14px; color:#475569; line-height:2.2; padding-left:20px; margin:12px 0 20px 0;">
-                            <li>AI-powered cost estimation for your projects</li>
-                            <li>Connect with verified contractors and designers</li>
-                            <li>Post projects and receive competitive quotes</li>
-                            <li>Advanced analytics and reporting tools</li>
-                        </ul>
-                        <p style="margin:24px 0;"><a href="https://steelconnectapp.com" style="display:inline-block; background:#2563eb; color:#ffffff; padding:14px 32px; border-radius:6px; text-decoration:none; font-weight:600; font-size:15px;">Create Your Free Account</a></p>
-                        <p style="font-size:14px; color:#64748b; margin-top:16px;">If you have questions, just reply to this email.</p>
+                        <p style="font-size:15px; color:#334155; margin:0 0 14px 0; line-height:1.7;">Following up on your recent visit — your SteelConnect account is ready to be set up. You can use it to manage your steel construction projects, get AI-powered cost estimates, and connect with verified professionals.</p>
+                        <p style="font-size:15px; color:#334155; margin:0 0 14px 0; line-height:1.7;">Click below to complete your registration:</p>
+                        <p style="margin:24px 0;"><a href="https://steelconnectapp.com?action=register" style="display:inline-block; background:#2563eb; color:#ffffff; padding:14px 32px; border-radius:6px; text-decoration:none; font-weight:600; font-size:15px;">Complete Registration</a></p>
+                        <p style="font-size:14px; color:#64748b; margin-top:16px;">If you have any questions, just reply to this email and we'll help you out.</p>
                     `;
 
                     const result = await sendGenericEmail({

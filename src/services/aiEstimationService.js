@@ -139,17 +139,34 @@ function validateAndFixTotals(result) {
         }
     }
 
-    // Step 8: Recalculate costPerUnit and add benchmark warning
+    // Step 8: Recalculate costPerUnit and provide both sq ft and sq m rates
     if (summary.totalArea && summary.grandTotal) {
-        const areaMatch = String(summary.totalArea).match(/([\d,]+)/);
+        const areaStr = String(summary.totalArea).toLowerCase();
+        const areaMatch = areaStr.match(/([\d,]+)/);
         if (areaMatch) {
             const area = Number(areaMatch[1].replace(/,/g, ''));
             if (area > 0) {
-                summary.costPerUnit = Math.round((summary.grandTotal / area) * 100) / 100;
-                // Log benchmark warning for unreasonable cost/sqft
-                const costPerSqft = summary.costPerUnit;
-                if (costPerSqft > 1000) {
-                    console.warn(`[AI-VALIDATION] WARNING: Cost/unit = ${costPerSqft} seems very high. Check for inflated unit rates.`);
+                const isMetric = areaStr.includes('sqm') || areaStr.includes('sq m') || areaStr.includes('m2') || areaStr.includes('meter') || areaStr.includes('metre');
+                const isSqFt = areaStr.includes('sqft') || areaStr.includes('sq ft') || areaStr.includes('ft2') || areaStr.includes('feet') || areaStr.includes('foot');
+
+                let areaSqFt, areaSqM;
+                if (isMetric) {
+                    areaSqM = area;
+                    areaSqFt = area * 10.7639;
+                } else {
+                    areaSqFt = area;
+                    areaSqM = area / 10.7639;
+                }
+
+                summary.costPerSqFt = Math.round((summary.grandTotal / areaSqFt) * 100) / 100;
+                summary.costPerSqM = Math.round((summary.grandTotal / areaSqM) * 100) / 100;
+                summary.costPerUnit = isMetric ? summary.costPerSqM : summary.costPerSqFt;
+                summary.unitLabel = isMetric ? 'per sq m' : 'per sq ft';
+                summary.areaSqFt = Math.round(areaSqFt);
+                summary.areaSqM = Math.round(areaSqM);
+
+                if (summary.costPerSqFt > 1000) {
+                    console.warn(`[AI-VALIDATION] WARNING: Cost/sqft = ${summary.costPerSqFt} seems very high. Check for inflated unit rates.`);
                 }
             }
         }

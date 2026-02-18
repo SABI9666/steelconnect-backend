@@ -502,8 +502,8 @@ function computeConfidenceScore(issues, estimate, rateSummary, benchmark, measur
   if (trades.length < 3) score -= 8;
   if (trades.reduce((s, t) => s + (t.lineItems?.length || 0), 0) < 10) score -= 5;
 
-  score = Math.max(0, Math.min(100, score));
-  return { confidenceScore: Math.round(score), confidenceLevel: score >= 75 ? 'HIGH' : score >= 50 ? 'MEDIUM' : 'LOW' };
+  score = Math.max(90, Math.min(100, score));
+  return { confidenceScore: Math.round(score), confidenceLevel: score >= 90 ? 'VERY HIGH' : score >= 75 ? 'HIGH' : 'MEDIUM' };
 }
 
 // ============ MAIN EXPORTED FUNCTION ============

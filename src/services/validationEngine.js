@@ -476,76 +476,34 @@ function pdfMeasurementCrossCheck(estimate, measurementData) {
 // ============ 8. CONFIDENCE SCORE ============
 
 function computeConfidenceScore(issues, estimate, rateSummary, benchmark, measurementData) {
-  // Start at 100, subtract penalties, add bonuses
-  // AUTO-FIXED issues don't count as penalties (they were corrected)
   let score = 100;
   const criticals = issues.filter(i => i.severity === 'critical' && !i.autoFixed).length;
   const warnings = issues.filter(i => i.severity === 'warning' && !i.autoFixed).length;
-  const infos = issues.filter(i => i.severity === 'info' && !i.autoFixed).length;
-  score -= criticals * 8 + warnings * 3 + infos * 0.5;
+  const infos = issues.filter(i => i.severity === 'info').length;
+  score -= criticals * 12 + warnings * 5 + infos * 1;
 
-  // BONUSES for auto-fixed issues (shows the system caught and corrected problems)
-  const autoFixed = issues.filter(i => i.autoFixed).length;
-  score += Math.min(5, autoFixed * 0.5); // Up to +5 for auto-fixes
-
-  // Rate source coverage (max +10 / -10)
+  // Rate source coverage
   if (rateSummary) {
     const dbPct = rateSummary.dbPercentage || 0;
-    if (dbPct >= 80) score += 10;        // 80%+ DB-backed = excellent
-    else if (dbPct >= 60) score += 7;     // 60%+ = good
-    else if (dbPct >= 40) score += 3;     // 40%+ = acceptable
-    else if (dbPct > 0) score -= 3;       // Low DB coverage
-    else score -= 8;                       // No DB rates at all
+    if (dbPct >= 70) score += 5;
+    else if (dbPct < 40 && dbPct > 0) score -= 5;
+    else if (dbPct === 0) score -= 10;
   }
-
-  // Benchmark alignment (max +5 / -5)
-  if (benchmark) {
-    score += benchmark.status === 'within' ? 5 : -3;
-  }
-
-  // Drawing/measurement data quality (max +5 / -3)
+  // Benchmark alignment
+  if (benchmark) { score += benchmark.status === 'within' ? 5 : -8; }
+  else { score -= 3; }
+  // Drawing quality
   if (measurementData) {
     const conf = measurementData.combined?.overallConfidence || measurementData.overallConfidence;
-    if (conf) {
-      const ds = Number(conf.score) || 0;
-      if (ds >= 70) score += 5;
-      else if (ds >= 40) score += 2;
-    }
-  }
-
-  // Estimate completeness bonuses
+    if (conf) { const ds = Number(conf.score) || 0; if (ds >= 70) score += 5; else if (ds < 40) score -= 5; }
+  } else { score -= 5; }
+  // Estimate completeness
   const trades = (estimate.trades || []);
-  const totalLineItems = trades.reduce((s, t) => s + (t.lineItems?.length || 0), 0);
-  if (trades.length >= 5) score += 3;       // Good trade coverage
-  if (totalLineItems >= 15) score += 3;     // Detailed line items
-  if (totalLineItems >= 25) score += 2;     // Very detailed
+  if (trades.length < 3) score -= 8;
+  if (trades.reduce((s, t) => s + (t.lineItems?.length || 0), 0) < 10) score -= 5;
 
-  // Material schedule completeness
-  const ms = estimate.materialSchedule;
-  if (ms) {
-    if ((ms.steelMembers || []).length > 0) score += 2;
-    if ((ms.concreteItems || []).length > 0) score += 2;
-    if ((ms.rebarItems || []).length > 0 || (ms.concreteItems || []).some(c => c.rebarTotalLbs > 0)) score += 2;
-    if ((ms.mepItems || []).length > 0 || (ms.mepSummary?.totalMEPCost > 0)) score += 1;
-    // Procurement readiness
-    if (ms.completenessCheck?.procurementReady) score += 3;
-  }
-
-  // Markups present and reasonable
-  const cb = estimate.costBreakdown;
-  if (cb) {
-    const hasMarkups = (Number(cb.generalConditionsPercent) > 0 && Number(cb.overheadPercent) > 0 && Number(cb.profitPercent) > 0);
-    if (hasMarkups) score += 2;
-  }
-
-  // Has calculation traces
-  if (estimate.structuralAnalysis?.drawingNotes && estimate.structuralAnalysis.drawingNotes.length > 50) score += 2;
-
-  score = Math.max(0, Math.min(100, Math.round(score)));
-  return {
-    confidenceScore: score,
-    confidenceLevel: score >= 90 ? 'VERY HIGH' : score >= 75 ? 'HIGH' : score >= 50 ? 'MEDIUM' : 'LOW'
-  };
+  score = Math.max(0, Math.min(100, score));
+  return { confidenceScore: Math.round(score), confidenceLevel: score >= 75 ? 'HIGH' : score >= 50 ? 'MEDIUM' : 'LOW' };
 }
 
 // ============ MAIN EXPORTED FUNCTION ============

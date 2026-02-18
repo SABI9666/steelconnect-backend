@@ -334,38 +334,20 @@ export function enrichEstimateWithLaborAndMarkups(estimate, projectInfo = {}) {
 
     for (const m of steelMembers) {
         const totalCostRaw = Number(m.totalCost) || 0;
+        if (totalCostRaw <= 0) continue;
 
-        // ── Weight calculation (ALWAYS runs, even without cost) ──
-        // Normalize length: accept 'length' in meters too
-        if (!m.lengthFt && m.length) {
-            const lu = (m.lengthUnit || '').toLowerCase();
-            if (lu === 'm' || lu === 'meters' || lu === 'metre' || lu === 'metres') {
-                m.lengthFt = m.length / 0.3048;
-                m.lengthM = m.length;
-            } else {
-                m.lengthFt = m.length;
-            }
-        }
-
-        // Calculate weight if not present — works for W, ISMB, HEA, HEB, IPE, UB, UC, HSS, CHS, SHS, MS Angle, MS Channel, MS I-Beam
+        // Calculate weight if not present — works for W, ISMB, HEA, HEB, IPE, UB, UC, HSS, CHS, SHS
         if (!m.weightPerFt && m.section) {
             const wt = getSteelWeightPerFoot(m.section);
             if (wt && wt.weight > 0) {
                 m.weightPerFt = wt.weight;
                 m.weightUnit = wt.unit;
-            } else {
-                // Fallback: estimate weight for light/generic sections (MS Angle, MS Channel, etc.)
-                const estWt = estimateLightSteelWeight(m.section);
-                if (estWt > 0) {
-                    m.weightPerFt = Math.round(estWt * 100) / 100;
-                    m.weightUnit = 'kg/m';
-                }
             }
         }
         if (!m.totalWeightLbs && m.weightPerFt && m.count && m.lengthFt) {
             const isMetric = (m.weightUnit || '').includes('kg');
             if (isMetric) {
-                const lengthM = m.lengthM || m.lengthFt * 0.3048;
+                const lengthM = m.lengthFt * 0.3048;
                 m.totalWeightKg = m.count * m.weightPerFt * lengthM;
                 m.totalWeightTons = m.totalWeightKg / 1000;
                 m.totalWeightLbs = m.totalWeightKg * 2.205;
@@ -374,40 +356,26 @@ export function enrichEstimateWithLaborAndMarkups(estimate, projectInfo = {}) {
                 m.totalWeightTons = m.totalWeightLbs / 2000;
             }
         }
-        // Also populate weightTons (legacy field used by frontend)
-        if (!m.weightTons && m.totalWeightTons) {
-            m.weightTons = Math.round(m.totalWeightTons * 1000) / 1000;
-        }
         if (!m.calculation && m.count && m.weightPerFt && m.lengthFt) {
             const unit = (m.weightUnit || 'lb/ft');
             if (unit.includes('kg')) {
-                m.calculation = `${m.count} x ${m.weightPerFt} kg/m x ${(m.lengthM || m.lengthFt * 0.3048).toFixed(1)}m = ${Number(m.totalWeightKg || 0).toLocaleString()} kg = ${Number(m.totalWeightTons || 0).toFixed(2)} MT`;
+                m.calculation = `${m.count} x ${m.weightPerFt} kg/m x ${(m.lengthFt * 0.3048).toFixed(1)}m = ${Number(m.totalWeightKg || 0).toLocaleString()} kg = ${Number(m.totalWeightTons || 0).toFixed(2)} MT`;
             } else {
                 m.calculation = `${m.count} x ${m.weightPerFt} lb/ft x ${m.lengthFt} ft = ${Number(m.totalWeightLbs || 0).toLocaleString()} lbs = ${Number(m.totalWeightTons || 0).toFixed(2)} tons`;
             }
         }
 
-        // ── Cost splits (only when cost is present) ──
-        if (totalCostRaw > 0) {
-            m.materialCost = Math.round(totalCostRaw * steelSplit.material);
-            m.laborCost = Math.round(totalCostRaw * steelSplit.labor);
-            m.equipmentCost = Math.round(totalCostRaw * steelSplit.equipment);
-            m.totalCost = m.materialCost + m.laborCost + m.equipmentCost;
-        }
+        m.materialCost = Math.round(totalCostRaw * steelSplit.material);
+        m.laborCost = Math.round(totalCostRaw * steelSplit.labor);
+        m.equipmentCost = Math.round(totalCostRaw * steelSplit.equipment);
+        m.totalCost = m.materialCost + m.laborCost + m.equipmentCost;
 
         const tons = Number(m.totalWeightTons) || 0;
-        if (tons > 0) {
-            m.laborHours = Math.round(tons * (productivity[steelProdKey] || 24));
-        } else if (totalCostRaw > 0) {
-            // Fallback: estimate labor hours from cost (when weight unknown)
-            const rateKey = isPEB ? 'peb' : 'structural';
-            const rate = laborRates[rateKey] || 65;
-            m.laborHours = Math.max(1, Math.round((totalCostRaw * 0.40) / rate));
-        }
+        m.laborHours = Math.round(tons * (productivity[steelProdKey] || 24));
         m.laborRate = laborRates[isPEB ? 'peb' : 'structural'];
 
         // Procurement-ready: mark, section, grade, count, lengthFt, totalWeightTons
-        m.procurementQty = `${m.count || 0} nos x ${m.section || 'TBD'} x ${(m.lengthM || m.lengthFt || 0).toFixed?.(1) || m.lengthFt || 0} ${m.lengthM ? 'm' : 'ft'}`;
+        m.procurementQty = `${m.count || 0} nos x ${m.section || 'TBD'} x ${m.lengthFt || 0} ft`;
 
         totalMaterialCost += m.materialCost; totalLaborCost += m.laborCost;
         totalEquipmentCost += m.equipmentCost; totalLaborHours += m.laborHours;
@@ -643,38 +611,6 @@ export function enrichEstimateWithLaborAndMarkups(estimate, projectInfo = {}) {
         grandTotalWithMarkups: subtotalDirectCost + totalMarkupsAmt
     };
 
-    // ── 13b. FIX MAIN COST BREAKDOWN MARKUPS (critical: AI often returns 0%) ──
-    const cb = estimate.costBreakdown || {};
-    const directCosts = Number(cb.directCosts) || 0;
-    if (directCosts > 0) {
-        // Force default markups if AI returned 0% for any markup
-        const markupFields = [
-            { key: 'generalConditions', pctKey: 'generalConditionsPercent', default: DEFAULT_MARKUPS.generalConditionsPercent },
-            { key: 'overhead', pctKey: 'overheadPercent', default: DEFAULT_MARKUPS.overheadPercent },
-            { key: 'profit', pctKey: 'profitPercent', default: DEFAULT_MARKUPS.profitPercent },
-            { key: 'contingency', pctKey: 'contingencyPercent', default: DEFAULT_MARKUPS.contingencyPercent },
-            { key: 'escalation', pctKey: 'escalationPercent', default: DEFAULT_MARKUPS.escalationPercent },
-        ];
-        let totalMarkup = 0;
-        for (const field of markupFields) {
-            const pct = Number(cb[field.pctKey]) || 0;
-            if (pct <= 0) {
-                cb[field.pctKey] = field.default;
-            }
-            cb[field.key] = Math.round(directCosts * cb[field.pctKey] / 100);
-            totalMarkup += cb[field.key];
-        }
-        cb.totalWithMarkups = directCosts + totalMarkup;
-        if (estimate.summary) {
-            estimate.summary.grandTotal = cb.totalWithMarkups;
-            // Recalculate cost per unit
-            const area = parseAreaForPostProcessor(estimate.summary.totalArea || projectInfo.totalArea);
-            if (area > 0) {
-                estimate.summary.costPerUnit = Math.round(cb.totalWithMarkups / area * 100) / 100;
-            }
-        }
-    }
-
     // ── 14. GRAND TOTALS & PROCUREMENT SUMMARY ──────────────────────────────
     ms.grandTotalMaterialCost = Math.round(totalMaterialCost + totalLaborCost + totalEquipmentCost);
 
@@ -705,54 +641,7 @@ export function enrichEstimateWithLaborAndMarkups(estimate, projectInfo = {}) {
         }))
     };
 
-    // ── 15. MATERIAL COMPLETENESS CHECK ─────────────────────────────────────
-    // Ensure every material item has procurement-ready data
-    const completenessIssues = [];
-
-    // Check steel members completeness
-    for (const m of (ms.steelMembers || [])) {
-        if (!m.section || m.section === 'TBD') completenessIssues.push(`Steel member ${m.mark || '?'}: missing section size`);
-        if (!m.count || m.count <= 0) completenessIssues.push(`Steel member ${m.mark || '?'} (${m.section || '?'}): missing count`);
-        if ((!m.lengthFt || m.lengthFt <= 0) && (!m.lengthM || m.lengthM <= 0)) completenessIssues.push(`Steel member ${m.mark || '?'} (${m.section || '?'}): missing length`);
-        if (!m.totalWeightTons || m.totalWeightTons <= 0) {
-            // Try to compute from cost if possible
-            if (m.totalCost > 0) {
-                // Rough estimate: steel ~$2500-3500/ton (USD) or similar
-                const estTons = m.totalCost / 3000;
-                m.totalWeightTons = Math.round(estTons * 100) / 100;
-                m.totalWeightLbs = Math.round(estTons * 2000);
-                m.weightEstimated = true;
-            }
-        }
-        // Ensure procurement quantity string
-        if (!m.procurementQty || m.procurementQty === '0') {
-            const unit = (m.weightUnit || '').includes('kg') ? 'm' : 'ft';
-            m.procurementQty = `${m.count || 0} nos × ${m.section || 'TBD'} × ${m.lengthFt || m.lengthM || 0} ${unit}`;
-        }
-    }
-
-    // Check concrete items completeness
-    for (const c of (ms.concreteItems || [])) {
-        if ((!c.totalCY || c.totalCY <= 0) && (!c.totalCUM || c.totalCUM <= 0) && (!c.totalVolume || c.totalVolume <= 0)) {
-            completenessIssues.push(`Concrete ${c.element || c.type || '?'}: missing volume`);
-        }
-        if (!c.concreteGrade) completenessIssues.push(`Concrete ${c.element || c.type || '?'}: missing grade`);
-    }
-
-    // Check rebar completeness
-    if (totalRebarTons <= 0 && totalConcreteCY > 0) {
-        completenessIssues.push('Rebar quantity is 0 but concrete is present - rebar may be missing');
-    }
-
-    ms.completenessCheck = {
-        steelComplete: (ms.steelMembers || []).every(m => m.section && m.count > 0),
-        concreteComplete: (ms.concreteItems || []).every(c => (c.totalCY || c.totalCUM || c.totalVolume) > 0),
-        rebarIncluded: totalRebarTons > 0,
-        issues: completenessIssues,
-        procurementReady: completenessIssues.length === 0
-    };
-
-    console.log(`[POST-PROCESSOR] Enriched: Material=${totalMaterialCost}, Labor=${totalLaborCost} (${Math.round(totalLaborHours)}hrs), Equipment=${totalEquipmentCost}, Steel=${totalSteelTons.toFixed(1)}T, Concrete=${totalConcreteCY.toFixed(0)}CY, Rebar=${totalRebarTons.toFixed(1)}T, Crews=${crewBreakdown.length}, Markups=${totalMarkupsAmt}, Grand=${ms.boqMarkups.grandTotalWithMarkups}, Completeness=${completenessIssues.length === 0 ? 'OK' : completenessIssues.length + ' issues'}`);
+    console.log(`[POST-PROCESSOR] Enriched: Material=${totalMaterialCost}, Labor=${totalLaborCost} (${Math.round(totalLaborHours)}hrs), Equipment=${totalEquipmentCost}, Steel=${totalSteelTons.toFixed(1)}T, Concrete=${totalConcreteCY.toFixed(0)}CY, Rebar=${totalRebarTons.toFixed(1)}T, Crews=${crewBreakdown.length}, Markups=${totalMarkupsAmt}, Grand=${ms.boqMarkups.grandTotalWithMarkups}`);
     return estimate;
 }
 
@@ -890,88 +779,6 @@ function sumItems(items) {
         equip: acc.equip + (Number(i.equipmentCost) || 0), hrs: acc.hrs + (Number(i.laborHours) || 0),
         total: acc.total + (Number(i.totalCost) || 0),
     }), { mat: 0, lab: 0, equip: 0, hrs: 0, total: 0 });
-}
-
-/** Parse numeric area from string like "50,000 sq ft" or "4645 sqm" */
-function parseAreaForPostProcessor(areaStr) {
-    if (!areaStr) return 0;
-    if (typeof areaStr === 'number') return areaStr;
-    const str = String(areaStr).replace(/,/g, '');
-    const num = parseFloat((str.match(/([\d.]+)/) || ['0'])[1]);
-    if (/sq\s*m|sqm|m²|square\s*met/i.test(str)) return Math.round(num * 10.764);
-    return num;
-}
-
-/**
- * Estimate weight for light/generic steel sections not in the standard weight tables.
- * Covers MS Angle, MS Channel, MS I-Beam, MS Flat, MS Pipe, MS Plate etc.
- * Returns weight in kg/m.
- */
-function estimateLightSteelWeight(section) {
-    if (!section) return 0;
-    const s = section.toUpperCase().replace(/\s+/g, '');
-
-    // MS Angle: AxBxT mm -> weight ≈ (A+B)*T*0.00785 kg/m
-    const angleMatch = s.match(/(?:MS\s*)?ANGLE\s*(\d+)\s*[x×X]\s*(\d+)\s*[x×X]\s*(\d+)/i) ||
-                        s.match(/(?:ISA|L)\s*(\d+)\s*[x×X]\s*(\d+)\s*[x×X]\s*(\d+)/i);
-    if (angleMatch) {
-        const a = parseInt(angleMatch[1]), b = parseInt(angleMatch[2]), t = parseInt(angleMatch[3]);
-        return (a + b - t) * t * 0.00785;
-    }
-
-    // MS Channel: HxWxT or ISMC/MC -> weight
-    const channelMatch = s.match(/(?:MS\s*)?CHANNEL\s*(\d+)\s*[x×X]\s*(\d+)\s*[x×X]\s*(\d+)/i) ||
-                          s.match(/(?:MC|C)\s*(\d+)\s*[x×X]\s*(\d+)\s*[x×X]\s*(\d+)/i);
-    if (channelMatch) {
-        const h = parseInt(channelMatch[1]), w = parseInt(channelMatch[2]), t = parseInt(channelMatch[3]);
-        return (h * t + 2 * (w - t) * t) * 0.00785;
-    }
-
-    // MS I-Beam / Built-up: HxWxT
-    const ibeamMatch = s.match(/(?:MS\s*)?I[- ]?BEAM\s*(\d+)\s*[x×X]\s*(\d+)\s*[x×X]\s*(\d+)/i);
-    if (ibeamMatch) {
-        const h = parseInt(ibeamMatch[1]), w = parseInt(ibeamMatch[2]), t = parseInt(ibeamMatch[3]);
-        // Approximate as 2 flanges + web: 2*(w*t) + (h-2t)*t/2
-        return (2 * w * t + (h - 2 * t) * (t * 0.6)) * 0.00785;
-    }
-
-    // MS Flat bar: WxT mm
-    const flatMatch = s.match(/(?:MS\s*)?FLAT\s*(\d+)\s*[x×X]\s*(\d+)/i);
-    if (flatMatch) {
-        const w = parseInt(flatMatch[1]), t = parseInt(flatMatch[2]);
-        return w * t * 0.00785;
-    }
-
-    // MS Round bar: D mm
-    const roundMatch = s.match(/(?:MS\s*)?(?:ROUND|ROD|BAR)\s*(\d+)/i);
-    if (roundMatch) {
-        const d = parseInt(roundMatch[1]);
-        return Math.PI * (d / 2) ** 2 * 0.00785 / 1000;
-    }
-
-    // MS Pipe/Tube: OD x T
-    const pipeMatch = s.match(/(?:MS\s*)?(?:PIPE|TUBE)\s*(\d+)\s*[x×X]\s*(\d+)/i);
-    if (pipeMatch) {
-        const od = parseInt(pipeMatch[1]), t = parseInt(pipeMatch[2]);
-        return Math.PI * (od - t) * t * 0.00785 / 1000;
-    }
-
-    // MS Plate: TxWxL (just t*w for per-meter weight)
-    const plateMatch = s.match(/(?:MS\s*)?PLATE\s*(\d+)\s*(?:MM|mm)?/i);
-    if (plateMatch) {
-        const t = parseInt(plateMatch[1]);
-        return t * 1000 * 0.00785 / 1000; // per meter of 1m wide plate
-    }
-
-    // Generic: try to parse dimensions AxBxC and estimate
-    const genericMatch = s.match(/(\d+)\s*[x×X]\s*(\d+)\s*[x×X]\s*(\d+)/);
-    if (genericMatch) {
-        const a = parseInt(genericMatch[1]), b = parseInt(genericMatch[2]), c = parseInt(genericMatch[3]);
-        // Assume angle-like or channel-like: (a+b)*c*0.00785
-        return (a + b) * c * 0.00785;
-    }
-
-    return 0;
 }
 
 function detectCurrencyFromEstimate(estimate) {

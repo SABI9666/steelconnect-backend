@@ -570,7 +570,7 @@ console.log('📦 Route registration completed');
 // --- PUBLIC: Prospect Email Capture (no auth required) ---
 app.post('/api/prospects/capture', async (req, res) => {
     try {
-        const { email, source } = req.body;
+        const { email, source, scrollDepth } = req.body;
         if (!email || !email.includes('@')) {
             return res.status(400).json({ success: false, message: 'Valid email is required' });
         }
@@ -586,6 +586,7 @@ app.post('/api/prospects/capture', async (req, res) => {
         await adminDb.collection('prospects').add({
             email: normalizedEmail,
             source: source || 'landing-page',
+            scrollDepth: scrollDepth || null,
             capturedAt: new Date().toISOString(),
             inviteSent: false,
             inviteCount: 0,

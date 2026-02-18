@@ -330,17 +330,16 @@ ${profileData.experience ? `<tr><td ${S.tdLabel}>Experience</td><td ${S.tdValue}
 }
 
 // ============================================================
-// MARKETING EMAIL (with inbox-friendly wrapping)
+// MARKETING EMAIL (inbox-optimized: personal sender, List-Unsubscribe)
 // ============================================================
 export async function sendMarketingEmail(recipientEmail, recipientName, subject, htmlBody) {
     try {
-        // Wrap custom body in clean template (not heavy marketing template)
         const htmlContent = htmlBody;
         const html = getEmailTemplate(htmlContent);
         const text = htmlToPlainText(html);
 
         const { data, error } = await resend.emails.send({
-            from: `SteelConnect Team <${FROM_EMAIL}>`,
+            from: `SteelConnect <${FROM_EMAIL}>`,
             reply_to: REPLY_TO,
             to: recipientEmail,
             subject,
@@ -348,6 +347,8 @@ export async function sendMarketingEmail(recipientEmail, recipientName, subject,
             text,
             headers: {
                 'X-Entity-Ref-ID': crypto.randomUUID(),
+                'List-Unsubscribe': `<mailto:${REPLY_TO}?subject=unsubscribe>`,
+                'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
             },
         });
 

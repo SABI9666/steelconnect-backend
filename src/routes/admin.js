@@ -227,22 +227,23 @@ router.post('/users/:userId/send-reminder', async (req, res) => {
         const userData = userDoc.data();
         const email = userData.email;
         const name = userData.name || 'User';
+        const userType = userData.type || 'user';
+
+        const roleContent = userType === 'designer'
+            ? 'Once your profile is complete, you will be able to browse construction projects posted by contractors, submit quotes, and connect with clients directly.'
+            : 'Once your profile is complete, you will be able to post your construction projects, receive quotes from verified designers, and use AI-powered cost estimation.';
 
         await sendGenericEmail({
             to: email,
-            subject: 'Complete Your SteelConnect Profile',
+            subject: 'Complete your SteelConnect profile',
             html: `
                 <h2 style="font-size:20px; font-weight:700; color:#0f172a; margin:0 0 16px 0;">Complete Your Profile</h2>
-                <p style="font-size:15px; color:#334155; margin:0 0 14px 0; line-height:1.7;">Hi <strong>${name}</strong>,</p>
-                <p style="font-size:15px; color:#334155; margin:0 0 14px 0; line-height:1.7;">We noticed you haven't completed your profile on SteelConnect yet. Complete your profile to unlock full access to:</p>
-                <ul style="font-size:14px; color:#475569; line-height:2; margin:12px 0 20px 0; padding-left:20px;">
-                    <li>Post and bid on projects</li>
-                    <li>AI-powered cost estimations</li>
-                    <li>Connect with contractors &amp; designers</li>
-                    <li>Access the full job marketplace</li>
-                </ul>
+                <p style="font-size:15px; color:#334155; margin:0 0 14px 0; line-height:1.7;">Hi ${name},</p>
+                <p style="font-size:15px; color:#334155; margin:0 0 14px 0; line-height:1.7;">We noticed you registered on SteelConnect but haven't completed your profile yet.</p>
+                <p style="font-size:15px; color:#334155; margin:0 0 14px 0; line-height:1.7;">${roleContent}</p>
+                <p style="font-size:15px; color:#334155; margin:0 0 14px 0; line-height:1.7;">It only takes a minute to finish setting up your account.</p>
                 <p style="margin:20px 0;"><a href="https://steelconnectapp.com" style="display:inline-block; background:#2563eb; color:#ffffff; padding:12px 28px; border-radius:6px; text-decoration:none; font-weight:600; font-size:14px;">Complete My Profile</a></p>
-                <p style="font-size:13px; color:#94a3b8; margin-top:16px;">If you need help, just reply to this email.</p>
+                <p style="font-size:14px; color:#64748b; margin-top:16px;">If you need help, just reply to this email.</p>
             `
         });
 
@@ -256,6 +257,43 @@ router.post('/users/:userId/send-reminder', async (req, res) => {
     } catch (error) {
         console.error("Send Reminder Error:", error);
         res.status(500).json({ success: false, message: 'Error sending reminder email' });
+    }
+});
+
+// POST send invite email to a manually entered email address
+router.post('/send-manual-invite', async (req, res) => {
+    try {
+        const { email, userType } = req.body;
+        if (!email) {
+            return res.status(400).json({ success: false, message: 'Email is required' });
+        }
+        const type = userType || 'contractor';
+
+        const roleContent = type === 'designer'
+            ? 'SteelConnect is a platform where contractors post steel construction projects and designers like you can browse them, submit quotes, and connect with clients directly.'
+            : 'SteelConnect is a platform where you can post your steel construction projects, receive competitive quotes from verified designers, and use AI-powered cost estimation to plan your budget.';
+
+        const result = await sendGenericEmail({
+            to: email,
+            subject: 'Your SteelConnect account is ready',
+            html: `
+                <h2 style="font-size:20px; font-weight:700; color:#0f172a; margin:0 0 16px 0;">Your Account is Ready</h2>
+                <p style="font-size:15px; color:#334155; margin:0 0 14px 0; line-height:1.7;">Hi there,</p>
+                <p style="font-size:15px; color:#334155; margin:0 0 14px 0; line-height:1.7;">${roleContent}</p>
+                <p style="font-size:15px; color:#334155; margin:0 0 14px 0; line-height:1.7;">Click below to create your account and get started:</p>
+                <p style="margin:20px 0;"><a href="https://steelconnectapp.com?action=register" style="display:inline-block; background:#2563eb; color:#ffffff; padding:12px 28px; border-radius:6px; text-decoration:none; font-weight:600; font-size:14px;">Complete Registration</a></p>
+                <p style="font-size:14px; color:#64748b; margin-top:16px;">If you have any questions, just reply to this email.</p>
+            `
+        });
+
+        if (result.success) {
+            res.json({ success: true, message: `Invite sent to ${email}` });
+        } else {
+            res.status(500).json({ success: false, message: result.error || 'Failed to send email' });
+        }
+    } catch (error) {
+        console.error("Send Manual Invite Error:", error);
+        res.status(500).json({ success: false, message: 'Error sending invite email' });
     }
 });
 

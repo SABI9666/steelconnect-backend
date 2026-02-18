@@ -635,11 +635,33 @@ export async function sendProfileApprovalRequestToAdmin(user, profileData) {
     }
 }
 
+export async function sendMarketingEmail(recipientEmail, recipientName, subject, htmlBody) {
+    try {
+        const emailContent = getEmailTemplate(subject, htmlBody);
+        const { data, error } = await resend.emails.send({
+            from: `${COMPANY_NAME} <${FROM_EMAIL}>`,
+            to: recipientEmail,
+            subject: subject,
+            html: emailContent,
+        });
+        if (error) {
+            console.error(`[EMAIL] Marketing email failed for ${recipientEmail}:`, error);
+            return { success: false, error: error.message };
+        }
+        console.log(`[EMAIL] Marketing email sent to ${recipientEmail}: ${data?.id}`);
+        return { success: true, emailId: data?.id };
+    } catch (error) {
+        console.error(`[EMAIL] Marketing email error for ${recipientEmail}:`, error.message);
+        return { success: false, error: error.message };
+    }
+}
+
 export default {
     sendLoginNotification,
     sendEstimationResultNotification,
     sendProfileReviewNotification,
     sendPasswordResetEmail,
     sendOTPVerificationEmail,
-    sendProfileApprovalRequestToAdmin
+    sendProfileApprovalRequestToAdmin,
+    sendMarketingEmail
 };

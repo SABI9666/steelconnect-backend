@@ -567,6 +567,38 @@ if (communityRoutes) {
 
 console.log('📦 Route registration completed');
 
+// --- PUBLIC: Prospect Email Capture (no auth required) ---
+app.post('/api/prospects/capture', async (req, res) => {
+    try {
+        const { email, source } = req.body;
+        if (!email || !email.includes('@')) {
+            return res.status(400).json({ success: false, message: 'Valid email is required' });
+        }
+        const normalizedEmail = email.toLowerCase().trim();
+
+        // Check if already captured
+        const existing = await adminDb.collection('prospects')
+            .where('email', '==', normalizedEmail).limit(1).get();
+        if (!existing.empty) {
+            return res.json({ success: true, message: 'Thank you! We already have your details.' });
+        }
+
+        await adminDb.collection('prospects').add({
+            email: normalizedEmail,
+            source: source || 'landing-page',
+            capturedAt: new Date().toISOString(),
+            inviteSent: false,
+            inviteCount: 0,
+        });
+
+        res.json({ success: true, message: 'Thank you! We will reach out to you shortly.' });
+    } catch (error) {
+        console.error('Prospect capture error:', error);
+        res.status(500).json({ success: false, message: 'Something went wrong. Please try again.' });
+    }
+});
+console.log('📧 Prospect capture endpoint registered at POST /api/prospects/capture');
+
 // --- Seed Default Admin User ---
 async function seedAdminUser() {
     try {

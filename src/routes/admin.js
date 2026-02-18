@@ -1854,6 +1854,38 @@ router.post('/estimations/:estimationId/retry-ai', async (req, res) => {
     }
 });
 
+// Record accuracy feedback for an AI estimate
+router.post('/estimations/:estimationId/accuracy-feedback', async (req, res) => {
+    try {
+        const { rating, actualCost, notes, variancePercent, aiTotal } = req.body;
+        if (!rating || rating < 1 || rating > 5) {
+            return res.status(400).json({ success: false, message: 'Rating must be between 1 and 5' });
+        }
+        const estDoc = await adminDb.collection('estimations').doc(req.params.estimationId).get();
+        if (!estDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Estimation not found' });
+        }
+        const feedback = {
+            rating,
+            actualCost: actualCost || null,
+            notes: notes || '',
+            variancePercent: variancePercent || null,
+            aiTotal: aiTotal || null,
+            recordedBy: req.user.email,
+            recordedAt: new Date().toISOString()
+        };
+        await adminDb.collection('estimations').doc(req.params.estimationId).update({
+            accuracyFeedback: feedback,
+            updatedAt: new Date().toISOString()
+        });
+        console.log(`[ADMIN] Accuracy feedback recorded for estimation ${req.params.estimationId}: rating=${rating}, variance=${variancePercent}%`);
+        res.json({ success: true, message: 'Accuracy feedback saved' });
+    } catch (error) {
+        console.error('[ADMIN] Error saving accuracy feedback:', error);
+        res.status(500).json({ success: false, message: 'Failed to save feedback' });
+    }
+});
+
 // Check AI generation status for an estimation
 router.get('/estimations/:estimationId/ai-status', async (req, res) => {
     try {

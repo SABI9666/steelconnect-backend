@@ -10,9 +10,9 @@ const anthropic = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY
 });
 
-// AI Model Selection - Use Sonnet for cost efficiency (5x cheaper than Opus, still highly capable)
-// Override with ESTIMATION_AI_MODEL env var if needed (e.g., 'claude-opus-4-20250514' for max accuracy)
-const AI_MODEL = process.env.ESTIMATION_AI_MODEL || 'claude-sonnet-4-5-20250929';
+// AI Model Selection - Use Opus for maximum accuracy on vision-based drawing analysis
+// Opus has significantly better spatial reasoning and quantity extraction from construction drawings
+const AI_MODEL = process.env.ESTIMATION_AI_MODEL || 'claude-opus-4-20250514';
 
 // Maximum total size of file content to send to Claude (25MB base64 ≈ ~18MB raw files)
 const MAX_VISION_PAYLOAD_BYTES = 18 * 1024 * 1024;
@@ -566,10 +566,10 @@ export async function generateAIEstimate(projectInfo, answers, fileNames, fileBu
         try {
             const stream = await anthropic.messages.stream({
                 model: AI_MODEL,
-                max_tokens: 32000,
+                max_tokens: 64000,
                 thinking: {
                     type: 'enabled',
-                    budget_tokens: 10000
+                    budget_tokens: 16000
                 },
                 system: SYSTEM_PROMPT,
                 messages: [{ role: 'user', content: messageContent }]
@@ -695,11 +695,11 @@ async function generateAIEstimateTextFallback(projectInfo, answers, fileNames, f
     fallbackContent.push({ type: 'text', text: textPrompt });
 
     const stream = await anthropic.messages.stream({
-        model: 'claude-opus-4-20250514',
-        max_tokens: 32000,
+        model: AI_MODEL,
+        max_tokens: 64000,
         thinking: {
             type: 'enabled',
-            budget_tokens: 10000
+            budget_tokens: 16000
         },
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: fallbackContent }]

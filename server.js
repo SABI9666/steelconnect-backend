@@ -570,7 +570,7 @@ console.log('📦 Route registration completed');
 // --- PUBLIC: Prospect Email Capture (no auth required) ---
 app.post('/api/prospects/capture', async (req, res) => {
     try {
-        const { email, source, scrollDepth } = req.body;
+        const { email, source, scrollDepth, estimateData } = req.body;
         if (!email || !email.includes('@')) {
             return res.status(400).json({ success: false, message: 'Valid email is required' });
         }
@@ -583,14 +583,25 @@ app.post('/api/prospects/capture', async (req, res) => {
             return res.json({ success: true, message: 'Thank you! We already have your details.' });
         }
 
-        await adminDb.collection('prospects').add({
+        const prospectData = {
             email: normalizedEmail,
             source: source || 'landing-page',
             scrollDepth: scrollDepth || null,
             capturedAt: new Date().toISOString(),
             inviteSent: false,
             inviteCount: 0,
-        });
+        };
+        // Store mini estimator data if provided
+        if (estimateData) {
+            prospectData.estimateData = {
+                projectType: estimateData.projectType || '',
+                area: estimateData.area || 0,
+                unit: estimateData.unit || 'sqft',
+                region: estimateData.region || '',
+                currency: estimateData.currency || 'USD'
+            };
+        }
+        await adminDb.collection('prospects').add(prospectData);
 
         res.json({ success: true, message: 'Thank you! We will reach out to you shortly.' });
     } catch (error) {

@@ -86,10 +86,18 @@ router.get('/dashboard', async (req, res) => {
             console.warn('Community stats query failed:', e.message);
         }
 
+        // Incomplete profile users count
+        let incompleteProfileCount = 0;
+        users.forEach(doc => {
+            const data = doc.data();
+            if (data.profileCompleted === false && data.type !== 'admin') incompleteProfileCount++;
+        });
+
         res.json({
             success: true,
             stats: {
                 totalUsers: users.size,
+                incompleteProfileUsers: incompleteProfileCount,
                 totalJobs: jobs.size,
                 totalQuotes: quotes.size,
                 totalConversations: conversations.size,
@@ -141,6 +149,58 @@ router.get('/users', async (req, res) => {
     }
 });
 
+// --- INCOMPLETE PROFILE USERS (registered but no profile) ---
+router.get('/incomplete-users', async (req, res) => {
+    try {
+        const snapshot = await adminDb.collection('users')
+            .where('profileCompleted', '==', false)
+            .orderBy('createdAt', 'desc')
+            .get();
+
+        const incompleteUsers = [];
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            // Skip admin accounts
+            if (data.type === 'admin') return;
+            incompleteUsers.push({
+                _id: doc.id,
+                name: data.name || 'Not provided',
+                email: data.email || 'N/A',
+                type: data.type || 'unknown',
+                profileStatus: data.profileStatus || 'incomplete',
+                profileCompleted: data.profileCompleted || false,
+                createdAt: data.createdAt || null,
+                lastLogin: data.lastLogin || null,
+                lastLoginIP: data.lastLoginIP || null,
+                isBlocked: data.isBlocked || false,
+                canAccess: data.canAccess !== false,
+                loginCount: data.loginCount || 0,
+                registrationMethod: data.registrationMethod || 'email',
+                pendingLoginAgent: data.pendingLoginAgent || null,
+            });
+        });
+
+        // Also count users who never logged in (registered but never verified OTP)
+        const neverLoggedIn = incompleteUsers.filter(u => !u.lastLogin).length;
+        const loggedInNoProfile = incompleteUsers.filter(u => u.lastLogin).length;
+
+        res.json({
+            success: true,
+            incompleteUsers,
+            stats: {
+                total: incompleteUsers.length,
+                neverLoggedIn,
+                loggedInNoProfile,
+                designers: incompleteUsers.filter(u => u.type === 'designer').length,
+                contractors: incompleteUsers.filter(u => u.type === 'contractor').length,
+            }
+        });
+    } catch (error) {
+        console.error("Fetch Incomplete Users Error:", error);
+        res.status(500).json({ success: false, message: 'Error fetching incomplete users' });
+    }
+});
+
 router.patch('/users/:userId/status', async (req, res) => {
     try {
         const { isActive } = req.body;
@@ -153,6 +213,62 @@ router.patch('/users/:userId/status', async (req, res) => {
     } catch (error) {
         console.error("Update User Status Error:", error);
         res.status(500).json({ success: false, message: 'Error updating user status' });
+    }
+});
+
+// Send profile completion reminder email
+router.post('/users/:userId/send-reminder', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const userDoc = await adminDb.collection('users').doc(userId).get();
+        if (!userDoc.exists) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+        const userData = userDoc.data();
+        const email = userData.email;
+        const name = userData.name || 'User';
+
+        // Import Resend for email
+        const { Resend } = await import('resend');
+        const resend = new Resend(process.env.RESEND_API_KEY);
+
+        await resend.emails.send({
+            from: 'SteelConnect <noreply@steelconnectapp.com>',
+            to: email,
+            subject: 'Complete Your SteelConnect Profile',
+            html: `
+                <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+                    <div style="background:linear-gradient(135deg,#f59e0b,#d97706);padding:30px;border-radius:12px 12px 0 0;text-align:center;">
+                        <h1 style="color:white;margin:0;font-size:24px;">Complete Your Profile</h1>
+                    </div>
+                    <div style="background:white;padding:30px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
+                        <p style="font-size:16px;color:#374151;">Hi <strong>${name}</strong>,</p>
+                        <p style="color:#6b7280;line-height:1.6;">We noticed you haven't completed your profile on SteelConnect yet. Complete your profile to unlock full access to:</p>
+                        <ul style="color:#6b7280;line-height:2;">
+                            <li>Post and bid on projects</li>
+                            <li>AI-powered cost estimations</li>
+                            <li>Connect with contractors & designers</li>
+                            <li>Access the full job marketplace</li>
+                        </ul>
+                        <div style="text-align:center;margin:30px 0;">
+                            <a href="https://steelconnectapp.com" style="background:#f59e0b;color:white;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:16px;">Complete My Profile</a>
+                        </div>
+                        <p style="color:#9ca3af;font-size:13px;text-align:center;">If you need help, reply to this email or contact our support team.</p>
+                    </div>
+                </div>
+            `
+        });
+
+        // Update user doc with reminder sent timestamp
+        await adminDb.collection('users').doc(userId).update({
+            lastReminderSent: new Date().toISOString(),
+            reminderCount: admin.firestore.FieldValue.increment(1)
+        });
+
+        res.json({ success: true, message: `Reminder sent to ${email}` });
+    } catch (error) {
+        console.error("Send Reminder Error:", error);
+        res.status(500).json({ success: false, message: 'Error sending reminder email' });
     }
 });
 

@@ -1,649 +1,356 @@
 
-// src/utils/emailService.js - Enhanced with professional SC logo
+// src/utils/emailService.js - Inbox-optimized (avoid Gmail Promotions tab)
 import { Resend } from 'resend';
+import crypto from 'crypto';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-// Use your verified steelconnectapp.com domain
 const FROM_EMAIL = 'noreply@steelconnectapp.com';
+const REPLY_TO = 'support@steelconnectapp.com';
 const COMPANY_NAME = 'SteelConnect';
 
-// Professional email template with SC logo
-const getEmailTemplate = (title, content) => {
-    return `
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>${title}</title>
-        <style>
-            body { 
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; 
-                line-height: 1.6; 
-                color: #333; 
-                margin: 0; 
-                padding: 0; 
-                background-color: #f7f9fc;
-                -webkit-font-smoothing: antialiased;
-                -moz-osx-font-smoothing: grayscale;
-            }
-            .wrapper {
-                background-color: #f7f9fc;
-                padding: 40px 20px;
-            }
-            .container { 
-                max-width: 600px; 
-                margin: 0 auto; 
-                background: #ffffff; 
-                border-radius: 12px;
-                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07);
-                overflow: hidden;
-            }
-            .header { 
-                background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%);
-                padding: 30px 20px;
-                text-align: center;
-            }
-            .logo-container {
-                display: inline-block;
-                background: #ffffff;
-                border-radius: 12px;
-                padding: 15px 25px;
-                margin-bottom: 15px;
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            }
-            .logo-text {
-                font-size: 32px;
-                font-weight: 700;
-                color: #1e3a8a;
-                letter-spacing: -1px;
-                margin: 0;
-            }
-            .logo-sc {
-                display: inline-block;
-                background: linear-gradient(135deg, #1e3a8a, #2563eb);
-                color: white;
-                padding: 8px 12px;
-                border-radius: 8px;
-                margin-right: 8px;
-                font-weight: 800;
-            }
-            .tagline {
-                color: #ffffff;
-                font-size: 14px;
-                margin-top: 10px;
-                opacity: 0.95;
-            }
-            .content {
-                padding: 30px;
-            }
-            .alert-box { 
-                background: linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%);
-                border-left: 4px solid #2563eb; 
-                padding: 20px; 
-                margin: 20px 0; 
-                border-radius: 8px;
-            }
-            .info-box { 
-                background: #f8fafc; 
-                padding: 20px; 
-                border-radius: 8px; 
-                margin: 20px 0;
-                border: 1px solid #e2e8f0;
-            }
-            .detail-row { 
-                display: flex; 
-                justify-content: space-between; 
-                margin: 12px 0; 
-                padding: 8px 0;
-                border-bottom: 1px solid #e2e8f0;
-            }
-            .detail-row:last-child {
-                border-bottom: none;
-            }
-            .detail-label { 
-                font-weight: 600; 
-                color: #475569;
-                font-size: 14px;
-            }
-            .detail-value { 
-                color: #1e293b;
-                font-size: 14px;
-            }
-            .button {
-                display: inline-block;
-                background: linear-gradient(135deg, #2563eb 0%, #1e3a8a 100%);
-                color: white;
-                padding: 12px 30px;
-                border-radius: 8px;
-                text-decoration: none;
-                font-weight: 600;
-                margin: 20px 0;
-                box-shadow: 0 4px 14px rgba(37, 99, 235, 0.3);
-                transition: transform 0.2s;
-            }
-            .button:hover {
-                transform: translateY(-1px);
-            }
-            .security-notice {
-                background: #fef3c7;
-                border: 1px solid #fbbf24;
-                color: #92400e;
-                padding: 15px;
-                border-radius: 8px;
-                margin: 20px 0;
-                font-size: 14px;
-            }
-            .footer { 
-                background: #f8fafc;
-                text-align: center; 
-                color: #64748b; 
-                font-size: 13px; 
-                padding: 20px;
-                border-top: 1px solid #e2e8f0;
-            }
-            .footer-links {
-                margin: 10px 0;
-            }
-            .footer-links a {
-                color: #2563eb;
-                text-decoration: none;
-                margin: 0 10px;
-            }
-            @media only screen and (max-width: 600px) {
-                .container {
-                    border-radius: 0;
-                }
-                .content {
-                    padding: 20px;
-                }
-            }
-        </style>
-    </head>
-    <body>
-        <div class="wrapper">
-            <div class="container">
-                <div class="header">
-                    <div class="logo-container">
-                        <div class="logo-text">
-                            <span class="logo-sc">SC</span>SteelConnect
-                        </div>
-                    </div>
-                    <div class="tagline">Professional Steel Construction Platform</div>
-                </div>
-                <div class="content">
-                    ${content}
-                </div>
-                <div class="footer">
-                    <div class="footer-links">
-                        <a href="https://steelconnectapp.com">Visit Website</a>
-                        <a href="https://steelconnectapp.com/support">Support</a>
-                        <a href="https://steelconnectapp.com/privacy">Privacy Policy</a>
-                    </div>
-                    <p style="margin: 10px 0 0 0;">
-                        © ${new Date().getFullYear()} SteelConnect - All rights reserved.
-                    </p>
-                    <p style="margin: 5px 0 0 0; font-size: 12px; color: #94a3b8;">
-                        This is an automated message from SteelConnect.
-                    </p>
-                </div>
-            </div>
-        </div>
-    </body>
-    </html>
-    `;
+// ---------------------------------------------------------------------------
+// INBOX-FRIENDLY PROFESSIONAL EMAIL TEMPLATE
+// - Professional look with branded header (minimal, not heavy marketing)
+// - Clean table-based layout for email client compatibility
+// - Plain text alternative auto-generated
+// - No gradients/box-shadows (Gmail flags these as promotional)
+// - Single CTA button, personal tone, high text-to-HTML ratio
+// ---------------------------------------------------------------------------
+const getEmailTemplate = (content) => {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!--[if mso]><noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript><![endif]-->
+</head>
+<body style="margin:0; padding:0; background-color:#f5f7fa; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f5f7fa;">
+<tr><td align="center" style="padding:32px 16px;">
+<table role="presentation" width="580" cellpadding="0" cellspacing="0" style="max-width:580px; width:100%; background:#ffffff; border-radius:8px; border:1px solid #e2e8f0;">
+
+<!-- HEADER -->
+<tr>
+<td style="padding:24px 32px; border-bottom:2px solid #2563eb;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr>
+<td>
+<span style="display:inline-block; background:#1e3a8a; color:#ffffff; font-weight:800; font-size:14px; padding:6px 10px; border-radius:6px; letter-spacing:0.5px; vertical-align:middle;">SC</span>
+<span style="font-size:18px; font-weight:700; color:#1e3a8a; letter-spacing:-0.5px; margin-left:8px; vertical-align:middle;">SteelConnect</span>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+
+<!-- CONTENT -->
+<tr>
+<td style="padding:28px 32px; font-size:15px; line-height:1.7; color:#334155;">
+${content}
+</td>
+</tr>
+
+<!-- FOOTER -->
+<tr>
+<td style="padding:20px 32px; border-top:1px solid #e2e8f0; font-size:13px; color:#94a3b8; line-height:1.6;">
+<p style="margin:0 0 6px 0;">SteelConnect &mdash; Professional Steel Construction Platform</p>
+<p style="margin:0;">Questions? Reply to this email or contact <a href="mailto:support@steelconnectapp.com" style="color:#2563eb; text-decoration:none;">support@steelconnectapp.com</a></p>
+</td>
+</tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>`;
 };
 
-// Send login notification email
+// Strip HTML to create plain-text version (helps inbox placement)
+function htmlToPlainText(html) {
+    return html
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/p>/gi, '\n\n')
+        .replace(/<\/h[1-6]>/gi, '\n\n')
+        .replace(/<\/li>/gi, '\n')
+        .replace(/<li[^>]*>/gi, '  - ')
+        .replace(/<\/tr>/gi, '\n')
+        .replace(/<td[^>]*>/gi, ' | ')
+        .replace(/<a[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/gi, '$2 ($1)')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&mdash;/g, '—')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+}
+
+// Core email sender with inbox-optimized defaults
+async function sendEmail({ to, subject, htmlContent, textContent }) {
+    const html = getEmailTemplate(htmlContent);
+    const text = textContent || htmlToPlainText(html);
+
+    const emailData = {
+        from: `SteelConnect Team <${FROM_EMAIL}>`,
+        reply_to: REPLY_TO,
+        to,
+        subject,
+        html,
+        text,
+        headers: {
+            'X-Entity-Ref-ID': crypto.randomUUID(),
+        },
+    };
+
+    const response = await resend.emails.send(emailData);
+
+    if (response.error) {
+        console.error('Resend API error:', response.error);
+        return { success: false, error: response.error };
+    }
+
+    console.log(`Email sent to ${to} — ID: ${response.data?.id || 'N/A'}`);
+    return { success: true, messageId: response.data?.id };
+}
+
+// Reusable inline styles for email content (email clients strip <style> blocks)
+const S = {
+    h2: 'style="font-size:20px; font-weight:700; color:#0f172a; margin:0 0 16px 0;"',
+    p: 'style="font-size:15px; color:#334155; margin:0 0 14px 0; line-height:1.7;"',
+    table: 'role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; margin:16px 0;"',
+    tdLabel: 'style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9; width:40%;"',
+    tdValue: 'style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;"',
+    btn: 'style="display:inline-block; background:#2563eb; color:#ffffff; padding:12px 28px; border-radius:6px; text-decoration:none; font-weight:600; font-size:14px;"',
+    notice: 'style="padding:14px 16px; background:#fffbeb; border-left:3px solid #f59e0b; border-radius:4px; margin:18px 0; font-size:14px; color:#78350f; line-height:1.6;"',
+    success: 'style="padding:14px 16px; background:#f0fdf4; border-left:3px solid #22c55e; border-radius:4px; margin:18px 0; font-size:14px; color:#14532d; line-height:1.6;"',
+    codeBox: 'style="text-align:center; margin:24px 0; padding:24px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;"',
+    code: 'style="font-size:34px; font-weight:700; letter-spacing:8px; color:#1e3a8a; font-family:Courier New,monospace; margin:0;"',
+    codeLabel: 'style="margin:0 0 8px 0; font-size:12px; color:#64748b; text-transform:uppercase; letter-spacing:1.5px;"',
+    muted: 'style="font-size:14px; color:#64748b; text-align:center; margin:0 0 14px 0;"',
+};
+
+// ============================================================
+// LOGIN NOTIFICATION
+// ============================================================
 export async function sendLoginNotification(user, loginTime, clientIP, userAgent) {
     try {
-        console.log(`Attempting to send email to: ${user.email}`);
-        console.log(`Subject: Login Notification - ${COMPANY_NAME}`);
+        const htmlContent = `
+<h2 ${S.h2}>Login Notification</h2>
+<p ${S.p}>Hi ${user.name},</p>
+<p ${S.p}>We detected a new login to your SteelConnect account. Here are the details:</p>
+<table ${S.table}>
+<tr><td ${S.tdLabel}>Account</td><td ${S.tdValue}>${user.email}</td></tr>
+<tr><td ${S.tdLabel}>User Type</td><td ${S.tdValue}>${user.type.charAt(0).toUpperCase() + user.type.slice(1)}</td></tr>
+<tr><td ${S.tdLabel}>Login Time</td><td ${S.tdValue}>${new Date(loginTime).toLocaleString()}</td></tr>
+<tr><td ${S.tdLabel}>IP Address</td><td ${S.tdValue}>${clientIP}</td></tr>
+<tr><td ${S.tdLabel}>Device</td><td ${S.tdValue}>${userAgent.substring(0, 50)}</td></tr>
+</table>
+<div ${S.notice}><strong>Security Notice:</strong> If this wasn't you, please change your password immediately and contact support.</div>
+<p style="margin:20px 0;"><a href="https://steelconnectapp.com/dashboard" ${S.btn}>Go to Dashboard</a></p>`;
 
-        const emailContent = `
-            <h2 style="color: #1e293b; margin-top: 0;">Login Notification</h2>
-            
-            <div class="alert-box">
-                <h3 style="margin: 0 0 10px 0; color: #1e3a8a;">Account Access Detected</h3>
-                <p style="margin: 0;">Hello <strong>${user.name}</strong>, we detected a login to your SteelConnect account.</p>
-            </div>
-
-            <div class="info-box">
-                <h4 style="margin-top: 0; color: #1e293b;">Login Details</h4>
-                <div class="detail-row">
-                    <span class="detail-label">Account:</span>
-                    <span class="detail-value">${user.email}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">User Type:</span>
-                    <span class="detail-value">${user.type.charAt(0).toUpperCase() + user.type.slice(1)}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Login Time:</span>
-                    <span class="detail-value">${new Date(loginTime).toLocaleString()}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">IP Address:</span>
-                    <span class="detail-value">${clientIP}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Device:</span>
-                    <span class="detail-value">${userAgent.substring(0, 50)}...</span>
-                </div>
-            </div>
-
-            <div class="security-notice">
-                <strong>⚠️ Security Notice:</strong> If this login wasn't you, please contact our support team immediately and change your password.
-            </div>
-
-            <center>
-                <a href="https://steelconnectapp.com/dashboard" class="button">Go to Dashboard</a>
-            </center>
-        `;
-
-        const emailHTML = getEmailTemplate('Login Notification - SteelConnect', emailContent);
-
-        const emailData = {
-            from: `SteelConnect <${FROM_EMAIL}>`,
+        return await sendEmail({
             to: user.email,
-            subject: `🔐 Login Notification - ${COMPANY_NAME}`,
-            html: emailHTML
-        };
-
-        console.log(`Sending email from: ${FROM_EMAIL} to: ${user.email}`);
-        
-        const response = await resend.emails.send(emailData);
-        
-        if (response.error) {
-            console.error('Resend API error:', response.error);
-            return {
-                success: false,
-                error: response.error
-            };
-        }
-
-        console.log(`✅ Email sent successfully. Message ID: ${response.data?.id || 'N/A'}`);
-        
-        return {
-            success: true,
-            messageId: response.data?.id,
-            message: 'Login notification sent successfully'
-        };
-
+            subject: `Login Notification - ${COMPANY_NAME}`,
+            htmlContent,
+        });
     } catch (error) {
         console.error('Email service error:', error);
-        return {
-            success: false,
-            error: error.message || 'Failed to send email'
-        };
+        return { success: false, error: error.message || 'Failed to send email' };
     }
 }
 
-// Send estimation result notification
+// ============================================================
+// ESTIMATION RESULT NOTIFICATION
+// ============================================================
 export async function sendEstimationResultNotification(contractor, estimation, resultFile) {
     try {
-        console.log(`Attempting to send estimation result email to: ${contractor.email}`);
+        const projectName = estimation.projectName || estimation.projectTitle;
+        const htmlContent = `
+<h2 ${S.h2}>Your Estimation Result is Ready</h2>
+<p ${S.p}>Hi ${contractor.name},</p>
+<p ${S.p}>The estimation for your project has been completed and is ready for download.</p>
+<table ${S.table}>
+<tr><td ${S.tdLabel}>Project</td><td ${S.tdValue}>${projectName}</td></tr>
+<tr><td ${S.tdLabel}>Estimation ID</td><td ${S.tdValue}>#${estimation._id.substring(0, 8).toUpperCase()}</td></tr>
+<tr><td ${S.tdLabel}>Submitted</td><td ${S.tdValue}>${new Date(estimation.createdAt).toLocaleDateString()}</td></tr>
+<tr><td ${S.tdLabel}>Completed</td><td ${S.tdValue}>${new Date().toLocaleDateString()}</td></tr>
+${resultFile ? `<tr><td ${S.tdLabel}>File</td><td ${S.tdValue}>${resultFile.name || 'Estimation_Result.pdf'}</td></tr>` : ''}
+</table>
+<div ${S.success}><strong>Ready for download</strong> — Your estimation document is available in your dashboard.</div>
+<p style="margin:20px 0;"><a href="https://steelconnectapp.com/dashboard/estimations" ${S.btn}>View Estimation Result</a></p>
+<p ${S.muted}>If you have questions about your result, just reply to this email.</p>`;
 
-        const emailContent = `
-            <h2 style="color: #1e293b; margin-top: 0;">Your Estimation Result is Ready!</h2>
-            
-            <p style="color: #475569; font-size: 16px;">
-                Hello <strong>${contractor.name}</strong>,
-            </p>
-            
-            <p style="color: #475569;">
-                Great news! The estimation result for your project has been completed and is now available for download.
-            </p>
-            
-            <div class="info-box">
-                <h4 style="margin-top: 0; color: #1e293b;">Project Details</h4>
-                <div class="detail-row">
-                    <span class="detail-label">Project Title:</span>
-                    <span class="detail-value">${estimation.projectName || estimation.projectTitle}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Estimation ID:</span>
-                    <span class="detail-value">#${estimation._id.substring(0, 8).toUpperCase()}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Submitted Date:</span>
-                    <span class="detail-value">${new Date(estimation.createdAt).toLocaleDateString()}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Completed Date:</span>
-                    <span class="detail-value">${new Date().toLocaleDateString()}</span>
-                </div>
-                ${resultFile ? `
-                <div class="detail-row">
-                    <span class="detail-label">Result File:</span>
-                    <span class="detail-value">${resultFile.name || 'Estimation_Result.pdf'}</span>
-                </div>
-                ` : ''}
-            </div>
-
-            <div style="background: #f0fdf4; border: 1px solid #86efac; color: #14532d; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                <strong>✓ Ready for Download:</strong> Your estimation result document is now available in your dashboard. You can download it anytime.
-            </div>
-
-            <center>
-                <a href="https://steelconnectapp.com/dashboard/estimations" class="button">View Estimation Result</a>
-            </center>
-
-            <p style="color: #64748b; font-size: 14px; margin-top: 30px;">
-                If you have any questions about your estimation result, please don't hesitate to contact our support team.
-            </p>
-        `;
-
-        const emailHTML = getEmailTemplate('Estimation Result Ready - SteelConnect', emailContent);
-
-        const emailData = {
-            from: `SteelConnect <${FROM_EMAIL}>`,
+        return await sendEmail({
             to: contractor.email,
-            subject: `📊 Your Estimation Result is Ready - "${estimation.projectName || estimation.projectTitle}"`,
-            html: emailHTML
-        };
-
-        const response = await resend.emails.send(emailData);
-
-        if (response.error) {
-            console.error('Resend API error:', response.error);
-            throw new Error(response.error.message);
-        }
-
-        console.log(`✅ Estimation result email sent successfully to ${contractor.email}. Message ID: ${response.data?.id}`);
-        return { success: true, messageId: response.data?.id };
-
+            subject: `Estimation Result Ready — "${projectName}"`,
+            htmlContent,
+        });
     } catch (error) {
         console.error('Error sending estimation result email:', error);
         throw error;
     }
 }
 
-// Send profile review notification
+// ============================================================
+// PROFILE REVIEW NOTIFICATION (Approval / Rejection)
+// ============================================================
 export async function sendProfileReviewNotification(user, status, reason = null) {
     try {
         const isApproved = status === 'approved';
-        const emailContent = `
-            <h2 style="color: #1e293b; margin-top: 0;">Profile Review ${isApproved ? 'Approved' : 'Update Required'}</h2>
-            
-            <div class="${isApproved ? 'alert-box' : 'security-notice'}">
-                <h3 style="margin: 0 0 10px 0; color: ${isApproved ? '#1e3a8a' : '#92400e'};">
-                    ${isApproved ? '✅ Your profile has been approved!' : '⚠️ Your profile needs updates'}
-                </h3>
-                <p style="margin: 0;">
-                    Hello <strong>${user.name}</strong>,
-                </p>
-                <p>
-                    ${isApproved 
-                        ? 'Congratulations! Your profile has been reviewed and approved. You now have full access to all SteelConnect features.'
-                        : `We've reviewed your profile and need some updates before approval. ${reason ? `<br><br><strong>Reason:</strong> ${reason}` : ''}`
-                    }
-                </p>
-            </div>
 
-            <center>
-                <a href="https://steelconnectapp.com/dashboard/profile" class="button">
-                    ${isApproved ? 'Go to Dashboard' : 'Update Profile'}
-                </a>
-            </center>
-        `;
+        const htmlContent = isApproved
+            ? `
+<h2 ${S.h2}>Your Profile Has Been Approved</h2>
+<p ${S.p}>Hi ${user.name},</p>
+<p ${S.p}>Great news — your SteelConnect profile has been reviewed and approved. You now have full access to all platform features.</p>
+<div ${S.success}>Your profile is live. You can start using the platform right away.</div>
+<p style="margin:20px 0;"><a href="https://steelconnectapp.com/dashboard" ${S.btn}>Go to Dashboard</a></p>`
+            : `
+<h2 ${S.h2}>Profile Review Update</h2>
+<p ${S.p}>Hi ${user.name},</p>
+<p ${S.p}>We reviewed your profile and need a few updates before we can approve it.</p>
+${reason ? `<div ${S.notice}><strong>Reason:</strong> ${reason}</div>` : ''}
+<p ${S.p}>Please log in and update your profile. It will be automatically resubmitted for review.</p>
+<p style="margin:20px 0;"><a href="https://steelconnectapp.com/dashboard/profile" ${S.btn}>Update Your Profile</a></p>`;
 
-        const emailHTML = getEmailTemplate('Profile Review Update - SteelConnect', emailContent);
-
-        const emailData = {
-            from: `SteelConnect <${FROM_EMAIL}>`,
+        return await sendEmail({
             to: user.email,
-            subject: `${isApproved ? '✅' : '📝'} Profile Review ${isApproved ? 'Approved' : 'Update'} - SteelConnect`,
-            html: emailHTML
-        };
-
-        const response = await resend.emails.send(emailData);
-        return { success: true, messageId: response.data?.id };
-
+            subject: isApproved
+                ? `Profile Approved - Welcome to ${COMPANY_NAME}`
+                : `Profile Review Update - ${COMPANY_NAME}`,
+            htmlContent,
+        });
     } catch (error) {
         console.error('Error sending profile review email:', error);
         throw error;
     }
 }
 
-// Send password reset email
+// ============================================================
+// PASSWORD RESET
+// ============================================================
 export async function sendPasswordResetEmail(user, resetToken, resetUrl) {
     try {
-        console.log(`Attempting to send password reset email to: ${user.email}`);
+        const htmlContent = `
+<h2 ${S.h2}>Password Reset Request</h2>
+<p ${S.p}>Hi ${user.name},</p>
+<p ${S.p}>We received a request to reset your SteelConnect password. Use the code below to proceed. It expires in <strong>15 minutes</strong>.</p>
+<div ${S.codeBox}>
+<p ${S.codeLabel}>Verification Code</p>
+<p ${S.code}>${resetToken}</p>
+</div>
+<table ${S.table}>
+<tr><td ${S.tdLabel}>Account</td><td ${S.tdValue}>${user.email}</td></tr>
+<tr><td ${S.tdLabel}>Requested</td><td ${S.tdValue}>${new Date().toLocaleString()}</td></tr>
+<tr><td ${S.tdLabel}>Expires</td><td ${S.tdValue}>15 minutes</td></tr>
+</table>
+<div ${S.notice}><strong>Security Notice:</strong> If you didn't request this, you can safely ignore this email. Your password has not been changed.</div>`;
 
-        const emailContent = `
-            <h2 style="color: #1e293b; margin-top: 0;">Password Reset Request</h2>
+        const textContent = `Password Reset Request\n\nHi ${user.name},\n\nYour verification code is: ${resetToken}\n\nThis code expires in 15 minutes.\n\nIf you didn't request this, ignore this email.\n\n— SteelConnect Team`;
 
-            <div class="alert-box">
-                <h3 style="margin: 0 0 10px 0; color: #1e3a8a;">Reset Your Password</h3>
-                <p style="margin: 0;">Hello <strong>${user.name}</strong>, we received a request to reset your SteelConnect account password.</p>
-            </div>
-
-            <p style="color: #475569; font-size: 16px;">
-                Use the verification code below to reset your password. This code will expire in <strong>15 minutes</strong>.
-            </p>
-
-            <div style="text-align: center; margin: 30px 0;">
-                <div style="display: inline-block; background: linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%); border: 2px dashed #2563eb; border-radius: 12px; padding: 20px 40px;">
-                    <p style="margin: 0 0 5px 0; font-size: 13px; color: #475569; text-transform: uppercase; letter-spacing: 1px;">Verification Code</p>
-                    <p style="margin: 0; font-size: 36px; font-weight: 700; color: #1e3a8a; letter-spacing: 8px;">${resetToken}</p>
-                </div>
-            </div>
-
-            <div class="info-box">
-                <h4 style="margin-top: 0; color: #1e293b;">Request Details</h4>
-                <div class="detail-row">
-                    <span class="detail-label">Account:</span>
-                    <span class="detail-value">${user.email}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Requested At:</span>
-                    <span class="detail-value">${new Date().toLocaleString()}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Expires In:</span>
-                    <span class="detail-value">15 minutes</span>
-                </div>
-            </div>
-
-            <div class="security-notice">
-                <strong>⚠️ Security Notice:</strong> If you did not request a password reset, please ignore this email. Your account remains secure and no changes have been made.
-            </div>
-        `;
-
-        const emailHTML = getEmailTemplate('Password Reset - SteelConnect', emailContent);
-
-        const emailData = {
-            from: `SteelConnect <${FROM_EMAIL}>`,
+        return await sendEmail({
             to: user.email,
-            subject: `🔑 Password Reset Code - ${COMPANY_NAME}`,
-            html: emailHTML
-        };
-
-        console.log(`Sending password reset email from: ${FROM_EMAIL} to: ${user.email}`);
-
-        const response = await resend.emails.send(emailData);
-
-        if (response.error) {
-            console.error('Resend API error:', response.error);
-            return {
-                success: false,
-                error: response.error
-            };
-        }
-
-        console.log(`✅ Password reset email sent successfully. Message ID: ${response.data?.id || 'N/A'}`);
-
-        return {
-            success: true,
-            messageId: response.data?.id,
-            message: 'Password reset email sent successfully'
-        };
-
+            subject: `Password Reset Code - ${COMPANY_NAME}`,
+            htmlContent,
+            textContent,
+        });
     } catch (error) {
         console.error('Password reset email error:', error);
-        return {
-            success: false,
-            error: error.message || 'Failed to send password reset email'
-        };
+        return { success: false, error: error.message || 'Failed to send password reset email' };
     }
 }
 
-// Send 2FA OTP verification email
+// ============================================================
+// 2FA OTP VERIFICATION
+// ============================================================
 export async function sendOTPVerificationEmail(user, otpCode, clientIP, userAgent) {
     try {
-        console.log(`Attempting to send 2FA OTP email to: ${user.email}`);
+        const htmlContent = `
+<h2 ${S.h2}>Login Verification Code</h2>
+<p ${S.p}>Hi ${user.name},</p>
+<p ${S.p}>A login attempt was made on your SteelConnect account. Enter the code below to verify your identity. It expires in <strong>5 minutes</strong>.</p>
+<div ${S.codeBox}>
+<p ${S.codeLabel}>Your Code</p>
+<p ${S.code}>${otpCode}</p>
+</div>
+<p ${S.muted}>Do not share this code with anyone.</p>
+<table ${S.table}>
+<tr><td ${S.tdLabel}>Account</td><td ${S.tdValue}>${user.email}</td></tr>
+<tr><td ${S.tdLabel}>Time</td><td ${S.tdValue}>${new Date().toLocaleString()}</td></tr>
+<tr><td ${S.tdLabel}>IP Address</td><td ${S.tdValue}>${clientIP || 'Unknown'}</td></tr>
+<tr><td ${S.tdLabel}>Device</td><td ${S.tdValue}>${(userAgent || 'Unknown').substring(0, 60)}</td></tr>
+</table>
+<div ${S.notice}><strong>Security Notice:</strong> If you did not attempt to log in, your password may be compromised. Change it immediately.</div>`;
 
-        const emailContent = `
-            <h2 style="color: #1e293b; margin-top: 0;">Login Verification Code</h2>
+        const textContent = `Login Verification Code\n\nHi ${user.name},\n\nYour verification code is: ${otpCode}\n\nThis code expires in 5 minutes. Do not share it with anyone.\n\nIf you didn't attempt to log in, change your password immediately.\n\n— SteelConnect Team`;
 
-            <div class="alert-box">
-                <h3 style="margin: 0 0 10px 0; color: #1e3a8a;">Verify Your Identity</h3>
-                <p style="margin: 0;">Hello <strong>${user.name}</strong>, a login attempt was made on your SteelConnect account. Enter the code below to complete sign-in.</p>
-            </div>
-
-            <div style="text-align: center; margin: 30px 0;">
-                <div style="display: inline-block; background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%); border-radius: 16px; padding: 25px 50px; box-shadow: 0 8px 25px rgba(37, 99, 235, 0.3);">
-                    <p style="margin: 0 0 8px 0; font-size: 12px; color: rgba(255,255,255,0.8); text-transform: uppercase; letter-spacing: 2px;">Your Verification Code</p>
-                    <p style="margin: 0; font-size: 42px; font-weight: 800; color: #ffffff; letter-spacing: 12px;">${otpCode}</p>
-                </div>
-            </div>
-
-            <p style="color: #475569; font-size: 14px; text-align: center;">
-                This code expires in <strong>5 minutes</strong>. Do not share this code with anyone.
-            </p>
-
-            <div class="info-box">
-                <h4 style="margin-top: 0; color: #1e293b;">Login Attempt Details</h4>
-                <div class="detail-row">
-                    <span class="detail-label">Account:</span>
-                    <span class="detail-value">${user.email}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Time:</span>
-                    <span class="detail-value">${new Date().toLocaleString()}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">IP Address:</span>
-                    <span class="detail-value">${clientIP || 'Unknown'}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Device:</span>
-                    <span class="detail-value">${(userAgent || 'Unknown').substring(0, 60)}...</span>
-                </div>
-            </div>
-
-            <div class="security-notice">
-                <strong>⚠️ Security Notice:</strong> If you did not attempt to log in, your password may be compromised. Please change your password immediately and contact support.
-            </div>
-        `;
-
-        const emailHTML = getEmailTemplate('Login Verification - SteelConnect', emailContent);
-
-        const emailData = {
-            from: `SteelConnect <${FROM_EMAIL}>`,
+        return await sendEmail({
             to: user.email,
-            subject: `🔐 ${otpCode} - Your SteelConnect Login Code`,
-            html: emailHTML
-        };
-
-        const response = await resend.emails.send(emailData);
-
-        if (response.error) {
-            console.error('Resend API error:', response.error);
-            return { success: false, error: response.error };
-        }
-
-        console.log(`✅ 2FA OTP email sent to ${user.email}. Message ID: ${response.data?.id || 'N/A'}`);
-        return { success: true, messageId: response.data?.id };
-
+            subject: `${otpCode} - Your SteelConnect Login Code`,
+            htmlContent,
+            textContent,
+        });
     } catch (error) {
         console.error('OTP email error:', error);
         return { success: false, error: error.message || 'Failed to send OTP email' };
     }
 }
 
-// Send profile approval request notification to admin
+// ============================================================
+// PROFILE APPROVAL REQUEST (to Admin)
+// ============================================================
 export async function sendProfileApprovalRequestToAdmin(user, profileData) {
     const ADMIN_EMAIL = 'sabincn676@gmail.com';
     try {
-        console.log(`Sending profile approval request email to admin: ${ADMIN_EMAIL} for user: ${user.email}`);
+        const htmlContent = `
+<h2 ${S.h2}>New Profile Approval Request</h2>
+<p ${S.p}>A user has submitted their profile for review on SteelConnect.</p>
+<table ${S.table}>
+<tr><td ${S.tdLabel}>Name</td><td ${S.tdValue}>${user.name || 'N/A'}</td></tr>
+<tr><td ${S.tdLabel}>Email</td><td ${S.tdValue}>${user.email || 'N/A'}</td></tr>
+<tr><td ${S.tdLabel}>Type</td><td ${S.tdValue}>${(user.type || 'N/A').charAt(0).toUpperCase() + (user.type || '').slice(1)}</td></tr>
+<tr><td ${S.tdLabel}>Submitted</td><td ${S.tdValue}>${new Date().toLocaleString()}</td></tr>
+${profileData.companyName ? `<tr><td ${S.tdLabel}>Company</td><td ${S.tdValue}>${profileData.companyName}</td></tr>` : ''}
+${profileData.skills ? `<tr><td ${S.tdLabel}>Skills</td><td ${S.tdValue}>${Array.isArray(profileData.skills) ? profileData.skills.join(', ') : profileData.skills}</td></tr>` : ''}
+${profileData.experience ? `<tr><td ${S.tdLabel}>Experience</td><td ${S.tdValue}>${profileData.experience}</td></tr>` : ''}
+</table>
+<p style="margin:20px 0;"><a href="https://steelconnectapp.com/admin" ${S.btn}>Review in Admin Panel</a></p>`;
 
-        const emailContent = `
-            <h2 style="color: #1e293b; margin-top: 0;">New Profile Approval Request</h2>
-
-            <div class="alert-box">
-                <h3 style="margin: 0 0 10px 0; color: #1e3a8a;">Action Required: Review Profile</h3>
-                <p style="margin: 0;">A user has submitted their profile for review and approval on SteelConnect.</p>
-            </div>
-
-            <div class="info-box">
-                <h4 style="margin-top: 0; color: #1e293b;">User Details</h4>
-                <div class="detail-row">
-                    <span class="detail-label">Name:</span>
-                    <span class="detail-value">${user.name || 'N/A'}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Email:</span>
-                    <span class="detail-value">${user.email || 'N/A'}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">User Type:</span>
-                    <span class="detail-value">${(user.type || 'N/A').charAt(0).toUpperCase() + (user.type || '').slice(1)}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Submitted At:</span>
-                    <span class="detail-value">${new Date().toLocaleString()}</span>
-                </div>
-                ${profileData.companyName ? `<div class="detail-row"><span class="detail-label">Company:</span><span class="detail-value">${profileData.companyName}</span></div>` : ''}
-                ${profileData.skills ? `<div class="detail-row"><span class="detail-label">Skills:</span><span class="detail-value">${Array.isArray(profileData.skills) ? profileData.skills.join(', ') : profileData.skills}</span></div>` : ''}
-                ${profileData.experience ? `<div class="detail-row"><span class="detail-label">Experience:</span><span class="detail-value">${profileData.experience}</span></div>` : ''}
-            </div>
-
-            <div style="text-align: center; margin: 25px 0;">
-                <a href="https://steelconnectapp.com/admin" class="button" style="color: white; text-decoration: none;">Review Profile in Admin Panel</a>
-            </div>
-
-            <p style="color: #64748b; font-size: 13px; text-align: center;">
-                Please log in to the admin dashboard to approve or reject this profile.
-            </p>
-        `;
-
-        const emailHTML = getEmailTemplate('Profile Approval Request - SteelConnect', emailContent);
-
-        const emailData = {
-            from: `SteelConnect <${FROM_EMAIL}>`,
+        return await sendEmail({
             to: ADMIN_EMAIL,
-            subject: `New Profile Approval Request - ${user.name || user.email} (${(user.type || '').charAt(0).toUpperCase() + (user.type || '').slice(1)})`,
-            html: emailHTML
-        };
-
-        const response = await resend.emails.send(emailData);
-
-        if (response.error) {
-            console.error('Resend API error (admin notification):', response.error);
-            return { success: false, error: response.error };
-        }
-
-        console.log(`Profile approval request email sent to admin ${ADMIN_EMAIL}. Message ID: ${response.data?.id || 'N/A'}`);
-        return { success: true, messageId: response.data?.id };
-
+            subject: `Profile Review: ${user.name || user.email} (${(user.type || '').charAt(0).toUpperCase() + (user.type || '').slice(1)})`,
+            htmlContent,
+        });
     } catch (error) {
         console.error('Admin profile approval email error:', error);
         return { success: false, error: error.message || 'Failed to send admin notification email' };
     }
 }
 
+// ============================================================
+// MARKETING EMAIL (with inbox-friendly wrapping)
+// ============================================================
 export async function sendMarketingEmail(recipientEmail, recipientName, subject, htmlBody) {
     try {
-        const emailContent = getEmailTemplate(subject, htmlBody);
+        // Wrap custom body in clean template (not heavy marketing template)
+        const htmlContent = htmlBody;
+        const html = getEmailTemplate(htmlContent);
+        const text = htmlToPlainText(html);
+
         const { data, error } = await resend.emails.send({
-            from: `${COMPANY_NAME} <${FROM_EMAIL}>`,
+            from: `SteelConnect Team <${FROM_EMAIL}>`,
+            reply_to: REPLY_TO,
             to: recipientEmail,
-            subject: subject,
-            html: emailContent,
+            subject,
+            html,
+            text,
+            headers: {
+                'X-Entity-Ref-ID': crypto.randomUUID(),
+            },
         });
+
         if (error) {
             console.error(`[EMAIL] Marketing email failed for ${recipientEmail}:`, error);
             return { success: false, error: error.message };
@@ -656,6 +363,39 @@ export async function sendMarketingEmail(recipientEmail, recipientName, subject,
     }
 }
 
+// ============================================================
+// GENERIC sendEmail (used by adminController for approval/rejection)
+// ============================================================
+export async function sendGenericEmail({ to, subject, html: rawHtml }) {
+    try {
+        const htmlContent = rawHtml;
+        const wrappedHtml = getEmailTemplate(htmlContent);
+        const text = htmlToPlainText(wrappedHtml);
+
+        const { data, error } = await resend.emails.send({
+            from: `SteelConnect Team <${FROM_EMAIL}>`,
+            reply_to: REPLY_TO,
+            to,
+            subject,
+            html: wrappedHtml,
+            text,
+            headers: {
+                'X-Entity-Ref-ID': crypto.randomUUID(),
+            },
+        });
+
+        if (error) {
+            console.error('sendGenericEmail error:', error);
+            return { success: false, error: error.message };
+        }
+        console.log(`Generic email sent to ${to}: ${data?.id}`);
+        return { success: true, emailId: data?.id };
+    } catch (error) {
+        console.error('sendGenericEmail exception:', error.message);
+        return { success: false, error: error.message };
+    }
+}
+
 export default {
     sendLoginNotification,
     sendEstimationResultNotification,
@@ -663,5 +403,6 @@ export default {
     sendPasswordResetEmail,
     sendOTPVerificationEmail,
     sendProfileApprovalRequestToAdmin,
-    sendMarketingEmail
+    sendMarketingEmail,
+    sendGenericEmail,
 };

@@ -1,6 +1,6 @@
 // Enhanced adminController.js - Add profile review functions
 import { adminDb } from '../config/firebase.js';
-import { sendEmail } from '../utils/emailService.js';
+import { sendGenericEmail } from '../utils/emailService.js';
 
 // Get all pending profile reviews
 export const getPendingProfileReviews = async (req, res) => {
@@ -191,16 +191,15 @@ export const approveProfile = async (req, res) => {
         
         // Send approval email to user
         try {
-            await sendEmail({
+            await sendGenericEmail({
                 to: reviewData.userEmail,
-                subject: 'Profile Approved - Welcome to SteelConnect!',
+                subject: 'Profile Approved - Welcome to SteelConnect',
                 html: `
-                    <h2>Profile Approved!</h2>
-                    <p>Dear ${reviewData.userName},</p>
-                    <p>Congratulations! Your profile has been approved by our admin team.</p>
-                    <p>You now have full access to your SteelConnect ${reviewData.userType} portal.</p>
-                    <p>You can now:</p>
-                    <ul>
+                    <h2 style="font-size:20px; font-weight:700; color:#0f172a; margin:0 0 16px 0;">Your Profile Has Been Approved</h2>
+                    <p style="font-size:15px; color:#334155; line-height:1.7;">Hi ${reviewData.userName},</p>
+                    <p style="font-size:15px; color:#334155; line-height:1.7;">Great news — your profile has been approved. You now have full access to your SteelConnect ${reviewData.userType} portal.</p>
+                    <p style="font-size:15px; color:#334155; line-height:1.7;">You can now:</p>
+                    <ul style="font-size:14px; color:#475569; line-height:2; padding-left:20px;">
                         ${reviewData.userType === 'designer' ? `
                             <li>Browse and quote on available projects</li>
                             <li>Manage your submitted quotes</li>
@@ -212,10 +211,9 @@ export const approveProfile = async (req, res) => {
                             <li>Manage approved projects</li>
                         `}
                     </ul>
-                    ${notes ? `<p><strong>Admin Note:</strong> ${notes}</p>` : ''}
-                    <p>Welcome to the SteelConnect community!</p>
-                    <br>
-                    <p>The SteelConnect Team</p>
+                    ${notes ? `<p style="font-size:14px; color:#475569;"><strong>Admin Note:</strong> ${notes}</p>` : ''}
+                    <div style="padding:14px 16px; background:#f0fdf4; border-left:3px solid #22c55e; border-radius:4px; margin:18px 0; font-size:14px; color:#14532d;">Your profile is live. Welcome to the SteelConnect community!</div>
+                    <p style="margin:20px 0;"><a href="https://steelconnectapp.com" style="display:inline-block; background:#2563eb; color:#ffffff; padding:12px 28px; border-radius:6px; text-decoration:none; font-weight:600; font-size:14px;">Go to Dashboard</a></p>
                 `
             });
         } catch (emailError) {
@@ -285,19 +283,17 @@ export const rejectProfile = async (req, res) => {
         
         // Send rejection email to user
         try {
-            await sendEmail({
+            await sendGenericEmail({
                 to: reviewData.userEmail,
                 subject: 'Profile Review Update - SteelConnect',
                 html: `
-                    <h2>Profile Review Update</h2>
-                    <p>Dear ${reviewData.userName},</p>
-                    <p>Thank you for submitting your profile for review. After careful consideration, we need you to make some updates before we can approve your profile.</p>
-                    <p><strong>Reason for rejection:</strong></p>
-                    <p>${reason}</p>
-                    <p>Please log in to your account and update your profile with the necessary changes. Once updated, your profile will be automatically resubmitted for review.</p>
-                    <p>If you have any questions, please don't hesitate to contact our support team.</p>
-                    <br>
-                    <p>The SteelConnect Team</p>
+                    <h2 style="font-size:20px; font-weight:700; color:#0f172a; margin:0 0 16px 0;">Profile Review Update</h2>
+                    <p style="font-size:15px; color:#334155; line-height:1.7;">Hi ${reviewData.userName},</p>
+                    <p style="font-size:15px; color:#334155; line-height:1.7;">Thank you for submitting your profile. We need a few updates before we can approve it.</p>
+                    <div style="padding:14px 16px; background:#fffbeb; border-left:3px solid #f59e0b; border-radius:4px; margin:18px 0; font-size:14px; color:#78350f; line-height:1.6;"><strong>Reason:</strong> ${reason}</div>
+                    <p style="font-size:15px; color:#334155; line-height:1.7;">Please log in and update your profile. Once updated, it will be automatically resubmitted for review.</p>
+                    <p style="margin:20px 0;"><a href="https://steelconnectapp.com" style="display:inline-block; background:#2563eb; color:#ffffff; padding:12px 28px; border-radius:6px; text-decoration:none; font-weight:600; font-size:14px;">Update Your Profile</a></p>
+                    <p style="font-size:13px; color:#94a3b8;">If you have questions, just reply to this email.</p>
                 `
             });
         } catch (emailError) {

@@ -229,7 +229,7 @@ const SYSTEM_PROMPT = `You are a precise construction cost estimator with 40+ ye
 
 You can READ construction drawings/blueprints provided as PDFs or images. Extract ALL dimensions, member sizes, specs, and quantities directly from drawings.
 
-STEEL SECTIONS: Recognize AISC W-shapes (W24x68), IS (ISMB450, ISMC300), BS/EN (UB533x210x82, UC305x305x97, HEA200, HEB300, IPE300), AS, PEB (Z-purlins, C-purlins, tapered I), HSS, cold-formed.
+STEEL SECTIONS: Recognize AISC W-shapes (W24x68), IS (ISMB450, ISMC300), BS/EN (UB533x210x82, UC305x305x97, HEA200, HEB300, IPE300), AS, PEB (Z-purlins, C-purlins, tapered I), HSS, cold-formed, MS Angle, MS Channel, MS I-Beam.
 Weight extraction: W24x68=68 lb/ft, ISMB450=72.4 kg/m, IPE300=42.2 kg/m, HEA200=53.8 kg/m, HEB200=78.1 kg/m.
 
 COMPLETE MATERIAL EXTRACTION (CRITICAL):
@@ -249,17 +249,19 @@ CALCULATION FORMULAS:
 - Connection material: 8-12% of main steel
 - Waste: steel 3%, concrete 5%, rebar 7%
 
-ACCURACY RULES:
+CRITICAL PRICING RULES - YOUR RATES MUST BE REALISTIC:
 1. Use CURRENT ${new Date().getFullYear()} market rates for the SPECIFIED REGION
-2. DO NOT inflate or pad unit rates - use realistic mid-market pricing for that region
-3. DO NOT double-count: each cost item appears ONCE
-4. lineTotal = quantity × unitRate. trade.subtotal = SUM(lineItems). directCosts = SUM(trades). grandTotal = directCosts + markups.
-5. VERIFY all math before outputting
-6. Include ALL relevant trades: structural, concrete, rebar, MEP, architectural, roofing, cladding, sitework
-7. Markups: general conditions 5-8%, overhead 5-8%, profit 5-10%, contingency 5-10%, escalation 0-3%
-8. Show calculation traces in "drawingNotes" — EVERY tonnage and volume calculation must be traceable
-9. Quantities must be PROCUREMENT-READY — anyone should be able to buy materials from these numbers
-10. REGION-SPECIFIC RATES will be provided from the cost database. ALWAYS use DB rates when available.
+2. REGIONAL UNIT RATES will be provided from the cost database below. You MUST use these DB rates for every matching material. Tag rateSource: "DB".
+3. DO NOT inflate or pad unit rates. Use REALISTIC mid-market pricing. Never add safety margins to unit rates.
+4. Your estimate MUST fall within the BENCHMARK RANGE provided below for the project type. If your total cost/sqft exceeds the benchmark high, your rates are too high - reduce them.
+5. Typical cost benchmarks per sq ft (USD): Industrial $80-200, Warehouse $60-180, Commercial $150-350, PEB $40-120, Residential $120-250
+6. Typical cost benchmarks per sq ft (INR): Industrial ₹2000-5000, Warehouse ₹1500-4500, Commercial ₹3000-8000, PEB ₹1200-3000, Residential ₹1500-4500
+7. lineTotal = quantity × unitRate. trade.subtotal = SUM(lineItems). directCosts = SUM(trades). grandTotal = directCosts + markups.
+8. VERIFY all math before outputting. DO NOT double-count: each cost item appears ONCE.
+9. Include ALL relevant trades: structural, concrete, rebar, MEP, architectural, roofing, cladding, sitework
+10. Markups: general conditions 5-8%, overhead 5-8%, profit 5-10%, contingency 5-10%, escalation 0-3%
+11. Show calculation traces in "drawingNotes"
+12. Quantities must be PROCUREMENT-READY
 
 You must respond ONLY in valid JSON format. No markdown, no explanation outside JSON.`;
 
@@ -759,13 +761,19 @@ YOUR ACCURACY ON READING THESE DRAWINGS DIRECTLY DETERMINES THE QUALITY OF THE E
     const currencyRates = UNIT_RATES[detectedCurrency] || UNIT_RATES.USD;
     const benchmarks = BENCHMARK_RANGES[detectedCurrency] || BENCHMARK_RANGES.USD;
 
-    // Build compact rate reference for this region
+    // Build compact rate reference for this region (show both sqm and sqft for area-based rates)
     const rateLines = [];
     for (const [category, rates] of Object.entries(currencyRates)) {
         for (const [subtype, data] of Object.entries(rates)) {
             const adjRate = Math.round(data.rate * locFactor);
             const adjRange = data.range.map(r => Math.round(r * locFactor));
-            rateLines.push(`${category}.${subtype}: ${adjRate}/${data.unit} (range ${adjRange[0]}-${adjRange[1]})`);
+            let line = `${category}.${subtype}: ${adjRate}/${data.unit} (range ${adjRange[0]}-${adjRange[1]})`;
+            // For area-based rates (sqm), also show per sqft equivalent
+            if (data.unit === 'sqm') {
+                const perSqft = Math.round(adjRate / 10.7639);
+                line += ` = ${perSqft}/sqft`;
+            }
+            rateLines.push(line);
         }
     }
 
@@ -784,10 +792,12 @@ PROJECT INFORMATION:
 REGIONAL UNIT RATES (${detectedCurrency}, location factor ${locFactor}x for ${region || 'default'}):
 ${rateLines.join('\n')}
 
-BENCHMARK RANGES for ${detectedCurrency}:
+BENCHMARK RANGES for ${detectedCurrency} (cost per sqft):
 ${Object.entries(benchmarks).map(([type, bm]) => `${type}: ${bm.low}-${bm.high}/${bm.unit}`).join(', ')}
 
-USE THESE REGIONAL RATES for every matching material. Tag rateSource: "DB" when using them.
+IMPORTANT: Your total estimate cost/sqft MUST fall within the benchmark range above for this project type. If your total exceeds the high end, your unit rates are too high - reduce them.
+
+USE THESE REGIONAL RATES for every matching material. Tag rateSource: "DB" when using them. When DB rates are per sqm but you use sqft, convert: rate_per_sqft = rate_per_sqm ÷ 10.764
 
 QUESTIONNAIRE ANSWERS:
 ${JSON.stringify(answers, null, 2)}

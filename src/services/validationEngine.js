@@ -255,6 +255,27 @@ function matchRateCategory(desc, unit, curr) {
   return null;
 }
 
+/** Convert DB rate to match line item unit (handles sqm↔sqft, cum↔CY mismatch) */
+function convertDbRate(dbRate, dbUnit, liUnit) {
+  const db = (dbUnit || '').toLowerCase();
+  const li = (liUnit || '').toLowerCase();
+  // sqm ↔ sqft conversion
+  if ((db === 'sqm' || db === 'sq m' || db === 'm2') && /sf|sqft|sq ft|ft2/.test(li)) {
+    return dbRate / 10.7639; // sqm → sqft
+  }
+  if (/sf|sqft|sq ft/.test(db) && (li === 'sqm' || li === 'sq m' || li === 'm2')) {
+    return dbRate * 10.7639; // sqft → sqm
+  }
+  // cum ↔ CY conversion
+  if ((db === 'cum' || db === 'm3' || db === 'm³') && /cy/i.test(li)) {
+    return dbRate * 0.7646; // cum → CY
+  }
+  if (/cy/i.test(db) && (li === 'cum' || li === 'm3' || li === 'm³')) {
+    return dbRate / 0.7646; // CY → cum
+  }
+  return dbRate; // same unit or unknown - use as-is
+}
+
 function unitRateValidation(estimate, currency, location) {
   const issues = [];
   let dbBacked = 0, aiEstimated = 0, total = 0;
@@ -271,30 +292,30 @@ function unitRateValidation(estimate, currency, location) {
       if (match) {
         const rateData = getUnitRate(curr, match[0], match[1]);
         if (rateData) {
-          const dbRate = Math.round(rateData.rate * factor);
-          const dbRange = rateData.range.map(r => Math.round(r * factor));
+          // Convert DB rate to match line item unit (handles sqm↔sqft, cum↔CY)
+          const rawDbRate = rateData.rate * factor;
+          const converted = convertDbRate(rawDbRate, rateData.unit, li.unit);
+          const dbRate = Math.round(converted);
+          const dbRange = rateData.range.map(r => Math.round(convertDbRate(r * factor, rateData.unit, li.unit)));
+
           dbBacked++; li.rateSource = 'DB';
           li.dbRate = dbRate;
           li.dbRange = dbRange;
           const deviation = Math.abs(rate - dbRate) / dbRate;
 
-          // AGGRESSIVE RATE CORRECTION: Use regional DB rate when AI deviates significantly
-          // This ensures material costs match the selected region's actual market rates
+          // Rate correction: Use regional DB rate when AI deviates significantly
           if (rate < dbRange[0] || rate > dbRange[1]) {
-            // Rate is outside the DB range for this region - replace with DB mid rate
             const oldRate = li.unitRate;
             li.unitRate = dbRate;
             li.lineTotal = Math.round((Number(li.quantity) || 0) * dbRate * 100) / 100;
             const severity = deviation > 0.5 ? 'critical' : 'warning';
             issues.push({ severity, category: 'unitRate', message: `"${li.description}" rate ${oldRate}→${dbRate}/${li.unit} (regional DB: ${dbRange[0]}-${dbRange[1]}). Corrected to ${location || 'regional'} market rate.`, autoFixed: true });
           } else if (deviation > 0.15) {
-            // Rate is within range but >15% from mid - nudge toward DB mid
             const nudgedRate = Math.round((rate * 0.4 + dbRate * 0.6));
             li.unitRate = nudgedRate;
             li.lineTotal = Math.round((Number(li.quantity) || 0) * nudgedRate * 100) / 100;
             issues.push({ severity: 'info', category: 'unitRate', message: `"${li.description}" rate ${rate}→${nudgedRate}/${li.unit} (nudged toward regional DB ${dbRate}).`, autoFixed: true });
           }
-          // else: rate is close to DB - keep AI rate
         } else { aiEstimated++; li.rateSource = 'EST'; }
       } else { aiEstimated++; li.rateSource = 'EST'; }
     }
@@ -302,26 +323,70 @@ function unitRateValidation(estimate, currency, location) {
   return { issues, rateSourceSummary: { dbBacked, aiEstimated, total, dbPercentage: total > 0 ? Math.round((dbBacked / total) * 100) : 0 } };
 }
 
-// ============ 4. BENCHMARK CHECK ============
+// ============ 4. BENCHMARK CHECK + AUTO-CORRECTION ============
 
 function benchmarkCheck(estimate, projectInfo) {
   const issues = [];
   if (!estimate?.summary) return { issues, benchmarkComparison: null };
-  const { grandTotal, currency: curr = 'USD' } = estimate.summary;
+  const cb = estimate.costBreakdown || {};
+  const summary = estimate.summary;
+  const curr = summary.currency || 'USD';
+  let grandTotal = Number(summary.grandTotal) || 0;
   if (!grandTotal) return { issues, benchmarkComparison: null };
-  const area = parseArea(projectInfo?.totalArea || estimate.summary.totalArea);
-  if (!area) { issues.push({ severity: 'info', category: 'benchmark', message: 'Cannot benchmark: no area specified.', autoFixed: false }); return { issues, benchmarkComparison: null }; }
-  const costPerUnit = grandTotal / area;
-  const pt = normalizeProjectType(projectInfo?.projectType || estimate.summary.projectType);
+  const areaRaw = parseArea(projectInfo?.totalArea || summary.totalArea);
+  if (!areaRaw) { issues.push({ severity: 'info', category: 'benchmark', message: 'Cannot benchmark: no area specified.', autoFixed: false }); return { issues, benchmarkComparison: null }; }
+
+  // Convert area to sqft if input is in sqm (benchmarks are per sqft)
+  const areaStr = String(projectInfo?.totalArea || summary.totalArea || '').toLowerCase();
+  const isMetric = /sqm|sq m|m2|meter|metre/.test(areaStr);
+  const areaSqFt = isMetric ? areaRaw * 10.7639 : areaRaw;
+
+  let costPerUnit = grandTotal / areaSqFt;
+  const pt = normalizeProjectType(projectInfo?.projectType || summary.projectType);
   const bm = getBenchmarkRange(curr, pt);
   if (!bm) { issues.push({ severity: 'info', category: 'benchmark', message: `No benchmark for "${pt}" in ${curr}.`, autoFixed: false }); return { issues, benchmarkComparison: null }; }
+
+  // AUTO-CORRECTION: If cost/sqft exceeds benchmark high, scale down ALL rates proportionally
+  // Target: bring estimate to benchmark mid-high range (75th percentile)
+  if (costPerUnit > bm.high) {
+    const targetCostPerUnit = bm.mid + (bm.high - bm.mid) * 0.5; // target 75th percentile
+    const scaleFactor = targetCostPerUnit / costPerUnit;
+    const oldTotal = grandTotal;
+
+    // Scale every line item's unitRate and lineTotal
+    for (const trade of (estimate.trades || [])) {
+      for (const li of (trade.lineItems || [])) {
+        li.unitRate = Math.round((Number(li.unitRate) || 0) * scaleFactor * 100) / 100;
+        li.lineTotal = Math.round((Number(li.quantity) || 0) * li.unitRate * 100) / 100;
+      }
+      trade.subtotal = Math.round(trade.lineItems.reduce((s, li) => s + (Number(li.lineTotal) || 0), 0) * 100) / 100;
+    }
+
+    // Recalculate directCosts, markups, grandTotal
+    const newDirect = Math.round((estimate.trades || []).reduce((s, t) => s + (Number(t.subtotal) || 0), 0) * 100) / 100;
+    cb.directCosts = newDirect;
+    let totalMarkups = 0;
+    for (const f of ['generalConditions', 'overhead', 'profit', 'contingency', 'escalation']) {
+      if (cb[f + 'Percent'] > 0) {
+        cb[f] = Math.round(newDirect * (cb[f + 'Percent'] / 100) * 100) / 100;
+      }
+      totalMarkups += Number(cb[f]) || 0;
+    }
+    cb.totalWithMarkups = Math.round((newDirect + totalMarkups) * 100) / 100;
+    summary.grandTotal = cb.totalWithMarkups;
+    grandTotal = summary.grandTotal;
+    costPerUnit = grandTotal / areaSqFt;
+
+    issues.push({ severity: 'critical', category: 'benchmark',
+      message: `Estimate scaled to normal range: ${curr} ${Math.round(oldTotal).toLocaleString()} → ${curr} ${Math.round(grandTotal).toLocaleString()} (${Math.round(costPerUnit)}/sqft, benchmark ${bm.low}-${bm.high} for ${bm.label})`,
+      autoFixed: true });
+  }
+
   const status = costPerUnit < bm.low ? 'below' : costPerUnit > bm.high ? 'above' : 'within';
-  const benchmarkComparison = { projectType: bm.label || pt, currency: curr, costPerUnit: Math.round(costPerUnit * 100) / 100, benchmarkLow: bm.low, benchmarkMid: bm.mid, benchmarkHigh: bm.high, status };
+  const benchmarkComparison = { projectType: bm.label || pt, currency: curr, costPerUnit: Math.round(costPerUnit * 100) / 100, benchmarkLow: bm.low, benchmarkMid: bm.mid, benchmarkHigh: bm.high, status, unit: bm.unit || 'sqft' };
 
   if (costPerUnit < bm.low / 1.5) issues.push({ severity: 'critical', category: 'benchmark', message: `Cost ${curr} ${costPerUnit.toFixed(2)}/sqft far below range (${bm.low}-${bm.high} for ${bm.label}). Estimate may be incomplete.`, autoFixed: false });
   else if (costPerUnit < bm.low) issues.push({ severity: 'warning', category: 'benchmark', message: `Cost ${curr} ${costPerUnit.toFixed(2)}/sqft below benchmark low ${bm.low} for ${bm.label}.`, autoFixed: false });
-  else if (costPerUnit > bm.high * 1.5) issues.push({ severity: 'critical', category: 'benchmark', message: `Cost ${curr} ${costPerUnit.toFixed(2)}/sqft far above range (${bm.low}-${bm.high} for ${bm.label}). Check for inflated rates.`, autoFixed: false });
-  else if (costPerUnit > bm.high) issues.push({ severity: 'warning', category: 'benchmark', message: `Cost ${curr} ${costPerUnit.toFixed(2)}/sqft above benchmark high ${bm.high} for ${bm.label}.`, autoFixed: false });
   return { issues, benchmarkComparison };
 }
 
@@ -526,8 +591,32 @@ export function validateEstimate(estimate, projectInfo, measurementData) {
   const { issues: rateIssues, rateSourceSummary } = unitRateValidation(estimate, currency, location);
   allIssues.push(...rateIssues);
 
+  // Re-run arithmetic to recalculate subtotals/grandTotal after rate corrections
+  if (rateIssues.some(i => i.autoFixed)) {
+    arithmeticValidation(estimate);
+  }
+
   const { issues: bmIssues, benchmarkComparison } = benchmarkCheck(estimate, projectInfo);
   allIssues.push(...bmIssues);
+
+  // After benchmark correction, recalculate sq ft / sq m rates
+  if (estimate.summary && estimate.summary.grandTotal) {
+    const areaStr = String(projectInfo?.totalArea || estimate.summary.totalArea || '').toLowerCase();
+    const areaMatch = areaStr.match(/([\d,]+)/);
+    if (areaMatch) {
+      const areaVal = Number(areaMatch[1].replace(/,/g, ''));
+      if (areaVal > 0) {
+        const isMetric = /sqm|sq m|m2|meter|metre/.test(areaStr);
+        const areaSqFt = isMetric ? areaVal * 10.7639 : areaVal;
+        const areaSqM = isMetric ? areaVal : areaVal / 10.7639;
+        estimate.summary.costPerSqFt = Math.round((estimate.summary.grandTotal / areaSqFt) * 100) / 100;
+        estimate.summary.costPerSqM = Math.round((estimate.summary.grandTotal / areaSqM) * 100) / 100;
+        estimate.summary.costPerUnit = isMetric ? estimate.summary.costPerSqM : estimate.summary.costPerSqFt;
+        estimate.summary.areaSqFt = Math.round(areaSqFt);
+        estimate.summary.areaSqM = Math.round(areaSqM);
+      }
+    }
+  }
 
   const pt = projectInfo?.projectType || estimate?.summary?.projectType || 'commercial';
   const { issues: compIssues, tradeCompleteness } = tradeCompletenessCheck(estimate, pt);

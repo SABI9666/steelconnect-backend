@@ -427,7 +427,7 @@ ${htmlBody}
         const text = textBody || htmlToPlainText(html);
 
         const { data, error } = await resend.emails.send({
-            from: `Smith Johnson <${FROM_EMAIL}>`,
+            from: `SteelConnectApp <${FROM_EMAIL}>`,
             reply_to: REPLY_TO,
             to,
             subject,

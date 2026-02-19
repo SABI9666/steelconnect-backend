@@ -3882,4 +3882,185 @@ router.delete('/announcements/:id', async (req, res) => {
     }
 });
 
+// ================================================================
+// CHATBOT REPORTS - View chatbot conversations and send replies
+// ================================================================
+
+// GET /api/admin/chatbot/reports
+router.get('/chatbot/reports', async (req, res) => {
+    try {
+        const snapshot = await adminDb.collection('chatbot_sessions')
+            .orderBy('capturedAt', 'desc')
+            .limit(200)
+            .get();
+
+        const reports = [];
+        const now = new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+        let withEmail = 0;
+        let today = 0;
+        let unreplied = 0;
+
+        snapshot.forEach(doc => {
+            const data = { id: doc.id, ...doc.data() };
+            reports.push(data);
+            if (data.email) withEmail++;
+            if (data.capturedAt >= todayStart) today++;
+            if (data.email && !data.replied) unreplied++;
+        });
+
+        res.json({
+            success: true,
+            reports,
+            stats: {
+                total: reports.length,
+                withEmail,
+                today,
+                unreplied
+            }
+        });
+    } catch (error) {
+        console.error('[CHATBOT-REPORTS] Error:', error);
+        res.status(500).json({ success: false, message: 'Error loading chatbot reports' });
+    }
+});
+
+// POST /api/admin/chatbot/reply - Send reply email to chatbot lead
+router.post('/chatbot/reply', async (req, res) => {
+    try {
+        const { email, subject, body, reportIndex } = req.body;
+        if (!email || !subject || !body) {
+            return res.status(400).json({ success: false, message: 'Email, subject, and body are required' });
+        }
+
+        const result = await sendMarketingEmail(email, 'there', subject, body);
+        if (!result.success) {
+            return res.status(500).json({ success: false, message: 'Failed to send email: ' + (result.error || 'Unknown error') });
+        }
+
+        // Mark the session as replied in Firestore
+        try {
+            const snapshot = await adminDb.collection('chatbot_sessions')
+                .where('email', '==', email.toLowerCase().trim())
+                .orderBy('capturedAt', 'desc')
+                .limit(1)
+                .get();
+            if (!snapshot.empty) {
+                await snapshot.docs[0].ref.update({
+                    replied: true,
+                    repliedAt: new Date().toISOString(),
+                    repliedBy: req.user?.email || 'admin'
+                });
+            }
+        } catch (e) {
+            console.warn('[CHATBOT-REPLY] Could not mark as replied:', e.message);
+        }
+
+        res.json({ success: true, message: 'Reply sent successfully' });
+    } catch (error) {
+        console.error('[CHATBOT-REPLY] Error:', error);
+        res.status(500).json({ success: false, message: 'Error sending reply' });
+    }
+});
+
+// ================================================================
+// BULK EMAIL CAMPAIGN - Send to up to 1000 emails via BCC
+// ================================================================
+
+// POST /api/admin/bulk-email/send
+router.post('/bulk-email/send', async (req, res) => {
+    try {
+        const { emails, subject, body } = req.body;
+
+        if (!subject || !body) {
+            return res.status(400).json({ success: false, message: 'Subject and body are required' });
+        }
+        if (!emails || !Array.isArray(emails) || emails.length === 0) {
+            return res.status(400).json({ success: false, message: 'At least one email is required' });
+        }
+        if (emails.length > 1000) {
+            return res.status(400).json({ success: false, message: 'Maximum 1,000 emails per campaign' });
+        }
+
+        // Validate and deduplicate emails
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        const validEmails = [...new Set(emails.map(e => e.toLowerCase().trim()).filter(e => emailRegex.test(e)))];
+
+        if (validEmails.length === 0) {
+            return res.status(400).json({ success: false, message: 'No valid email addresses provided' });
+        }
+
+        const results = { sent: 0, failed: 0, errors: [] };
+        const batchSize = 10; // Send in small batches to avoid rate limits
+
+        for (let i = 0; i < validEmails.length; i += batchSize) {
+            const batch = validEmails.slice(i, i + batchSize);
+            const promises = batch.map(async (email) => {
+                try {
+                    // Send individually (BCC behavior - each gets separate email, can't see others)
+                    const result = await sendGenericEmail({
+                        to: email,
+                        subject: subject,
+                        html: body
+                    });
+                    if (result.success) {
+                        results.sent++;
+                    } else {
+                        results.failed++;
+                        results.errors.push({ email, error: result.error });
+                    }
+                } catch (err) {
+                    results.failed++;
+                    results.errors.push({ email, error: err.message });
+                }
+            });
+            await Promise.all(promises);
+
+            // Rate limit pause between batches
+            if (i + batchSize < validEmails.length) {
+                await new Promise(resolve => setTimeout(resolve, 600));
+            }
+        }
+
+        // Log campaign
+        await adminDb.collection('bulk_email_campaigns').add({
+            subject,
+            totalRecipients: validEmails.length,
+            sent: results.sent,
+            failed: results.failed,
+            sentBy: req.user?.email || 'admin',
+            sentAt: new Date().toISOString(),
+        });
+
+        console.log(`[BULK-EMAIL] Campaign sent by ${req.user?.email}: ${results.sent} delivered, ${results.failed} failed`);
+        res.json({
+            success: true,
+            message: `Bulk email sent: ${results.sent} delivered, ${results.failed} failed`,
+            sent: results.sent,
+            failed: results.failed
+        });
+    } catch (error) {
+        console.error('[BULK-EMAIL] Error:', error);
+        res.status(500).json({ success: false, message: 'Error sending bulk emails' });
+    }
+});
+
+// GET /api/admin/bulk-email/campaigns
+router.get('/bulk-email/campaigns', async (req, res) => {
+    try {
+        const snapshot = await adminDb.collection('bulk_email_campaigns')
+            .orderBy('sentAt', 'desc')
+            .limit(50)
+            .get();
+
+        const campaigns = [];
+        snapshot.forEach(doc => campaigns.push({ id: doc.id, ...doc.data() }));
+
+        res.json({ success: true, campaigns });
+    } catch (error) {
+        console.error('[BULK-EMAIL] Campaigns error:', error);
+        res.status(500).json({ success: false, message: 'Error loading campaigns' });
+    }
+});
+
 export default router;

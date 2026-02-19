@@ -702,6 +702,56 @@ RESPONSE GUIDELINES:
 });
 console.log('🤖 Chatbot endpoint registered at POST /api/chatbot/ask');
 
+// --- PUBLIC: Save Chatbot Session (no auth required) ---
+app.post('/api/chatbot/save-session', async (req, res) => {
+    try {
+        const { sessionId, messages, email, source } = req.body;
+        if (!sessionId || !messages || !Array.isArray(messages) || messages.length === 0) {
+            return res.status(400).json({ success: false, message: 'Invalid session data' });
+        }
+
+        // Sanitize messages (keep only text and role, limit to 50 messages)
+        const sanitizedMessages = messages.slice(0, 50).map(m => ({
+            role: (m.role === 'user' || m.role === 'bot') ? m.role : 'unknown',
+            text: (m.text || '').substring(0, 1000),
+            time: m.time || new Date().toISOString()
+        }));
+
+        const sessionData = {
+            sessionId: sessionId.substring(0, 100),
+            messages: sanitizedMessages,
+            messageCount: sanitizedMessages.length,
+            email: email ? email.toLowerCase().trim().substring(0, 200) : null,
+            source: (source || 'chatbot').substring(0, 50),
+            capturedAt: new Date().toISOString(),
+            replied: false
+        };
+
+        // Upsert: update if session exists, create if new
+        const existing = await adminDb.collection('chatbot_sessions')
+            .where('sessionId', '==', sessionData.sessionId)
+            .limit(1)
+            .get();
+
+        if (!existing.empty) {
+            await existing.docs[0].ref.update({
+                messages: sanitizedMessages,
+                messageCount: sanitizedMessages.length,
+                email: sessionData.email || existing.docs[0].data().email,
+                updatedAt: new Date().toISOString()
+            });
+        } else {
+            await adminDb.collection('chatbot_sessions').add(sessionData);
+        }
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Chatbot save-session error:', error.message);
+        res.json({ success: true }); // Always return success to not block frontend
+    }
+});
+console.log('💾 Chatbot session save endpoint registered at POST /api/chatbot/save-session');
+
 // --- Seed Default Admin User ---
 async function seedAdminUser() {
     try {

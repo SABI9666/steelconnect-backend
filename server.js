@@ -611,6 +611,97 @@ app.post('/api/prospects/capture', async (req, res) => {
 });
 console.log('📧 Prospect capture endpoint registered at POST /api/prospects/capture');
 
+// --- PUBLIC: AI Chatbot for Landing Page (no auth required) ---
+app.post('/api/chatbot/ask', async (req, res) => {
+    try {
+        const { message, sessionId, context } = req.body;
+        if (!message || typeof message !== 'string' || message.trim().length === 0) {
+            return res.status(400).json({ success: false, message: 'Message is required' });
+        }
+
+        // Rate limit: simple in-memory check (per session)
+        if (!global._chatbotRateLimit) global._chatbotRateLimit = {};
+        const now = Date.now();
+        const sid = sessionId || 'anonymous';
+        if (!global._chatbotRateLimit[sid]) global._chatbotRateLimit[sid] = [];
+        global._chatbotRateLimit[sid] = global._chatbotRateLimit[sid].filter(t => now - t < 60000);
+        if (global._chatbotRateLimit[sid].length >= 15) {
+            return res.status(429).json({ success: false, message: 'Too many requests. Please wait a moment.' });
+        }
+        global._chatbotRateLimit[sid].push(now);
+
+        // Clean up old sessions every 100 requests
+        if (Math.random() < 0.01) {
+            for (const key of Object.keys(global._chatbotRateLimit)) {
+                if (global._chatbotRateLimit[key].every(t => now - t > 300000)) {
+                    delete global._chatbotRateLimit[key];
+                }
+            }
+        }
+
+        const Anthropic = (await import('@anthropic-ai/sdk')).default;
+        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+        const systemPrompt = `You are the SteelConnect AI Assistant — a professional, knowledgeable, and friendly chatbot embedded on the SteelConnect landing page. Your purpose is to help visitors understand the platform and encourage them to sign up.
+
+ABOUT STEELCONNECT:
+SteelConnect is the world's premier AI-powered construction platform that connects steel designers, structural engineers, and contractors globally. Key facts:
+- 2,500+ verified professionals across 50+ countries
+- 850+ completed projects, 12,000+ AI estimates generated
+- AI-powered cost estimation using Claude Opus with 95%+ accuracy
+- Supports PDF drawing analysis, quantity takeoff, and BOQ generation
+- Real-time encrypted messaging, project management, and collaboration tools
+- Business analytics with predictive dashboards and KPI tracking
+- Enterprise security: SOC 2 compliant, end-to-end encryption, NDA management
+- Escrow payment protection, verified PE licenses, insurance validation
+
+KEY FEATURES:
+1. AI Cost Estimation: Upload PDF drawings → AI analyzes dimensions, materials, components → Detailed trade-by-trade breakdown with material BOQ, manpower, and timeline
+2. Global Marketplace: Post projects or bid on opportunities. Verified professionals with PE licenses.
+3. Real-Time Chat: Encrypted messaging with file sharing for project collaboration
+4. Business Analytics: Revenue tracking, project metrics, market benchmarks, AI forecasting
+5. Quote System: Submit and receive competitive project quotes
+6. Community Hub: Industry news, discussions, networking with professionals
+7. Support: 24/7 dedicated support team, in-app ticket system
+
+PRICING:
+- Free Tier: Sign up free, basic AI estimates, browse marketplace, connect with professionals
+- Professional: Unlimited AI estimates, PDF analysis, priority matching, advanced analytics
+- Enterprise: Custom solutions, dedicated support, API access, team management
+
+HOW TO GET STARTED:
+1. Click "Start Building Today" → 2. Enter email & choose role (Client/Contractor) → 3. Verify email with OTP → 4. Complete profile → 5. Get approved → 6. Start working!
+
+RESPONSE GUIDELINES:
+- Be concise but informative (max 150 words per response)
+- Use HTML formatting: <strong> for emphasis, <ul><li> for lists
+- Always mention relevant platform features
+- Gently encourage signing up or sharing email for more info
+- If the question is unrelated to construction/SteelConnect, politely redirect to platform topics
+- Never make up information. If unsure, suggest they contact support or sign up for a demo
+- Be professional yet warm and approachable`;
+
+        const response = await anthropic.messages.create({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 400,
+            system: systemPrompt,
+            messages: [{ role: 'user', content: message.trim().substring(0, 500) }]
+        });
+
+        const aiText = response.content[0]?.text || 'I appreciate your question! For detailed help, please sign up for free or reach out to our support team.';
+
+        res.json({ success: true, response: aiText });
+
+    } catch (error) {
+        console.error('Chatbot AI error:', error.message);
+        res.json({
+            success: true,
+            response: "I'm having a brief moment — but I'm still here to help! Ask me about <strong>AI estimation</strong>, <strong>getting started</strong>, <strong>pricing</strong>, or any SteelConnect feature, and I'll do my best to assist you."
+        });
+    }
+});
+console.log('🤖 Chatbot endpoint registered at POST /api/chatbot/ask');
+
 // --- Seed Default Admin User ---
 async function seedAdminUser() {
     try {

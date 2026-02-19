@@ -397,6 +397,60 @@ export async function sendGenericEmail({ to, subject, html: rawHtml }) {
     }
 }
 
+// ============================================================
+// BULK OUTREACH EMAIL — Inbox-optimized (avoids Promotions tab)
+// ============================================================
+// Key inbox placement techniques:
+// 1. Sent from a person name, not brand name
+// 2. Minimal HTML — looks like a personal email, not a newsletter
+// 3. No images, gradients, or heavy formatting
+// 4. High plain-text-to-HTML ratio
+// 5. Conversational tone, not marketing speak
+// 6. Single link only (fewer links = less promotional)
+// 7. Proper Reply-To so replies go to real mailbox
+// 8. No List-Unsubscribe header (personal emails don't have it)
+// 9. Short subject line, no caps or exclamation marks
+// ============================================================
+export async function sendBulkOutreachEmail({ to, subject, htmlBody, textBody }) {
+    try {
+        // Wrap in a minimal personal-style email shell (no heavy branding)
+        const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background-color:#ffffff;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;padding:24px;">
+<tr><td style="font-size:15px;line-height:1.75;color:#1a1a1a;">
+${htmlBody}
+</td></tr>
+</table>
+</body></html>`;
+
+        const text = textBody || htmlToPlainText(html);
+
+        const { data, error } = await resend.emails.send({
+            from: `Sabi from SteelConnect <${FROM_EMAIL}>`,
+            reply_to: REPLY_TO,
+            to,
+            subject,
+            html,
+            text,
+            headers: {
+                'X-Entity-Ref-ID': crypto.randomUUID(),
+                'X-Mailer': 'SteelConnect',
+                'Precedence': 'bulk',
+            },
+        });
+
+        if (error) {
+            console.error(`[BULK-OUTREACH] Failed for ${to}:`, error);
+            return { success: false, error: error.message };
+        }
+        return { success: true, emailId: data?.id };
+    } catch (error) {
+        console.error(`[BULK-OUTREACH] Exception for ${to}:`, error.message);
+        return { success: false, error: error.message };
+    }
+}
+
 export default {
     sendLoginNotification,
     sendEstimationResultNotification,

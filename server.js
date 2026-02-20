@@ -1103,7 +1103,22 @@ server.timeout = 120000; // 2 minutes
 
         const HOUR_MS = 60 * 60 * 1000; // 1 hour
 
-        // Start the interval
+        // Send the first report 2 minutes after startup so the admin gets one quickly
+        setTimeout(async () => {
+            console.log('[ADMIN-REPORT-SCHEDULER] Sending initial admin activity report...');
+            try {
+                const result = await sendHourlyAdminActivityReport();
+                if (result.success) {
+                    console.log(`[ADMIN-REPORT-SCHEDULER] Initial report sent — ${result.activitiesCount} activities, email ID: ${result.emailId}`);
+                } else {
+                    console.error('[ADMIN-REPORT-SCHEDULER] Initial report failed:', result.error);
+                }
+            } catch (err) {
+                console.error('[ADMIN-REPORT-SCHEDULER] Initial report error:', err.message);
+            }
+        }, 2 * 60 * 1000); // 2 minutes after startup
+
+        // Then continue sending every hour
         const reportInterval = setInterval(async () => {
             console.log('[ADMIN-REPORT-SCHEDULER] Triggering hourly admin activity report...');
             try {
@@ -1123,6 +1138,7 @@ server.timeout = 120000; // 2 minutes
         process.on('SIGINT', () => clearInterval(reportInterval));
 
         console.log('[ADMIN-REPORT-SCHEDULER] Hourly admin activity report scheduler started (every 60 min)');
+        console.log('[ADMIN-REPORT-SCHEDULER] Initial report will be sent 2 minutes after startup');
         console.log('[ADMIN-REPORT-SCHEDULER] Reports will be sent to sabincn676@gmail.com');
     } catch (err) {
         console.warn('[ADMIN-REPORT-SCHEDULER] Could not start scheduler:', err.message);

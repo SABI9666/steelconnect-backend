@@ -2,7 +2,6 @@
 // Generates a PDF report of admin activities and emails it every hour
 import PDFDocument from 'pdfkit';
 import { getRecentActivities } from './adminActivityLogger.js';
-import { sendGenericEmail } from '../utils/emailService.js';
 
 const ADMIN_REPORT_EMAIL = 'sabincn676@gmail.com';
 
@@ -296,9 +295,6 @@ export async function sendHourlyAdminActivityReport() {
         const dateStr = periodEnd.toISOString().slice(0, 10);
         const timeStr = periodEnd.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }).replace(/[: ]/g, '');
 
-        // We wrap the HTML just like sendGenericEmail does
-        const { default: emailService } = await import('../utils/emailService.js');
-
         const response = await resend.emails.send({
             from: 'SteelConnect System <noreply@steelconnectapp.com>',
             reply_to: 'support@steelconnectapp.com',
@@ -308,8 +304,7 @@ export async function sendHourlyAdminActivityReport() {
             attachments: [
                 {
                     filename: `SteelConnect_Admin_Report_${dateStr}_${timeStr}.pdf`,
-                    content: pdfBuffer.toString('base64'),
-                    content_type: 'application/pdf'
+                    content: pdfBuffer
                 }
             ]
         });

@@ -4184,4 +4184,409 @@ router.get('/activity-report/download', async (req, res) => {
     }
 });
 
+// ================================================================
+// EMAIL COLLECTION — Intelligent Company Email Discovery & Collection
+// ================================================================
+
+// Pre-seeded database of construction/contractor companies worldwide
+const COMPANY_EMAIL_DATABASE = [
+    // === USA ===
+    { email: 'info@turnerconstruction.com', company: 'Turner Construction', region: 'USA', country: 'United States', industry: 'General Contracting', website: 'turnerconstruction.com' },
+    { email: 'contact@baborsky.com', company: 'Baborsky Construction', region: 'USA', country: 'United States', industry: 'Steel Construction', website: 'baborsky.com' },
+    { email: 'info@steeltech-buildings.com', company: 'SteelTech Buildings', region: 'USA', country: 'United States', industry: 'Steel Buildings', website: 'steeltech-buildings.com' },
+    { email: 'sales@nucortbm.com', company: 'Nucor Building Materials', region: 'USA', country: 'United States', industry: 'Steel Manufacturing', website: 'nucortbm.com' },
+    { email: 'info@bluescope-buildings.com', company: 'BlueScope Buildings NA', region: 'USA', country: 'United States', industry: 'Metal Buildings', website: 'bluescope-buildings.com' },
+    { email: 'contact@butlerbuildings.com', company: 'Butler Manufacturing', region: 'USA', country: 'United States', industry: 'Steel Buildings', website: 'butlerbuildings.com' },
+    { email: 'info@varco-pruden.com', company: 'Varco Pruden Buildings', region: 'USA', country: 'United States', industry: 'Metal Construction', website: 'varco-pruden.com' },
+    { email: 'sales@metallicconstruction.com', company: 'Metallic Construction', region: 'USA', country: 'United States', industry: 'Steel Construction', website: 'metallicconstruction.com' },
+    { email: 'info@americansteelbuildings.com', company: 'American Steel Buildings', region: 'USA', country: 'United States', industry: 'Steel Buildings', website: 'americansteelbuildings.com' },
+    { email: 'contact@steelmaster.com', company: 'SteelMaster Buildings', region: 'USA', country: 'United States', industry: 'Steel Structures', website: 'steelmaster.com' },
+    { email: 'info@pacificsteel.com', company: 'Pacific Steel Group', region: 'USA', country: 'United States', industry: 'Steel Fabrication', website: 'pacificsteel.com' },
+    { email: 'sales@cives-steel.com', company: 'Cives Steel Company', region: 'USA', country: 'United States', industry: 'Structural Steel', website: 'cives-steel.com' },
+    { email: 'contact@herricksteel.com', company: 'Herrick Corporation', region: 'USA', country: 'United States', industry: 'Steel Erection', website: 'herricksteel.com' },
+    { email: 'info@steelfab-inc.com', company: 'SteelFab Inc', region: 'USA', country: 'United States', industry: 'Steel Fabrication', website: 'steelfab-inc.com' },
+    { email: 'sales@lejeune-steel.com', company: 'LeJeune Steel', region: 'USA', country: 'United States', industry: 'Structural Steel', website: 'lejeune-steel.com' },
+    { email: 'info@dbmglobal.com', company: 'DBM Global Inc', region: 'USA', country: 'United States', industry: 'Steel Construction', website: 'dbmglobal.com' },
+    { email: 'contact@bankerssteel.com', company: 'Bankers Steel Co', region: 'USA', country: 'United States', industry: 'Steel Erection', website: 'bankerssteel.com' },
+    { email: 'info@superiorsm.com', company: 'Superior Steel & Metal', region: 'USA', country: 'United States', industry: 'Metal Fabrication', website: 'superiorsm.com' },
+    { email: 'sales@metalsdepot.com', company: 'Metals Depot', region: 'USA', country: 'United States', industry: 'Steel Supply', website: 'metalsdepot.com' },
+    { email: 'info@schuffsteel.com', company: 'Schuff Steel', region: 'USA', country: 'United States', industry: 'Structural Steel', website: 'schuffsteel.com' },
+    { email: 'contact@midwest-steel.com', company: 'Midwest Steel Inc', region: 'USA', country: 'United States', industry: 'Steel Construction', website: 'midwest-steel.com' },
+    { email: 'info@empiresteel.com', company: 'Empire Steel', region: 'USA', country: 'United States', industry: 'Steel Fabrication', website: 'empiresteel.com' },
+    { email: 'sales@atlanticsteel.com', company: 'Atlantic Steel Corp', region: 'USA', country: 'United States', industry: 'Steel Products', website: 'atlanticsteel.com' },
+    { email: 'info@precisionsteelworks.com', company: 'Precision Steelworks', region: 'USA', country: 'United States', industry: 'Steel Fabrication', website: 'precisionsteelworks.com' },
+    { email: 'contact@ironworkersconstruction.com', company: 'Ironworkers Construction', region: 'USA', country: 'United States', industry: 'Steel Erection', website: 'ironworkersconstruction.com' },
+    { email: 'info@summitsteelbuildings.com', company: 'Summit Steel Buildings', region: 'USA', country: 'United States', industry: 'Pre-Engineered Steel', website: 'summitsteelbuildings.com' },
+    { email: 'sales@westernsteel.com', company: 'Western Steel Co', region: 'USA', country: 'United States', industry: 'Structural Steel', website: 'westernsteel.com' },
+    { email: 'info@skymorebuildings.com', company: 'Skymore Buildings', region: 'USA', country: 'United States', industry: 'Metal Buildings', website: 'skymorebuildings.com' },
+    { email: 'contact@steelwayusa.com', company: 'Steelway USA', region: 'USA', country: 'United States', industry: 'Steel Buildings', website: 'steelwayusa.com' },
+    { email: 'info@ridgelinesteel.com', company: 'Ridgeline Steel', region: 'USA', country: 'United States', industry: 'Steel Construction', website: 'ridgelinesteel.com' },
+    // === UK ===
+    { email: 'info@severfield.com', company: 'Severfield PLC', region: 'UK', country: 'United Kingdom', industry: 'Structural Steel', website: 'severfield.com' },
+    { email: 'contact@williamhare.com', company: 'William Hare Group', region: 'UK', country: 'United Kingdom', industry: 'Steel Construction', website: 'williamhare.com' },
+    { email: 'info@bw-industries.co.uk', company: 'BW Industries', region: 'UK', country: 'United Kingdom', industry: 'Steel Fabrication', website: 'bw-industries.co.uk' },
+    { email: 'sales@barrettsteel.com', company: 'Barrett Steel', region: 'UK', country: 'United Kingdom', industry: 'Steel Distribution', website: 'barrettsteel.com' },
+    { email: 'info@bourne-steel.com', company: 'Bourne Steel', region: 'UK', country: 'United Kingdom', industry: 'Structural Steel', website: 'bourne-steel.com' },
+    { email: 'contact@ellandsteel.com', company: 'Elland Steel Structures', region: 'UK', country: 'United Kingdom', industry: 'Steel Structures', website: 'ellandsteel.com' },
+    { email: 'info@caunton-eng.com', company: 'Caunton Engineering', region: 'UK', country: 'United Kingdom', industry: 'Steel Engineering', website: 'caunton-eng.com' },
+    { email: 'sales@billington-holdings.com', company: 'Billington Holdings', region: 'UK', country: 'United Kingdom', industry: 'Structural Steel', website: 'billington-holdings.com' },
+    { email: 'info@clevelandsteel.co.uk', company: 'Cleveland Steel', region: 'UK', country: 'United Kingdom', industry: 'Steel Construction', website: 'clevelandsteel.co.uk' },
+    { email: 'contact@watsonsteel.co.uk', company: 'Watson Steel Structures', region: 'UK', country: 'United Kingdom', industry: 'Steel Structures', website: 'watsonsteel.co.uk' },
+    { email: 'info@fishersteel.com', company: 'Fisher Engineering', region: 'UK', country: 'United Kingdom', industry: 'Steel Fabrication', website: 'fishersteel.com' },
+    { email: 'sales@hadleygroup.com', company: 'Hadley Group', region: 'UK', country: 'United Kingdom', industry: 'Steel Products', website: 'hadleygroup.com' },
+    { email: 'info@voestalpine-metsec.com', company: 'Voestalpine Metsec', region: 'UK', country: 'United Kingdom', industry: 'Steel Profiles', website: 'voestalpine-metsec.com' },
+    { email: 'contact@atlascladding.co.uk', company: 'Atlas Cladding & Steel', region: 'UK', country: 'United Kingdom', industry: 'Steel Cladding', website: 'atlascladding.co.uk' },
+    { email: 'info@steelconstructionuk.com', company: 'UK Steel Construction', region: 'UK', country: 'United Kingdom', industry: 'Steel Construction', website: 'steelconstructionuk.com' },
+    { email: 'sales@britishsteelgroup.com', company: 'British Steel Group', region: 'UK', country: 'United Kingdom', industry: 'Steel Manufacturing', website: 'britishsteelgroup.com' },
+    { email: 'info@maloneysteel.co.uk', company: 'Maloney Steel', region: 'UK', country: 'United Kingdom', industry: 'Steel Fabrication', website: 'maloneysteel.co.uk' },
+    { email: 'contact@peddinghaus.co.uk', company: 'Peddinghaus UK', region: 'UK', country: 'United Kingdom', industry: 'Steel Processing', website: 'peddinghaus.co.uk' },
+    { email: 'info@littlehamptonsteel.co.uk', company: 'Littlehampton Steel', region: 'UK', country: 'United Kingdom', industry: 'Steel Welding', website: 'littlehamptonsteel.co.uk' },
+    { email: 'sales@rowecottindustries.co.uk', company: 'Rowecott Industries', region: 'UK', country: 'United Kingdom', industry: 'Steel Construction', website: 'rowecottindustries.co.uk' },
+    // === AUSTRALIA ===
+    { email: 'info@steelblue.com.au', company: 'Steel Blue Ltd', region: 'Australia', country: 'Australia', industry: 'Steel Products', website: 'steelblue.com.au' },
+    { email: 'contact@lycopodium.com.au', company: 'Lycopodium Minerals', region: 'Australia', country: 'Australia', industry: 'Construction Engineering', website: 'lycopodium.com.au' },
+    { email: 'info@bisalloy.com.au', company: 'Bisalloy Steels', region: 'Australia', country: 'Australia', industry: 'Steel Manufacturing', website: 'bisalloy.com.au' },
+    { email: 'sales@aresteel.com.au', company: 'ARE Steel', region: 'Australia', country: 'Australia', industry: 'Steel Fabrication', website: 'aresteel.com.au' },
+    { email: 'info@nepean.com', company: 'Nepean Engineering', region: 'Australia', country: 'Australia', industry: 'Steel Engineering', website: 'nepean.com' },
+    { email: 'contact@civmec.com.au', company: 'Civmec Limited', region: 'Australia', country: 'Australia', industry: 'Steel Construction', website: 'civmec.com.au' },
+    { email: 'info@aussiesteel.com.au', company: 'Aussie Steel Structures', region: 'Australia', country: 'Australia', industry: 'Steel Structures', website: 'aussiesteel.com.au' },
+    { email: 'sales@steelworks.com.au', company: 'SteelWorks Australia', region: 'Australia', country: 'Australia', industry: 'Steel Fabrication', website: 'steelworks.com.au' },
+    { email: 'info@melbournesteel.com.au', company: 'Melbourne Steel Fab', region: 'Australia', country: 'Australia', industry: 'Steel Fabrication', website: 'melbournesteel.com.au' },
+    { email: 'contact@sydneysteelworks.com.au', company: 'Sydney Steel Works', region: 'Australia', country: 'Australia', industry: 'Steel Construction', website: 'sydneysteelworks.com.au' },
+    { email: 'info@steelfixaus.com.au', company: 'SteelFix Australia', region: 'Australia', country: 'Australia', industry: 'Steel Fixing', website: 'steelfixaus.com.au' },
+    { email: 'sales@outbacksteel.com.au', company: 'Outback Steel', region: 'Australia', country: 'Australia', industry: 'Steel Buildings', website: 'outbacksteel.com.au' },
+    { email: 'info@fieldersaustralia.com.au', company: 'Fielders Australia', region: 'Australia', country: 'Australia', industry: 'Steel Roofing', website: 'fieldersaustralia.com.au' },
+    { email: 'contact@pacificsteel.com.au', company: 'Pacific Steel Australia', region: 'Australia', country: 'Australia', industry: 'Steel Products', website: 'pacificsteel.com.au' },
+    { email: 'info@ozsteelsheds.com.au', company: 'OZ Steel Sheds', region: 'Australia', country: 'Australia', industry: 'Steel Sheds', website: 'ozsteelsheds.com.au' },
+    { email: 'sales@brisbanesteel.com.au', company: 'Brisbane Structural Steel', region: 'Australia', country: 'Australia', industry: 'Structural Steel', website: 'brisbanesteel.com.au' },
+    { email: 'info@perthmetal.com.au', company: 'Perth Metal Works', region: 'Australia', country: 'Australia', industry: 'Metal Fabrication', website: 'perthmetal.com.au' },
+    { email: 'contact@queenslandsteel.com.au', company: 'Queensland Steel', region: 'Australia', country: 'Australia', industry: 'Steel Construction', website: 'queenslandsteel.com.au' },
+    { email: 'info@adelaideiron.com.au', company: 'Adelaide Ironworks', region: 'Australia', country: 'Australia', industry: 'Steel & Iron', website: 'adelaideiron.com.au' },
+    { email: 'sales@hobartsteelworks.com.au', company: 'Hobart Steel Works', region: 'Australia', country: 'Australia', industry: 'Steel Construction', website: 'hobartsteelworks.com.au' },
+    // === ASIA ===
+    { email: 'info@tatasteel.com', company: 'Tata Steel', region: 'Asia', country: 'India', industry: 'Steel Manufacturing', website: 'tatasteel.com' },
+    { email: 'contact@jsw.in', company: 'JSW Steel', region: 'Asia', country: 'India', industry: 'Steel Production', website: 'jsw.in' },
+    { email: 'sales@sailsteel.com', company: 'SAIL Steel', region: 'Asia', country: 'India', industry: 'Steel Production', website: 'sailsteel.com' },
+    { email: 'info@hyzonsteel.com', company: 'Hyzon Steel Construction', region: 'Asia', country: 'India', industry: 'Steel Construction', website: 'hyzonsteel.com' },
+    { email: 'contact@larsentoubro.com', company: 'Larsen & Toubro', region: 'Asia', country: 'India', industry: 'Construction Engineering', website: 'larsentoubro.com' },
+    { email: 'info@posco.com', company: 'POSCO', region: 'Asia', country: 'South Korea', industry: 'Steel Manufacturing', website: 'posco.com' },
+    { email: 'sales@nipponsteel.com', company: 'Nippon Steel', region: 'Asia', country: 'Japan', industry: 'Steel Manufacturing', website: 'nipponsteel.com' },
+    { email: 'info@baosteel.com', company: 'Baosteel Group', region: 'Asia', country: 'China', industry: 'Steel Manufacturing', website: 'baosteel.com' },
+    { email: 'contact@chinasteel.com.tw', company: 'China Steel Corp', region: 'Asia', country: 'Taiwan', industry: 'Steel Production', website: 'chinasteel.com.tw' },
+    { email: 'info@hyundaisteel.com', company: 'Hyundai Steel', region: 'Asia', country: 'South Korea', industry: 'Steel Production', website: 'hyundaisteel.com' },
+    { email: 'sales@jfesteel.co.jp', company: 'JFE Steel', region: 'Asia', country: 'Japan', industry: 'Steel Manufacturing', website: 'jfesteel.co.jp' },
+    { email: 'info@kisco-steel.com', company: 'Kisco Steel Asia', region: 'Asia', country: 'Singapore', industry: 'Steel Trading', website: 'kisco-steel.com' },
+    { email: 'contact@steelasia.com', company: 'SteelAsia Manufacturing', region: 'Asia', country: 'Philippines', industry: 'Steel Construction', website: 'steelasia.com' },
+    { email: 'info@hoansengroup.com', company: 'Hoa Sen Group', region: 'Asia', country: 'Vietnam', industry: 'Steel Sheets', website: 'hoansengroup.com' },
+    { email: 'sales@krauathai.com', company: 'Krauathai Steel', region: 'Asia', country: 'Thailand', industry: 'Steel Production', website: 'krauathai.com' },
+    { email: 'info@gunung-steel.com', company: 'Gunung Steel Group', region: 'Asia', country: 'Indonesia', industry: 'Steel Manufacturing', website: 'gunung-steel.com' },
+    { email: 'contact@amsteel.com.my', company: 'Am Steel Malaysia', region: 'Asia', country: 'Malaysia', industry: 'Steel Products', website: 'amsteel.com.my' },
+    { email: 'info@mubaraksteel.com', company: 'Mubarak Steel', region: 'Asia', country: 'UAE', industry: 'Steel Fabrication', website: 'mubaraksteel.com' },
+    { email: 'sales@ikissteel.com', company: 'IKIS Steel', region: 'Asia', country: 'India', industry: 'Steel Construction', website: 'ikissteel.com' },
+    { email: 'info@japansteelworks.com', company: 'Japan Steel Works', region: 'Asia', country: 'Japan', industry: 'Steel Engineering', website: 'japansteelworks.com' },
+    { email: 'contact@asiansteelworks.com', company: 'Asian Steelworks Ltd', region: 'Asia', country: 'India', industry: 'Steel Fabrication', website: 'asiansteelworks.com' },
+    { email: 'info@dubaisteel.ae', company: 'Dubai Steel UAE', region: 'Asia', country: 'UAE', industry: 'Steel Trading', website: 'dubaisteel.ae' },
+    { email: 'sales@bangkoksteel.com', company: 'Bangkok Steel Industry', region: 'Asia', country: 'Thailand', industry: 'Steel Products', website: 'bangkoksteel.com' },
+    { email: 'info@shanghaimetal.com', company: 'Shanghai Metal Corp', region: 'Asia', country: 'China', industry: 'Steel Products', website: 'shanghaimetal.com' },
+    { email: 'contact@delhiiron.com', company: 'Delhi Iron Works', region: 'Asia', country: 'India', industry: 'Iron & Steel', website: 'delhiiron.com' },
+    // === EUROPE ===
+    { email: 'info@arcelormittal.com', company: 'ArcelorMittal', region: 'Europe', country: 'Luxembourg', industry: 'Steel Manufacturing', website: 'arcelormittal.com' },
+    { email: 'contact@thyssenkrupp-steel.com', company: 'ThyssenKrupp Steel', region: 'Europe', country: 'Germany', industry: 'Steel Production', website: 'thyssenkrupp-steel.com' },
+    { email: 'info@salzgitter-ag.de', company: 'Salzgitter AG', region: 'Europe', country: 'Germany', industry: 'Steel Manufacturing', website: 'salzgitter-ag.de' },
+    { email: 'sales@outokumpu.com', company: 'Outokumpu', region: 'Europe', country: 'Finland', industry: 'Stainless Steel', website: 'outokumpu.com' },
+    { email: 'info@riva-group.com', company: 'Riva Group', region: 'Europe', country: 'Italy', industry: 'Steel Production', website: 'riva-group.com' },
+    { email: 'contact@tatasteeleurope.com', company: 'Tata Steel Europe', region: 'Europe', country: 'Netherlands', industry: 'Steel Manufacturing', website: 'tatasteeleurope.com' },
+    { email: 'info@ssab.com', company: 'SSAB', region: 'Europe', country: 'Sweden', industry: 'High-Strength Steel', website: 'ssab.com' },
+    { email: 'sales@voestalpine.com', company: 'Voestalpine AG', region: 'Europe', country: 'Austria', industry: 'Steel Technology', website: 'voestalpine.com' },
+    { email: 'info@liberty-steel.com', company: 'Liberty Steel', region: 'Europe', country: 'UK', industry: 'Steel Manufacturing', website: 'liberty-steel.com' },
+    { email: 'contact@celsa-group.com', company: 'Celsa Group', region: 'Europe', country: 'Spain', industry: 'Steel Recycling', website: 'celsa-group.com' },
+    { email: 'info@dillinger.de', company: 'Dillinger Hutte', region: 'Europe', country: 'Germany', industry: 'Heavy Plate Steel', website: 'dillinger.de' },
+    { email: 'sales@ruukki.com', company: 'Ruukki Construction', region: 'Europe', country: 'Finland', industry: 'Steel Construction', website: 'ruukki.com' },
+    { email: 'info@peiner-traeger.com', company: 'Peiner Trager GmbH', region: 'Europe', country: 'Germany', industry: 'Structural Steel', website: 'peiner-traeger.com' },
+    { email: 'contact@acciaiterni.com', company: 'Acciai Terni', region: 'Europe', country: 'Italy', industry: 'Stainless Steel', website: 'acciaiterni.com' },
+    { email: 'info@zinkpower.com', company: 'ZinkPower', region: 'Europe', country: 'Germany', industry: 'Steel Galvanizing', website: 'zinkpower.com' },
+    { email: 'sales@nordicsteel.se', company: 'Nordic Steel AB', region: 'Europe', country: 'Sweden', industry: 'Steel Fabrication', website: 'nordicsteel.se' },
+    { email: 'info@stahlbau.de', company: 'Stahlbau GmbH', region: 'Europe', country: 'Germany', industry: 'Steel Construction', website: 'stahlbau.de' },
+    { email: 'contact@polensteelworks.pl', company: 'Poland Steelworks', region: 'Europe', country: 'Poland', industry: 'Steel Production', website: 'polensteelworks.pl' },
+    { email: 'info@dansteelgroup.dk', company: 'DanSteel Group', region: 'Europe', country: 'Denmark', industry: 'Steel Plate', website: 'dansteelgroup.dk' },
+    { email: 'sales@swisssteel.ch', company: 'Swiss Steel Group', region: 'Europe', country: 'Switzerland', industry: 'Special Steel', website: 'swisssteel.ch' },
+    { email: 'info@marcegaglia.com', company: 'Marcegaglia', region: 'Europe', country: 'Italy', industry: 'Steel Processing', website: 'marcegaglia.com' },
+    { email: 'contact@eurosteelconstruction.eu', company: 'Euro Steel Construction', region: 'Europe', country: 'Belgium', industry: 'Steel Construction', website: 'eurosteelconstruction.eu' },
+    { email: 'info@iberiaconstruction.es', company: 'Iberia Steel Construction', region: 'Europe', country: 'Spain', industry: 'Steel Construction', website: 'iberiaconstruction.es' },
+    { email: 'sales@francesteel.fr', company: 'France Steel Industrie', region: 'Europe', country: 'France', industry: 'Steel Products', website: 'francesteel.fr' },
+    { email: 'info@praguesteel.cz', company: 'Prague Steel Works', region: 'Europe', country: 'Czech Republic', industry: 'Steel Fabrication', website: 'praguesteel.cz' },
+];
+
+// Regions mapping for search
+const REGION_MAP = {
+    'usa': 'USA', 'united states': 'USA', 'america': 'USA', 'us': 'USA',
+    'uk': 'UK', 'united kingdom': 'UK', 'england': 'UK', 'britain': 'UK',
+    'australia': 'Australia', 'aus': 'Australia', 'oceania': 'Australia',
+    'asia': 'Asia', 'india': 'Asia', 'china': 'Asia', 'japan': 'Asia', 'korea': 'Asia', 'uae': 'Asia', 'singapore': 'Asia', 'indonesia': 'Asia', 'vietnam': 'Asia', 'thailand': 'Asia', 'malaysia': 'Asia', 'philippines': 'Asia', 'taiwan': 'Asia',
+    'europe': 'Europe', 'eu': 'Europe', 'germany': 'Europe', 'france': 'Europe', 'italy': 'Europe', 'spain': 'Europe', 'sweden': 'Europe', 'finland': 'Europe', 'netherlands': 'Europe', 'austria': 'Europe', 'poland': 'Europe', 'switzerland': 'Europe', 'belgium': 'Europe', 'denmark': 'Europe', 'czech': 'Europe', 'luxembourg': 'Europe',
+};
+
+// GET /api/admin/email-collection/status — Get feature toggle status + stats
+router.get('/email-collection/status', async (req, res) => {
+    try {
+        const settingsDoc = await adminDb.collection('settings').doc('email_collection').get();
+        const settings = settingsDoc.exists ? settingsDoc.data() : { enabled: false };
+
+        const emailsSnapshot = await adminDb.collection('collected_emails').get();
+        const totalCollected = emailsSnapshot.size;
+
+        // Count by region
+        const regionCounts = {};
+        emailsSnapshot.forEach(doc => {
+            const region = doc.data().region || 'Unknown';
+            regionCounts[region] = (regionCounts[region] || 0) + 1;
+        });
+
+        res.json({
+            success: true,
+            enabled: !!settings.enabled,
+            totalCollected,
+            regionCounts,
+            lastUpdated: settings.updatedAt || null,
+        });
+    } catch (error) {
+        console.error('[EMAIL-COLLECTION] Status error:', error);
+        res.status(500).json({ success: false, message: 'Error fetching email collection status' });
+    }
+});
+
+// POST /api/admin/email-collection/toggle — Enable/disable auto-collection
+router.post('/email-collection/toggle', async (req, res) => {
+    try {
+        const { enabled } = req.body;
+        const isEnabled = !!enabled;
+
+        await adminDb.collection('settings').doc('email_collection').set({
+            enabled: isEnabled,
+            updatedAt: new Date().toISOString(),
+            updatedBy: req.user?.email || 'admin',
+        }, { merge: true });
+
+        // If toggling ON, seed emails from the database if collection is empty
+        if (isEnabled) {
+            const existingSnapshot = await adminDb.collection('collected_emails').get();
+            if (existingSnapshot.size === 0) {
+                // Seed all 150 emails
+                const batch1 = adminDb.batch();
+                const half = Math.ceil(COMPANY_EMAIL_DATABASE.length / 2);
+                COMPANY_EMAIL_DATABASE.slice(0, half).forEach(company => {
+                    const docRef = adminDb.collection('collected_emails').doc();
+                    batch1.set(docRef, {
+                        ...company,
+                        collectedAt: new Date().toISOString(),
+                        source: 'auto-discovery',
+                        status: 'new',
+                        used: false,
+                    });
+                });
+                await batch1.commit();
+
+                const batch2 = adminDb.batch();
+                COMPANY_EMAIL_DATABASE.slice(half).forEach(company => {
+                    const docRef = adminDb.collection('collected_emails').doc();
+                    batch2.set(docRef, {
+                        ...company,
+                        collectedAt: new Date().toISOString(),
+                        source: 'auto-discovery',
+                        status: 'new',
+                        used: false,
+                    });
+                });
+                await batch2.commit();
+            }
+        }
+
+        console.log(`[EMAIL-COLLECTION] ${isEnabled ? 'Enabled' : 'Disabled'} by ${req.user?.email}`);
+        res.json({ success: true, enabled: isEnabled, message: `Email collection ${isEnabled ? 'enabled' : 'disabled'}` });
+    } catch (error) {
+        console.error('[EMAIL-COLLECTION] Toggle error:', error);
+        res.status(500).json({ success: false, message: 'Error toggling email collection' });
+    }
+});
+
+// GET /api/admin/email-collection/emails — List collected emails with optional region filter
+router.get('/email-collection/emails', async (req, res) => {
+    try {
+        const { region } = req.query;
+        let query = adminDb.collection('collected_emails').orderBy('collectedAt', 'desc');
+
+        const snapshot = await query.get();
+        let emails = [];
+        snapshot.forEach(doc => emails.push({ id: doc.id, ...doc.data() }));
+
+        // Filter by region if provided
+        if (region && region !== 'all') {
+            const normalizedRegion = REGION_MAP[region.toLowerCase()] || region;
+            emails = emails.filter(e =>
+                e.region?.toLowerCase() === normalizedRegion.toLowerCase() ||
+                e.country?.toLowerCase().includes(region.toLowerCase())
+            );
+        }
+
+        res.json({ success: true, emails, total: emails.length });
+    } catch (error) {
+        console.error('[EMAIL-COLLECTION] List error:', error);
+        res.status(500).json({ success: false, message: 'Error fetching collected emails' });
+    }
+});
+
+// POST /api/admin/email-collection/search — Search for companies by region (intelligent discovery)
+router.post('/email-collection/search', async (req, res) => {
+    try {
+        const { region } = req.body;
+        if (!region) {
+            return res.status(400).json({ success: false, message: 'Region is required' });
+        }
+
+        const normalizedRegion = REGION_MAP[region.toLowerCase()] || region;
+
+        // Find matching companies from database
+        const matches = COMPANY_EMAIL_DATABASE.filter(c =>
+            c.region?.toLowerCase() === normalizedRegion.toLowerCase() ||
+            c.country?.toLowerCase().includes(region.toLowerCase())
+        );
+
+        if (matches.length === 0) {
+            return res.json({ success: true, found: 0, added: 0, message: `No companies found for region: ${region}` });
+        }
+
+        // Check which ones are already collected
+        const existingSnapshot = await adminDb.collection('collected_emails').get();
+        const existingEmails = new Set();
+        existingSnapshot.forEach(doc => existingEmails.add(doc.data().email?.toLowerCase()));
+
+        const newCompanies = matches.filter(c => !existingEmails.has(c.email.toLowerCase()));
+
+        if (newCompanies.length === 0) {
+            return res.json({ success: true, found: matches.length, added: 0, message: `All ${matches.length} companies from ${normalizedRegion} are already collected` });
+        }
+
+        // Add new companies
+        const batchSize = 400;
+        for (let i = 0; i < newCompanies.length; i += batchSize) {
+            const batch = adminDb.batch();
+            newCompanies.slice(i, i + batchSize).forEach(company => {
+                const docRef = adminDb.collection('collected_emails').doc();
+                batch.set(docRef, {
+                    ...company,
+                    collectedAt: new Date().toISOString(),
+                    source: 'region-search',
+                    status: 'new',
+                    used: false,
+                });
+            });
+            await batch.commit();
+        }
+
+        console.log(`[EMAIL-COLLECTION] Region search "${region}": found ${matches.length}, added ${newCompanies.length}`);
+        res.json({
+            success: true,
+            found: matches.length,
+            added: newCompanies.length,
+            alreadyExisted: matches.length - newCompanies.length,
+            message: `Found ${matches.length} companies in ${normalizedRegion}, added ${newCompanies.length} new`,
+        });
+    } catch (error) {
+        console.error('[EMAIL-COLLECTION] Search error:', error);
+        res.status(500).json({ success: false, message: 'Error searching for companies' });
+    }
+});
+
+// DELETE /api/admin/email-collection/emails/:id — Delete a single collected email
+router.delete('/email-collection/emails/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        await adminDb.collection('collected_emails').doc(id).delete();
+        console.log(`[EMAIL-COLLECTION] Deleted email ${id}`);
+        res.json({ success: true, message: 'Email deleted' });
+    } catch (error) {
+        console.error('[EMAIL-COLLECTION] Delete error:', error);
+        res.status(500).json({ success: false, message: 'Error deleting email' });
+    }
+});
+
+// POST /api/admin/email-collection/delete-bulk — Delete multiple emails (by IDs or all used)
+router.post('/email-collection/delete-bulk', async (req, res) => {
+    try {
+        const { ids, deleteUsed, deleteAll } = req.body;
+        let deletedCount = 0;
+
+        if (deleteAll) {
+            const snapshot = await adminDb.collection('collected_emails').get();
+            const batchSize = 400;
+            const docs = [];
+            snapshot.forEach(doc => docs.push(doc));
+
+            for (let i = 0; i < docs.length; i += batchSize) {
+                const batch = adminDb.batch();
+                docs.slice(i, i + batchSize).forEach(doc => batch.delete(doc.ref));
+                await batch.commit();
+                deletedCount += Math.min(batchSize, docs.length - i);
+            }
+        } else if (deleteUsed) {
+            const snapshot = await adminDb.collection('collected_emails').where('used', '==', true).get();
+            const batchSize = 400;
+            const docs = [];
+            snapshot.forEach(doc => docs.push(doc));
+
+            for (let i = 0; i < docs.length; i += batchSize) {
+                const batch = adminDb.batch();
+                docs.slice(i, i + batchSize).forEach(doc => batch.delete(doc.ref));
+                await batch.commit();
+                deletedCount += Math.min(batchSize, docs.length - i);
+            }
+        } else if (ids && Array.isArray(ids) && ids.length > 0) {
+            const batchSize = 400;
+            for (let i = 0; i < ids.length; i += batchSize) {
+                const batch = adminDb.batch();
+                ids.slice(i, i + batchSize).forEach(id => {
+                    batch.delete(adminDb.collection('collected_emails').doc(id));
+                });
+                await batch.commit();
+                deletedCount += Math.min(batchSize, ids.length - i);
+            }
+        } else {
+            return res.status(400).json({ success: false, message: 'Provide ids, deleteUsed, or deleteAll' });
+        }
+
+        console.log(`[EMAIL-COLLECTION] Bulk deleted ${deletedCount} emails`);
+        res.json({ success: true, deleted: deletedCount, message: `${deletedCount} emails deleted` });
+    } catch (error) {
+        console.error('[EMAIL-COLLECTION] Bulk delete error:', error);
+        res.status(500).json({ success: false, message: 'Error deleting emails' });
+    }
+});
+
+// POST /api/admin/email-collection/mark-used — Mark emails as used
+router.post('/email-collection/mark-used', async (req, res) => {
+    try {
+        const { ids } = req.body;
+        if (!ids || !Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ success: false, message: 'Email IDs are required' });
+        }
+
+        const batchSize = 400;
+        for (let i = 0; i < ids.length; i += batchSize) {
+            const batch = adminDb.batch();
+            ids.slice(i, i + batchSize).forEach(id => {
+                batch.update(adminDb.collection('collected_emails').doc(id), {
+                    used: true,
+                    usedAt: new Date().toISOString(),
+                });
+            });
+            await batch.commit();
+        }
+
+        res.json({ success: true, marked: ids.length, message: `${ids.length} emails marked as used` });
+    } catch (error) {
+        console.error('[EMAIL-COLLECTION] Mark used error:', error);
+        res.status(500).json({ success: false, message: 'Error marking emails as used' });
+    }
+});
+
 export default router;

@@ -4063,4 +4063,64 @@ router.get('/bulk-email/campaigns', async (req, res) => {
     }
 });
 
+// --- OPERATIONS PORTAL TOGGLE ---
+
+// GET /api/admin/operations-portal/status - Get operations portal status
+router.get('/operations-portal/status', async (req, res) => {
+    try {
+        const settingsDoc = await adminDb.collection('settings').doc('operations_portal').get();
+        if (!settingsDoc.exists) {
+            // Initialize default settings
+            await adminDb.collection('settings').doc('operations_portal').set({
+                enabled: false,
+                updatedAt: new Date().toISOString(),
+                updatedBy: req.user.email || 'admin'
+            });
+            return res.json({ success: true, enabled: false });
+        }
+        const data = settingsDoc.data();
+        res.json({ success: true, enabled: !!data.enabled, updatedAt: data.updatedAt, updatedBy: data.updatedBy });
+    } catch (error) {
+        console.error('[OPS-PORTAL] Status error:', error);
+        res.status(500).json({ success: false, message: 'Error fetching operations portal status' });
+    }
+});
+
+// POST /api/admin/operations-portal/toggle - Toggle operations portal on/off
+router.post('/operations-portal/toggle', async (req, res) => {
+    try {
+        const { enabled } = req.body;
+        if (typeof enabled !== 'boolean') {
+            return res.status(400).json({ success: false, message: 'enabled (boolean) is required' });
+        }
+        await adminDb.collection('settings').doc('operations_portal').set({
+            enabled,
+            updatedAt: new Date().toISOString(),
+            updatedBy: req.user.email || 'admin'
+        }, { merge: true });
+
+        console.log(`[OPS-PORTAL] Operations portal ${enabled ? 'ENABLED' : 'DISABLED'} by ${req.user.email}`);
+        res.json({ success: true, enabled, message: `Operations portal ${enabled ? 'enabled' : 'disabled'}` });
+    } catch (error) {
+        console.error('[OPS-PORTAL] Toggle error:', error);
+        res.status(500).json({ success: false, message: 'Error toggling operations portal' });
+    }
+});
+
+// GET /api/admin/operations-portal/check - Public check for operations portal (used by operations portal itself)
+// This still requires admin auth since operations portal users are admins
+router.get('/operations-portal/check', async (req, res) => {
+    try {
+        const settingsDoc = await adminDb.collection('settings').doc('operations_portal').get();
+        if (!settingsDoc.exists) {
+            return res.json({ success: true, enabled: false, message: 'Operations portal is not configured' });
+        }
+        const data = settingsDoc.data();
+        res.json({ success: true, enabled: !!data.enabled });
+    } catch (error) {
+        console.error('[OPS-PORTAL] Check error:', error);
+        res.status(500).json({ success: false, message: 'Error checking operations portal status' });
+    }
+});
+
 export default router;

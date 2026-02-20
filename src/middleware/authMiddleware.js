@@ -108,8 +108,9 @@ export async function isAdmin(req, res, next) {
             });
         }
 
-        // Check if user has admin privileges
-        if (req.user.type !== 'admin' && req.user.role !== 'admin') {
+        // Check if user has admin privileges (admin or operations users)
+        const allowedTypes = ['admin', 'operations'];
+        if (!allowedTypes.includes(req.user.type) && req.user.role !== 'admin') {
             console.log(`Access denied for non-admin user: ${req.user.email} (${req.user.type})`);
             return res.status(403).json({
                 success: false,
@@ -119,7 +120,7 @@ export async function isAdmin(req, res, next) {
 
         // Double-check admin status in database
         const userDoc = await adminDb.collection('users').doc(req.user.userId).get();
-        
+
         if (!userDoc.exists) {
             return res.status(401).json({
                 success: false,
@@ -128,8 +129,8 @@ export async function isAdmin(req, res, next) {
         }
 
         const userData = userDoc.data();
-        
-        if (userData.type !== 'admin') {
+
+        if (!allowedTypes.includes(userData.type)) {
             return res.status(403).json({
                 success: false,
                 message: 'Admin access required'

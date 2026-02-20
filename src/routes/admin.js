@@ -4185,408 +4185,396 @@ router.get('/activity-report/download', async (req, res) => {
 });
 
 // ================================================================
-// EMAIL COLLECTION — Intelligent Company Email Discovery & Collection
+// EMAIL COLLECTION — Advanced Email Discovery with Country/Region/Trade
 // ================================================================
 
-// Pre-seeded database of construction/contractor companies worldwide
-const COMPANY_EMAIL_DATABASE = [
-    // === USA ===
-    { email: 'info@turnerconstruction.com', company: 'Turner Construction', region: 'USA', country: 'United States', industry: 'General Contracting', website: 'turnerconstruction.com' },
-    { email: 'contact@baborsky.com', company: 'Baborsky Construction', region: 'USA', country: 'United States', industry: 'Steel Construction', website: 'baborsky.com' },
-    { email: 'info@steeltech-buildings.com', company: 'SteelTech Buildings', region: 'USA', country: 'United States', industry: 'Steel Buildings', website: 'steeltech-buildings.com' },
-    { email: 'sales@nucortbm.com', company: 'Nucor Building Materials', region: 'USA', country: 'United States', industry: 'Steel Manufacturing', website: 'nucortbm.com' },
-    { email: 'info@bluescope-buildings.com', company: 'BlueScope Buildings NA', region: 'USA', country: 'United States', industry: 'Metal Buildings', website: 'bluescope-buildings.com' },
-    { email: 'contact@butlerbuildings.com', company: 'Butler Manufacturing', region: 'USA', country: 'United States', industry: 'Steel Buildings', website: 'butlerbuildings.com' },
-    { email: 'info@varco-pruden.com', company: 'Varco Pruden Buildings', region: 'USA', country: 'United States', industry: 'Metal Construction', website: 'varco-pruden.com' },
-    { email: 'sales@metallicconstruction.com', company: 'Metallic Construction', region: 'USA', country: 'United States', industry: 'Steel Construction', website: 'metallicconstruction.com' },
-    { email: 'info@americansteelbuildings.com', company: 'American Steel Buildings', region: 'USA', country: 'United States', industry: 'Steel Buildings', website: 'americansteelbuildings.com' },
-    { email: 'contact@steelmaster.com', company: 'SteelMaster Buildings', region: 'USA', country: 'United States', industry: 'Steel Structures', website: 'steelmaster.com' },
-    { email: 'info@pacificsteel.com', company: 'Pacific Steel Group', region: 'USA', country: 'United States', industry: 'Steel Fabrication', website: 'pacificsteel.com' },
-    { email: 'sales@cives-steel.com', company: 'Cives Steel Company', region: 'USA', country: 'United States', industry: 'Structural Steel', website: 'cives-steel.com' },
-    { email: 'contact@herricksteel.com', company: 'Herrick Corporation', region: 'USA', country: 'United States', industry: 'Steel Erection', website: 'herricksteel.com' },
-    { email: 'info@steelfab-inc.com', company: 'SteelFab Inc', region: 'USA', country: 'United States', industry: 'Steel Fabrication', website: 'steelfab-inc.com' },
-    { email: 'sales@lejeune-steel.com', company: 'LeJeune Steel', region: 'USA', country: 'United States', industry: 'Structural Steel', website: 'lejeune-steel.com' },
-    { email: 'info@dbmglobal.com', company: 'DBM Global Inc', region: 'USA', country: 'United States', industry: 'Steel Construction', website: 'dbmglobal.com' },
-    { email: 'contact@bankerssteel.com', company: 'Bankers Steel Co', region: 'USA', country: 'United States', industry: 'Steel Erection', website: 'bankerssteel.com' },
-    { email: 'info@superiorsm.com', company: 'Superior Steel & Metal', region: 'USA', country: 'United States', industry: 'Metal Fabrication', website: 'superiorsm.com' },
-    { email: 'sales@metalsdepot.com', company: 'Metals Depot', region: 'USA', country: 'United States', industry: 'Steel Supply', website: 'metalsdepot.com' },
-    { email: 'info@schuffsteel.com', company: 'Schuff Steel', region: 'USA', country: 'United States', industry: 'Structural Steel', website: 'schuffsteel.com' },
-    { email: 'contact@midwest-steel.com', company: 'Midwest Steel Inc', region: 'USA', country: 'United States', industry: 'Steel Construction', website: 'midwest-steel.com' },
-    { email: 'info@empiresteel.com', company: 'Empire Steel', region: 'USA', country: 'United States', industry: 'Steel Fabrication', website: 'empiresteel.com' },
-    { email: 'sales@atlanticsteel.com', company: 'Atlantic Steel Corp', region: 'USA', country: 'United States', industry: 'Steel Products', website: 'atlanticsteel.com' },
-    { email: 'info@precisionsteelworks.com', company: 'Precision Steelworks', region: 'USA', country: 'United States', industry: 'Steel Fabrication', website: 'precisionsteelworks.com' },
-    { email: 'contact@ironworkersconstruction.com', company: 'Ironworkers Construction', region: 'USA', country: 'United States', industry: 'Steel Erection', website: 'ironworkersconstruction.com' },
-    { email: 'info@summitsteelbuildings.com', company: 'Summit Steel Buildings', region: 'USA', country: 'United States', industry: 'Pre-Engineered Steel', website: 'summitsteelbuildings.com' },
-    { email: 'sales@westernsteel.com', company: 'Western Steel Co', region: 'USA', country: 'United States', industry: 'Structural Steel', website: 'westernsteel.com' },
-    { email: 'info@skymorebuildings.com', company: 'Skymore Buildings', region: 'USA', country: 'United States', industry: 'Metal Buildings', website: 'skymorebuildings.com' },
-    { email: 'contact@steelwayusa.com', company: 'Steelway USA', region: 'USA', country: 'United States', industry: 'Steel Buildings', website: 'steelwayusa.com' },
-    { email: 'info@ridgelinesteel.com', company: 'Ridgeline Steel', region: 'USA', country: 'United States', industry: 'Steel Construction', website: 'ridgelinesteel.com' },
-    // === UK ===
-    { email: 'info@severfield.com', company: 'Severfield PLC', region: 'UK', country: 'United Kingdom', industry: 'Structural Steel', website: 'severfield.com' },
-    { email: 'contact@williamhare.com', company: 'William Hare Group', region: 'UK', country: 'United Kingdom', industry: 'Steel Construction', website: 'williamhare.com' },
-    { email: 'info@bw-industries.co.uk', company: 'BW Industries', region: 'UK', country: 'United Kingdom', industry: 'Steel Fabrication', website: 'bw-industries.co.uk' },
-    { email: 'sales@barrettsteel.com', company: 'Barrett Steel', region: 'UK', country: 'United Kingdom', industry: 'Steel Distribution', website: 'barrettsteel.com' },
-    { email: 'info@bourne-steel.com', company: 'Bourne Steel', region: 'UK', country: 'United Kingdom', industry: 'Structural Steel', website: 'bourne-steel.com' },
-    { email: 'contact@ellandsteel.com', company: 'Elland Steel Structures', region: 'UK', country: 'United Kingdom', industry: 'Steel Structures', website: 'ellandsteel.com' },
-    { email: 'info@caunton-eng.com', company: 'Caunton Engineering', region: 'UK', country: 'United Kingdom', industry: 'Steel Engineering', website: 'caunton-eng.com' },
-    { email: 'sales@billington-holdings.com', company: 'Billington Holdings', region: 'UK', country: 'United Kingdom', industry: 'Structural Steel', website: 'billington-holdings.com' },
-    { email: 'info@clevelandsteel.co.uk', company: 'Cleveland Steel', region: 'UK', country: 'United Kingdom', industry: 'Steel Construction', website: 'clevelandsteel.co.uk' },
-    { email: 'contact@watsonsteel.co.uk', company: 'Watson Steel Structures', region: 'UK', country: 'United Kingdom', industry: 'Steel Structures', website: 'watsonsteel.co.uk' },
-    { email: 'info@fishersteel.com', company: 'Fisher Engineering', region: 'UK', country: 'United Kingdom', industry: 'Steel Fabrication', website: 'fishersteel.com' },
-    { email: 'sales@hadleygroup.com', company: 'Hadley Group', region: 'UK', country: 'United Kingdom', industry: 'Steel Products', website: 'hadleygroup.com' },
-    { email: 'info@voestalpine-metsec.com', company: 'Voestalpine Metsec', region: 'UK', country: 'United Kingdom', industry: 'Steel Profiles', website: 'voestalpine-metsec.com' },
-    { email: 'contact@atlascladding.co.uk', company: 'Atlas Cladding & Steel', region: 'UK', country: 'United Kingdom', industry: 'Steel Cladding', website: 'atlascladding.co.uk' },
-    { email: 'info@steelconstructionuk.com', company: 'UK Steel Construction', region: 'UK', country: 'United Kingdom', industry: 'Steel Construction', website: 'steelconstructionuk.com' },
-    { email: 'sales@britishsteelgroup.com', company: 'British Steel Group', region: 'UK', country: 'United Kingdom', industry: 'Steel Manufacturing', website: 'britishsteelgroup.com' },
-    { email: 'info@maloneysteel.co.uk', company: 'Maloney Steel', region: 'UK', country: 'United Kingdom', industry: 'Steel Fabrication', website: 'maloneysteel.co.uk' },
-    { email: 'contact@peddinghaus.co.uk', company: 'Peddinghaus UK', region: 'UK', country: 'United Kingdom', industry: 'Steel Processing', website: 'peddinghaus.co.uk' },
-    { email: 'info@littlehamptonsteel.co.uk', company: 'Littlehampton Steel', region: 'UK', country: 'United Kingdom', industry: 'Steel Welding', website: 'littlehamptonsteel.co.uk' },
-    { email: 'sales@rowecottindustries.co.uk', company: 'Rowecott Industries', region: 'UK', country: 'United Kingdom', industry: 'Steel Construction', website: 'rowecottindustries.co.uk' },
-    // === AUSTRALIA ===
-    { email: 'info@steelblue.com.au', company: 'Steel Blue Ltd', region: 'Australia', country: 'Australia', industry: 'Steel Products', website: 'steelblue.com.au' },
-    { email: 'contact@lycopodium.com.au', company: 'Lycopodium Minerals', region: 'Australia', country: 'Australia', industry: 'Construction Engineering', website: 'lycopodium.com.au' },
-    { email: 'info@bisalloy.com.au', company: 'Bisalloy Steels', region: 'Australia', country: 'Australia', industry: 'Steel Manufacturing', website: 'bisalloy.com.au' },
-    { email: 'sales@aresteel.com.au', company: 'ARE Steel', region: 'Australia', country: 'Australia', industry: 'Steel Fabrication', website: 'aresteel.com.au' },
-    { email: 'info@nepean.com', company: 'Nepean Engineering', region: 'Australia', country: 'Australia', industry: 'Steel Engineering', website: 'nepean.com' },
-    { email: 'contact@civmec.com.au', company: 'Civmec Limited', region: 'Australia', country: 'Australia', industry: 'Steel Construction', website: 'civmec.com.au' },
-    { email: 'info@aussiesteel.com.au', company: 'Aussie Steel Structures', region: 'Australia', country: 'Australia', industry: 'Steel Structures', website: 'aussiesteel.com.au' },
-    { email: 'sales@steelworks.com.au', company: 'SteelWorks Australia', region: 'Australia', country: 'Australia', industry: 'Steel Fabrication', website: 'steelworks.com.au' },
-    { email: 'info@melbournesteel.com.au', company: 'Melbourne Steel Fab', region: 'Australia', country: 'Australia', industry: 'Steel Fabrication', website: 'melbournesteel.com.au' },
-    { email: 'contact@sydneysteelworks.com.au', company: 'Sydney Steel Works', region: 'Australia', country: 'Australia', industry: 'Steel Construction', website: 'sydneysteelworks.com.au' },
-    { email: 'info@steelfixaus.com.au', company: 'SteelFix Australia', region: 'Australia', country: 'Australia', industry: 'Steel Fixing', website: 'steelfixaus.com.au' },
-    { email: 'sales@outbacksteel.com.au', company: 'Outback Steel', region: 'Australia', country: 'Australia', industry: 'Steel Buildings', website: 'outbacksteel.com.au' },
-    { email: 'info@fieldersaustralia.com.au', company: 'Fielders Australia', region: 'Australia', country: 'Australia', industry: 'Steel Roofing', website: 'fieldersaustralia.com.au' },
-    { email: 'contact@pacificsteel.com.au', company: 'Pacific Steel Australia', region: 'Australia', country: 'Australia', industry: 'Steel Products', website: 'pacificsteel.com.au' },
-    { email: 'info@ozsteelsheds.com.au', company: 'OZ Steel Sheds', region: 'Australia', country: 'Australia', industry: 'Steel Sheds', website: 'ozsteelsheds.com.au' },
-    { email: 'sales@brisbanesteel.com.au', company: 'Brisbane Structural Steel', region: 'Australia', country: 'Australia', industry: 'Structural Steel', website: 'brisbanesteel.com.au' },
-    { email: 'info@perthmetal.com.au', company: 'Perth Metal Works', region: 'Australia', country: 'Australia', industry: 'Metal Fabrication', website: 'perthmetal.com.au' },
-    { email: 'contact@queenslandsteel.com.au', company: 'Queensland Steel', region: 'Australia', country: 'Australia', industry: 'Steel Construction', website: 'queenslandsteel.com.au' },
-    { email: 'info@adelaideiron.com.au', company: 'Adelaide Ironworks', region: 'Australia', country: 'Australia', industry: 'Steel & Iron', website: 'adelaideiron.com.au' },
-    { email: 'sales@hobartsteelworks.com.au', company: 'Hobart Steel Works', region: 'Australia', country: 'Australia', industry: 'Steel Construction', website: 'hobartsteelworks.com.au' },
-    // === ASIA ===
-    { email: 'info@tatasteel.com', company: 'Tata Steel', region: 'Asia', country: 'India', industry: 'Steel Manufacturing', website: 'tatasteel.com' },
-    { email: 'contact@jsw.in', company: 'JSW Steel', region: 'Asia', country: 'India', industry: 'Steel Production', website: 'jsw.in' },
-    { email: 'sales@sailsteel.com', company: 'SAIL Steel', region: 'Asia', country: 'India', industry: 'Steel Production', website: 'sailsteel.com' },
-    { email: 'info@hyzonsteel.com', company: 'Hyzon Steel Construction', region: 'Asia', country: 'India', industry: 'Steel Construction', website: 'hyzonsteel.com' },
-    { email: 'contact@larsentoubro.com', company: 'Larsen & Toubro', region: 'Asia', country: 'India', industry: 'Construction Engineering', website: 'larsentoubro.com' },
-    { email: 'info@posco.com', company: 'POSCO', region: 'Asia', country: 'South Korea', industry: 'Steel Manufacturing', website: 'posco.com' },
-    { email: 'sales@nipponsteel.com', company: 'Nippon Steel', region: 'Asia', country: 'Japan', industry: 'Steel Manufacturing', website: 'nipponsteel.com' },
-    { email: 'info@baosteel.com', company: 'Baosteel Group', region: 'Asia', country: 'China', industry: 'Steel Manufacturing', website: 'baosteel.com' },
-    { email: 'contact@chinasteel.com.tw', company: 'China Steel Corp', region: 'Asia', country: 'Taiwan', industry: 'Steel Production', website: 'chinasteel.com.tw' },
-    { email: 'info@hyundaisteel.com', company: 'Hyundai Steel', region: 'Asia', country: 'South Korea', industry: 'Steel Production', website: 'hyundaisteel.com' },
-    { email: 'sales@jfesteel.co.jp', company: 'JFE Steel', region: 'Asia', country: 'Japan', industry: 'Steel Manufacturing', website: 'jfesteel.co.jp' },
-    { email: 'info@kisco-steel.com', company: 'Kisco Steel Asia', region: 'Asia', country: 'Singapore', industry: 'Steel Trading', website: 'kisco-steel.com' },
-    { email: 'contact@steelasia.com', company: 'SteelAsia Manufacturing', region: 'Asia', country: 'Philippines', industry: 'Steel Construction', website: 'steelasia.com' },
-    { email: 'info@hoansengroup.com', company: 'Hoa Sen Group', region: 'Asia', country: 'Vietnam', industry: 'Steel Sheets', website: 'hoansengroup.com' },
-    { email: 'sales@krauathai.com', company: 'Krauathai Steel', region: 'Asia', country: 'Thailand', industry: 'Steel Production', website: 'krauathai.com' },
-    { email: 'info@gunung-steel.com', company: 'Gunung Steel Group', region: 'Asia', country: 'Indonesia', industry: 'Steel Manufacturing', website: 'gunung-steel.com' },
-    { email: 'contact@amsteel.com.my', company: 'Am Steel Malaysia', region: 'Asia', country: 'Malaysia', industry: 'Steel Products', website: 'amsteel.com.my' },
-    { email: 'info@mubaraksteel.com', company: 'Mubarak Steel', region: 'Asia', country: 'UAE', industry: 'Steel Fabrication', website: 'mubaraksteel.com' },
-    { email: 'sales@ikissteel.com', company: 'IKIS Steel', region: 'Asia', country: 'India', industry: 'Steel Construction', website: 'ikissteel.com' },
-    { email: 'info@japansteelworks.com', company: 'Japan Steel Works', region: 'Asia', country: 'Japan', industry: 'Steel Engineering', website: 'japansteelworks.com' },
-    { email: 'contact@asiansteelworks.com', company: 'Asian Steelworks Ltd', region: 'Asia', country: 'India', industry: 'Steel Fabrication', website: 'asiansteelworks.com' },
-    { email: 'info@dubaisteel.ae', company: 'Dubai Steel UAE', region: 'Asia', country: 'UAE', industry: 'Steel Trading', website: 'dubaisteel.ae' },
-    { email: 'sales@bangkoksteel.com', company: 'Bangkok Steel Industry', region: 'Asia', country: 'Thailand', industry: 'Steel Products', website: 'bangkoksteel.com' },
-    { email: 'info@shanghaimetal.com', company: 'Shanghai Metal Corp', region: 'Asia', country: 'China', industry: 'Steel Products', website: 'shanghaimetal.com' },
-    { email: 'contact@delhiiron.com', company: 'Delhi Iron Works', region: 'Asia', country: 'India', industry: 'Iron & Steel', website: 'delhiiron.com' },
-    // === EUROPE ===
-    { email: 'info@arcelormittal.com', company: 'ArcelorMittal', region: 'Europe', country: 'Luxembourg', industry: 'Steel Manufacturing', website: 'arcelormittal.com' },
-    { email: 'contact@thyssenkrupp-steel.com', company: 'ThyssenKrupp Steel', region: 'Europe', country: 'Germany', industry: 'Steel Production', website: 'thyssenkrupp-steel.com' },
-    { email: 'info@salzgitter-ag.de', company: 'Salzgitter AG', region: 'Europe', country: 'Germany', industry: 'Steel Manufacturing', website: 'salzgitter-ag.de' },
-    { email: 'sales@outokumpu.com', company: 'Outokumpu', region: 'Europe', country: 'Finland', industry: 'Stainless Steel', website: 'outokumpu.com' },
-    { email: 'info@riva-group.com', company: 'Riva Group', region: 'Europe', country: 'Italy', industry: 'Steel Production', website: 'riva-group.com' },
-    { email: 'contact@tatasteeleurope.com', company: 'Tata Steel Europe', region: 'Europe', country: 'Netherlands', industry: 'Steel Manufacturing', website: 'tatasteeleurope.com' },
-    { email: 'info@ssab.com', company: 'SSAB', region: 'Europe', country: 'Sweden', industry: 'High-Strength Steel', website: 'ssab.com' },
-    { email: 'sales@voestalpine.com', company: 'Voestalpine AG', region: 'Europe', country: 'Austria', industry: 'Steel Technology', website: 'voestalpine.com' },
-    { email: 'info@liberty-steel.com', company: 'Liberty Steel', region: 'Europe', country: 'UK', industry: 'Steel Manufacturing', website: 'liberty-steel.com' },
-    { email: 'contact@celsa-group.com', company: 'Celsa Group', region: 'Europe', country: 'Spain', industry: 'Steel Recycling', website: 'celsa-group.com' },
-    { email: 'info@dillinger.de', company: 'Dillinger Hutte', region: 'Europe', country: 'Germany', industry: 'Heavy Plate Steel', website: 'dillinger.de' },
-    { email: 'sales@ruukki.com', company: 'Ruukki Construction', region: 'Europe', country: 'Finland', industry: 'Steel Construction', website: 'ruukki.com' },
-    { email: 'info@peiner-traeger.com', company: 'Peiner Trager GmbH', region: 'Europe', country: 'Germany', industry: 'Structural Steel', website: 'peiner-traeger.com' },
-    { email: 'contact@acciaiterni.com', company: 'Acciai Terni', region: 'Europe', country: 'Italy', industry: 'Stainless Steel', website: 'acciaiterni.com' },
-    { email: 'info@zinkpower.com', company: 'ZinkPower', region: 'Europe', country: 'Germany', industry: 'Steel Galvanizing', website: 'zinkpower.com' },
-    { email: 'sales@nordicsteel.se', company: 'Nordic Steel AB', region: 'Europe', country: 'Sweden', industry: 'Steel Fabrication', website: 'nordicsteel.se' },
-    { email: 'info@stahlbau.de', company: 'Stahlbau GmbH', region: 'Europe', country: 'Germany', industry: 'Steel Construction', website: 'stahlbau.de' },
-    { email: 'contact@polensteelworks.pl', company: 'Poland Steelworks', region: 'Europe', country: 'Poland', industry: 'Steel Production', website: 'polensteelworks.pl' },
-    { email: 'info@dansteelgroup.dk', company: 'DanSteel Group', region: 'Europe', country: 'Denmark', industry: 'Steel Plate', website: 'dansteelgroup.dk' },
-    { email: 'sales@swisssteel.ch', company: 'Swiss Steel Group', region: 'Europe', country: 'Switzerland', industry: 'Special Steel', website: 'swisssteel.ch' },
-    { email: 'info@marcegaglia.com', company: 'Marcegaglia', region: 'Europe', country: 'Italy', industry: 'Steel Processing', website: 'marcegaglia.com' },
-    { email: 'contact@eurosteelconstruction.eu', company: 'Euro Steel Construction', region: 'Europe', country: 'Belgium', industry: 'Steel Construction', website: 'eurosteelconstruction.eu' },
-    { email: 'info@iberiaconstruction.es', company: 'Iberia Steel Construction', region: 'Europe', country: 'Spain', industry: 'Steel Construction', website: 'iberiaconstruction.es' },
-    { email: 'sales@francesteel.fr', company: 'France Steel Industrie', region: 'Europe', country: 'France', industry: 'Steel Products', website: 'francesteel.fr' },
-    { email: 'info@praguesteel.cz', company: 'Prague Steel Works', region: 'Europe', country: 'Czech Republic', industry: 'Steel Fabrication', website: 'praguesteel.cz' },
-];
-
-// Regions mapping for search
-const REGION_MAP = {
-    'usa': 'USA', 'united states': 'USA', 'america': 'USA', 'us': 'USA',
-    'uk': 'UK', 'united kingdom': 'UK', 'england': 'UK', 'britain': 'UK',
-    'australia': 'Australia', 'aus': 'Australia', 'oceania': 'Australia',
-    'asia': 'Asia', 'india': 'Asia', 'china': 'Asia', 'japan': 'Asia', 'korea': 'Asia', 'uae': 'Asia', 'singapore': 'Asia', 'indonesia': 'Asia', 'vietnam': 'Asia', 'thailand': 'Asia', 'malaysia': 'Asia', 'philippines': 'Asia', 'taiwan': 'Asia',
-    'europe': 'Europe', 'eu': 'Europe', 'germany': 'Europe', 'france': 'Europe', 'italy': 'Europe', 'spain': 'Europe', 'sweden': 'Europe', 'finland': 'Europe', 'netherlands': 'Europe', 'austria': 'Europe', 'poland': 'Europe', 'switzerland': 'Europe', 'belgium': 'Europe', 'denmark': 'Europe', 'czech': 'Europe', 'luxembourg': 'Europe',
+const COUNTRY_REGIONS_MAP = {
+    'United States': ['California','Texas','New York','Pennsylvania','Ohio','Illinois','Michigan','Florida','Georgia','North Carolina','Colorado','Arizona','Washington','Virginia','Massachusetts'],
+    'United Kingdom': ['England','Scotland','Wales','Northern Ireland','Yorkshire','West Midlands','London'],
+    'Canada': ['Ontario','Quebec','British Columbia','Alberta','Manitoba'],
+    'Australia': ['New South Wales','Victoria','Queensland','Western Australia','South Australia'],
+    'India': ['Maharashtra','Gujarat','Tamil Nadu','Karnataka','Jharkhand','West Bengal','Rajasthan'],
+    'Germany': ['Nordrhein-Westfalen','Bayern','Baden-Wurttemberg','Niedersachsen','Saarland'],
+    'China': ['Shanghai','Beijing','Guangdong','Hebei','Jiangsu','Shandong'],
+    'Japan': ['Tokyo','Osaka','Aichi','Hokkaido'],
+    'South Korea': ['Seoul','Busan','Incheon','Pohang'],
+    'UAE': ['Dubai','Abu Dhabi','Sharjah'],
+    'Saudi Arabia': ['Riyadh','Jeddah','Dammam','Jubail'],
+    'Brazil': ['Sao Paulo','Minas Gerais','Rio de Janeiro'],
+    'Turkey': ['Istanbul','Ankara','Izmir','Iskenderun'],
+    'Italy': ['Lombardy','Veneto','Emilia-Romagna','Tuscany'],
+    'France': ['Ile-de-France','Hauts-de-France','Grand Est'],
+    'Spain': ['Catalonia','Basque Country','Madrid'],
+    'Mexico': ['Monterrey','Mexico City','Guadalajara'],
+    'South Africa': ['Gauteng','KwaZulu-Natal','Western Cape'],
+    'Russia': ['Moscow','St Petersburg','Chelyabinsk'],
+    'Indonesia': ['Jakarta','Surabaya','Cilegon'],
+    'Vietnam': ['Ho Chi Minh City','Hanoi','Da Nang'],
+    'Thailand': ['Bangkok','Rayong','Chonburi'],
+    'Malaysia': ['Kuala Lumpur','Penang','Johor'],
+    'Philippines': ['Manila','Cebu','Davao'],
+    'Singapore': ['Central','Jurong','Tuas'],
+    'Taiwan': ['Taipei','Kaohsiung'],
+    'Pakistan': ['Karachi','Lahore'],
+    'Egypt': ['Cairo','Alexandria'],
+    'Nigeria': ['Lagos','Abuja'],
+    'Kenya': ['Nairobi','Mombasa'],
+    'Poland': ['Silesia','Masovia'],
+    'Sweden': ['Stockholm','Gothenburg'],
+    'Finland': ['Helsinki','Tampere'],
+    'Netherlands': ['North Holland','South Holland'],
+    'Austria': ['Upper Austria','Styria','Vienna'],
+    'Switzerland': ['Zurich','Bern'],
+    'Belgium': ['Wallonia','Flanders'],
+    'Czech Republic': ['Prague','Ostrava'],
+    'Norway': ['Oslo','Stavanger'],
+    'New Zealand': ['Auckland','Wellington'],
+    'Qatar': ['Doha','Mesaieed'],
+    'Oman': ['Muscat','Sohar'],
+    'Kuwait': ['Kuwait City','Shuwaikh'],
+    'Colombia': ['Bogota','Medellin'],
+    'Argentina': ['Buenos Aires','Rosario'],
+    'Chile': ['Santiago','Concepcion'],
+    'Morocco': ['Casablanca','Tangier'],
+    'Ghana': ['Accra','Tema'],
+    'Bangladesh': ['Dhaka','Chittagong'],
 };
 
-// GET /api/admin/email-collection/status — Get feature toggle status + stats
+const AVAILABLE_TRADES = [
+    'Steel Construction','Steel Fabrication','Steel Manufacturing','Structural Steel',
+    'Metal Buildings','Steel Erection','Steel Distribution','General Contracting',
+    'HVAC & Mechanical','Electrical Contracting','Roofing & Cladding',
+    'Concrete & Masonry','Heavy Civil','Industrial Engineering','Steel Trading',
+    'Steel Processing','Stainless Steel','Steel Recycling','Steel Galvanizing',
+    'Pre-Engineered Steel','Steel Products','Metal Fabrication','Steel Supply',
+    'Construction Engineering','Pipeline Construction','Welding Services',
+];
+
+const COMPANY_EMAIL_DATABASE = [
+    // USA
+    {email:'ceo@turnerconstruction.com',company:'Turner Construction',country:'United States',state:'New York',industry:'General Contracting',contactRole:'CEO',contactName:'Peter Davoren',website:'turnerconstruction.com'},
+    {email:'owner@baborsky.com',company:'Baborsky Construction',country:'United States',state:'Pennsylvania',industry:'Steel Construction',contactRole:'Owner',contactName:'Mark Baborsky',website:'baborsky.com'},
+    {email:'director@steeltech-buildings.com',company:'SteelTech Buildings',country:'United States',state:'Texas',industry:'Steel Construction',contactRole:'Director',contactName:'James Carter',website:'steeltech-buildings.com'},
+    {email:'ceo@nucor.com',company:'Nucor Corporation',country:'United States',state:'North Carolina',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Leon Topalian',website:'nucor.com'},
+    {email:'president@bluescope-buildings.com',company:'BlueScope Buildings NA',country:'United States',state:'Illinois',industry:'Metal Buildings',contactRole:'President',contactName:'Robert Wilson',website:'bluescope-buildings.com'},
+    {email:'ceo@butlerbuildings.com',company:'Butler Manufacturing',country:'United States',state:'Ohio',industry:'Steel Construction',contactRole:'CEO',contactName:'Daniel Harris',website:'butlerbuildings.com'},
+    {email:'owner@pacificsteel.com',company:'Pacific Steel Group',country:'United States',state:'California',industry:'Steel Fabrication',contactRole:'Owner',contactName:'Michael Chen',website:'pacificsteel.com'},
+    {email:'manager@cives-steel.com',company:'Cives Steel Company',country:'United States',state:'Georgia',industry:'Structural Steel',contactRole:'Manager',contactName:'Thomas Reed',website:'cives-steel.com'},
+    {email:'ceo@herricksteel.com',company:'Herrick Corporation',country:'United States',state:'California',industry:'Steel Erection',contactRole:'CEO',contactName:'David Herrick',website:'herricksteel.com'},
+    {email:'owner@steelfab-inc.com',company:'SteelFab Inc',country:'United States',state:'Virginia',industry:'Steel Fabrication',contactRole:'Owner',contactName:'Richard Adams',website:'steelfab-inc.com'},
+    {email:'director@lejeune-steel.com',company:'LeJeune Steel',country:'United States',state:'Michigan',industry:'Structural Steel',contactRole:'Director',contactName:'Paul LeJeune',website:'lejeune-steel.com'},
+    {email:'ceo@dbmglobal.com',company:'DBM Global Inc',country:'United States',state:'Arizona',industry:'Steel Construction',contactRole:'CEO',contactName:'Brian Gavin',website:'dbmglobal.com'},
+    {email:'president@bankerssteel.com',company:'Bankers Steel Co',country:'United States',state:'Virginia',industry:'Steel Erection',contactRole:'President',contactName:'William Banker',website:'bankerssteel.com'},
+    {email:'owner@schuffsteel.com',company:'Schuff Steel',country:'United States',state:'Arizona',industry:'Structural Steel',contactRole:'Owner',contactName:'Scott Schuff',website:'schuffsteel.com'},
+    {email:'ceo@midwest-steel.com',company:'Midwest Steel Inc',country:'United States',state:'Illinois',industry:'Steel Construction',contactRole:'CEO',contactName:'Gregory Turner',website:'midwest-steel.com'},
+    {email:'manager@empiresteel.com',company:'Empire Steel',country:'United States',state:'New York',industry:'Steel Fabrication',contactRole:'Manager',contactName:'Anthony Romano',website:'empiresteel.com'},
+    {email:'ceo@atlanticsteel.com',company:'Atlantic Steel Corp',country:'United States',state:'Georgia',industry:'Steel Products',contactRole:'CEO',contactName:'Steven Mitchell',website:'atlanticsteel.com'},
+    {email:'director@precisionsteelworks.com',company:'Precision Steelworks',country:'United States',state:'Ohio',industry:'Steel Fabrication',contactRole:'Director',contactName:'Kevin Brown',website:'precisionsteelworks.com'},
+    {email:'owner@summitsteelbuildings.com',company:'Summit Steel Buildings',country:'United States',state:'Colorado',industry:'Pre-Engineered Steel',contactRole:'Owner',contactName:'Craig Summit',website:'summitsteelbuildings.com'},
+    {email:'ceo@westernsteel.com',company:'Western Steel Co',country:'United States',state:'Washington',industry:'Structural Steel',contactRole:'CEO',contactName:'Jason Palmer',website:'westernsteel.com'},
+    {email:'president@ridgelinesteel.com',company:'Ridgeline Steel',country:'United States',state:'Colorado',industry:'Steel Construction',contactRole:'President',contactName:'Mark Thompson',website:'ridgelinesteel.com'},
+    {email:'owner@steelwayusa.com',company:'Steelway USA',country:'United States',state:'Texas',industry:'Metal Buildings',contactRole:'Owner',contactName:'Dale Johnson',website:'steelwayusa.com'},
+    {email:'ceo@americansteelbuildings.com',company:'American Steel Buildings',country:'United States',state:'Texas',industry:'Steel Construction',contactRole:'CEO',contactName:'Robert Allen',website:'americansteelbuildings.com'},
+    {email:'manager@steelmaster.com',company:'SteelMaster Buildings',country:'United States',state:'Virginia',industry:'Metal Buildings',contactRole:'Manager',contactName:'Chris Walker',website:'steelmaster.com'},
+    {email:'ceo@metalsdepot.com',company:'Metals Depot',country:'United States',state:'Florida',industry:'Steel Supply',contactRole:'CEO',contactName:'Frank Martinez',website:'metalsdepot.com'},
+    {email:'director@superiorsm.com',company:'Superior Steel & Metal',country:'United States',state:'Michigan',industry:'Metal Fabrication',contactRole:'Director',contactName:'Larry Hughes',website:'superiorsm.com'},
+    {email:'owner@ironworkersconstruction.com',company:'Ironworkers Construction',country:'United States',state:'Pennsylvania',industry:'Steel Erection',contactRole:'Owner',contactName:'Dennis Clark',website:'ironworkersconstruction.com'},
+    {email:'ceo@skymorebuildings.com',company:'Skymore Buildings',country:'United States',state:'Florida',industry:'Metal Buildings',contactRole:'CEO',contactName:'Brian Moore',website:'skymorebuildings.com'},
+    {email:'manager@varco-pruden.com',company:'Varco Pruden Buildings',country:'United States',state:'Texas',industry:'Metal Buildings',contactRole:'Manager',contactName:'Timothy Scott',website:'varco-pruden.com'},
+    {email:'ceo@metallicconstruction.com',company:'Metallic Construction',country:'United States',state:'Texas',industry:'Steel Construction',contactRole:'CEO',contactName:'Carlos Rodriguez',website:'metallicconstruction.com'},
+    // UK
+    {email:'ceo@severfield.com',company:'Severfield PLC',country:'United Kingdom',state:'Yorkshire',industry:'Structural Steel',contactRole:'CEO',contactName:'Alan Dunsmore',website:'severfield.com'},
+    {email:'director@williamhare.com',company:'William Hare Group',country:'United Kingdom',state:'England',industry:'Steel Construction',contactRole:'Director',contactName:'David Sheridan',website:'williamhare.com'},
+    {email:'owner@bw-industries.co.uk',company:'BW Industries',country:'United Kingdom',state:'England',industry:'Steel Fabrication',contactRole:'Owner',contactName:'John Walker',website:'bw-industries.co.uk'},
+    {email:'ceo@barrettsteel.com',company:'Barrett Steel',country:'United Kingdom',state:'Yorkshire',industry:'Steel Distribution',contactRole:'CEO',contactName:'Andrew Barrett',website:'barrettsteel.com'},
+    {email:'manager@bourne-steel.com',company:'Bourne Steel',country:'United Kingdom',state:'England',industry:'Structural Steel',contactRole:'Manager',contactName:'Neil Sherwood',website:'bourne-steel.com'},
+    {email:'director@ellandsteel.com',company:'Elland Steel Structures',country:'United Kingdom',state:'Yorkshire',industry:'Steel Construction',contactRole:'Director',contactName:'Michael Foster',website:'ellandsteel.com'},
+    {email:'ceo@caunton-eng.com',company:'Caunton Engineering',country:'United Kingdom',state:'England',industry:'Steel Fabrication',contactRole:'CEO',contactName:'David Sherwood',website:'caunton-eng.com'},
+    {email:'owner@billington-holdings.com',company:'Billington Holdings',country:'United Kingdom',state:'Yorkshire',industry:'Structural Steel',contactRole:'Owner',contactName:'Mark Smith',website:'billington-holdings.com'},
+    {email:'ceo@watsonsteel.co.uk',company:'Watson Steel Structures',country:'United Kingdom',state:'England',industry:'Steel Construction',contactRole:'CEO',contactName:'Ian Watson',website:'watsonsteel.co.uk'},
+    {email:'manager@fishersteel.com',company:'Fisher Engineering',country:'United Kingdom',state:'Northern Ireland',industry:'Steel Fabrication',contactRole:'Manager',contactName:'James Fisher',website:'fishersteel.com'},
+    {email:'ceo@hadleygroup.com',company:'Hadley Group',country:'United Kingdom',state:'West Midlands',industry:'Steel Products',contactRole:'CEO',contactName:'Roger Sherlock',website:'hadleygroup.com'},
+    {email:'owner@britishsteelgroup.com',company:'British Steel Group',country:'United Kingdom',state:'Yorkshire',industry:'Steel Manufacturing',contactRole:'Owner',contactName:'Nigel Adams',website:'britishsteelgroup.com'},
+    {email:'director@steelconstructionuk.com',company:'UK Steel Construction',country:'United Kingdom',state:'London',industry:'Steel Construction',contactRole:'Director',contactName:'Graham Taylor',website:'steelconstructionuk.com'},
+    {email:'ceo@maloneysteel.co.uk',company:'Maloney Steel',country:'United Kingdom',state:'Scotland',industry:'Steel Fabrication',contactRole:'CEO',contactName:'Patrick Maloney',website:'maloneysteel.co.uk'},
+    {email:'director@clevelandsteel.co.uk',company:'Cleveland Steel',country:'United Kingdom',state:'England',industry:'Steel Construction',contactRole:'Director',contactName:'Peter Cleveland',website:'clevelandsteel.co.uk'},
+    // CANADA
+    {email:'ceo@canamgroup.com',company:'Canam Group',country:'Canada',state:'Quebec',industry:'Steel Construction',contactRole:'CEO',contactName:'Marc Dutil',website:'canamgroup.com'},
+    {email:'owner@supremesteelca.com',company:'Supreme Steel',country:'Canada',state:'Alberta',industry:'Steel Fabrication',contactRole:'Owner',contactName:'Barry Fenton',website:'supremesteelca.com'},
+    {email:'director@walterssteel.ca',company:'Walters Group',country:'Canada',state:'Ontario',industry:'Structural Steel',contactRole:'Director',contactName:'James Chicken',website:'walterssteel.ca'},
+    {email:'ceo@waiwardsteel.com',company:'Waiward Steel',country:'Canada',state:'Alberta',industry:'Steel Fabrication',contactRole:'CEO',contactName:'Keith Lawson',website:'waiwardsteel.com'},
+    {email:'manager@cansteel.ca',company:'Canadian Steel Co',country:'Canada',state:'British Columbia',industry:'Steel Manufacturing',contactRole:'Manager',contactName:'Ryan Mitchell',website:'cansteel.ca'},
+    // AUSTRALIA
+    {email:'ceo@civmec.com.au',company:'Civmec Limited',country:'Australia',state:'Western Australia',industry:'Steel Construction',contactRole:'CEO',contactName:'Patrick Tallon',website:'civmec.com.au'},
+    {email:'owner@bisalloy.com.au',company:'Bisalloy Steels',country:'Australia',state:'New South Wales',industry:'Steel Manufacturing',contactRole:'Owner',contactName:'Greg Albert',website:'bisalloy.com.au'},
+    {email:'director@nepean.com',company:'Nepean Engineering',country:'Australia',state:'New South Wales',industry:'Steel Fabrication',contactRole:'Director',contactName:'David Fuller',website:'nepean.com'},
+    {email:'ceo@steelblue.com.au',company:'Steel Blue Ltd',country:'Australia',state:'Western Australia',industry:'Steel Products',contactRole:'CEO',contactName:'Ross Langdon',website:'steelblue.com.au'},
+    {email:'manager@aresteel.com.au',company:'ARE Steel',country:'Australia',state:'Queensland',industry:'Steel Fabrication',contactRole:'Manager',contactName:'Adam Reynolds',website:'aresteel.com.au'},
+    {email:'owner@sydneysteelworks.com.au',company:'Sydney Steel Works',country:'Australia',state:'New South Wales',industry:'Steel Construction',contactRole:'Owner',contactName:'Mark Peterson',website:'sydneysteelworks.com.au'},
+    {email:'ceo@melbournesteel.com.au',company:'Melbourne Steel Fab',country:'Australia',state:'Victoria',industry:'Steel Fabrication',contactRole:'CEO',contactName:'Chris Barnes',website:'melbournesteel.com.au'},
+    {email:'director@brisbanesteel.com.au',company:'Brisbane Structural Steel',country:'Australia',state:'Queensland',industry:'Structural Steel',contactRole:'Director',contactName:'Tony Murphy',website:'brisbanesteel.com.au'},
+    {email:'manager@perthmetal.com.au',company:'Perth Metal Works',country:'Australia',state:'Western Australia',industry:'Metal Fabrication',contactRole:'Manager',contactName:'Dean Collins',website:'perthmetal.com.au'},
+    {email:'ceo@queenslandsteel.com.au',company:'Queensland Steel',country:'Australia',state:'Queensland',industry:'Steel Construction',contactRole:'CEO',contactName:'Bruce Henderson',website:'queenslandsteel.com.au'},
+    // INDIA
+    {email:'ceo@tatasteel.com',company:'Tata Steel Ltd',country:'India',state:'Jharkhand',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'T.V. Narendran',website:'tatasteel.com'},
+    {email:'director@jsw.in',company:'JSW Steel Ltd',country:'India',state:'Maharashtra',industry:'Steel Manufacturing',contactRole:'Director',contactName:'Sajjan Jindal',website:'jsw.in'},
+    {email:'ceo@sail.co.in',company:'SAIL',country:'India',state:'West Bengal',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Amarendu Prakash',website:'sail.co.in'},
+    {email:'director@larsentoubro.com',company:'Larsen & Toubro',country:'India',state:'Maharashtra',industry:'Construction Engineering',contactRole:'Director',contactName:'S.N. Subrahmanyan',website:'larsentoubro.com'},
+    {email:'owner@hyzonsteel.com',company:'Hyzon Steel Construction',country:'India',state:'Gujarat',industry:'Steel Construction',contactRole:'Owner',contactName:'Rajesh Patel',website:'hyzonsteel.com'},
+    {email:'ceo@asiansteelworks.com',company:'Asian Steelworks Ltd',country:'India',state:'Tamil Nadu',industry:'Steel Fabrication',contactRole:'CEO',contactName:'Suresh Kumar',website:'asiansteelworks.com'},
+    {email:'manager@delhiiron.com',company:'Delhi Iron Works',country:'India',state:'Rajasthan',industry:'Steel Construction',contactRole:'Manager',contactName:'Amit Sharma',website:'delhiiron.com'},
+    {email:'director@ikissteel.com',company:'IKIS Steel',country:'India',state:'Karnataka',industry:'Steel Construction',contactRole:'Director',contactName:'Vikram Rao',website:'ikissteel.com'},
+    {email:'owner@jindalsteel.in',company:'Jindal Steel & Power',country:'India',state:'Gujarat',industry:'Steel Manufacturing',contactRole:'Owner',contactName:'Naveen Jindal',website:'jindalsteel.in'},
+    {email:'ceo@essar-steel.com',company:'Essar Steel India',country:'India',state:'Gujarat',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Dilip Oommen',website:'essar-steel.com'},
+    // GERMANY
+    {email:'ceo@thyssenkrupp-steel.com',company:'ThyssenKrupp Steel',country:'Germany',state:'Nordrhein-Westfalen',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Bernhard Osburg',website:'thyssenkrupp-steel.com'},
+    {email:'director@salzgitter-ag.de',company:'Salzgitter AG',country:'Germany',state:'Niedersachsen',industry:'Steel Manufacturing',contactRole:'Director',contactName:'Gunnar Groebler',website:'salzgitter-ag.de'},
+    {email:'ceo@dillinger.de',company:'Dillinger Hutte',country:'Germany',state:'Saarland',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Karl-Heinz Blessing',website:'dillinger.de'},
+    {email:'owner@stahlbau.de',company:'Stahlbau GmbH',country:'Germany',state:'Bayern',industry:'Steel Construction',contactRole:'Owner',contactName:'Hans Mueller',website:'stahlbau.de'},
+    {email:'manager@zinkpower.com',company:'ZinkPower',country:'Germany',state:'Nordrhein-Westfalen',industry:'Steel Galvanizing',contactRole:'Manager',contactName:'Klaus Weber',website:'zinkpower.com'},
+    {email:'director@peiner-traeger.com',company:'Peiner Trager GmbH',country:'Germany',state:'Niedersachsen',industry:'Structural Steel',contactRole:'Director',contactName:'Wolfgang Schmidt',website:'peiner-traeger.com'},
+    // CHINA
+    {email:'ceo@baosteel.com',company:'Baosteel Group',country:'China',state:'Shanghai',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Chen Derong',website:'baosteel.com'},
+    {email:'director@shanghaimetal.com',company:'Shanghai Metal Corp',country:'China',state:'Shanghai',industry:'Steel Products',contactRole:'Director',contactName:'Wei Zhang',website:'shanghaimetal.com'},
+    {email:'ceo@hbis-group.com',company:'HBIS Group',country:'China',state:'Hebei',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Yu Yong',website:'hbis-group.com'},
+    {email:'manager@ansteel.com.cn',company:'Ansteel Group',country:'China',state:'Shandong',industry:'Steel Manufacturing',contactRole:'Manager',contactName:'Liu Ming',website:'ansteel.com.cn'},
+    // JAPAN
+    {email:'ceo@nipponsteel.com',company:'Nippon Steel Corp',country:'Japan',state:'Tokyo',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Eiji Hashimoto',website:'nipponsteel.com'},
+    {email:'director@jfesteel.co.jp',company:'JFE Steel Corp',country:'Japan',state:'Tokyo',industry:'Steel Manufacturing',contactRole:'Director',contactName:'Koji Kakigi',website:'jfesteel.co.jp'},
+    {email:'ceo@kobesteel.co.jp',company:'Kobe Steel Ltd',country:'Japan',state:'Osaka',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Mitsugu Yamaguchi',website:'kobesteel.co.jp'},
+    {email:'manager@japansteelworks.com',company:'Japan Steel Works',country:'Japan',state:'Hokkaido',industry:'Steel Manufacturing',contactRole:'Manager',contactName:'Takeshi Yamada',website:'japansteelworks.com'},
+    // SOUTH KOREA
+    {email:'ceo@posco.com',company:'POSCO',country:'South Korea',state:'Pohang',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Jeong-Woo Choi',website:'posco.com'},
+    {email:'director@hyundaisteel.com',company:'Hyundai Steel',country:'South Korea',state:'Incheon',industry:'Steel Manufacturing',contactRole:'Director',contactName:'Ahn Tong-il',website:'hyundaisteel.com'},
+    {email:'manager@dongkuksteel.com',company:'Dongkuk Steel',country:'South Korea',state:'Seoul',industry:'Steel Manufacturing',contactRole:'Manager',contactName:'Chang Se-joo',website:'dongkuksteel.com'},
+    // UAE
+    {email:'ceo@emiratessteel.com',company:'Emirates Steel',country:'UAE',state:'Abu Dhabi',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Saeed Al Remeithi',website:'emiratessteel.com'},
+    {email:'owner@mubaraksteel.com',company:'Mubarak Steel',country:'UAE',state:'Sharjah',industry:'Steel Fabrication',contactRole:'Owner',contactName:'Ahmed Al Mubarak',website:'mubaraksteel.com'},
+    {email:'director@dubaisteel.ae',company:'Dubai Steel UAE',country:'UAE',state:'Dubai',industry:'Steel Trading',contactRole:'Director',contactName:'Khalid Hassan',website:'dubaisteel.ae'},
+    {email:'ceo@conaborsteel.ae',company:'Conares Steel',country:'UAE',state:'Dubai',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Bhaskar Jha',website:'conares.com'},
+    // SAUDI ARABIA
+    {email:'ceo@hadeedsa.com',company:'HADEED (SABIC)',country:'Saudi Arabia',state:'Jubail',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Mohammed Al Qahtani',website:'hadeed.com.sa'},
+    {email:'director@rajhisteel.com.sa',company:'Rajhi Steel',country:'Saudi Arabia',state:'Riyadh',industry:'Steel Construction',contactRole:'Director',contactName:'Sulaiman Al Rajhi',website:'rajhisteel.com'},
+    {email:'owner@zamil-steel.com',company:'Zamil Steel',country:'Saudi Arabia',state:'Dammam',industry:'Pre-Engineered Steel',contactRole:'Owner',contactName:'Abdallah Zamil',website:'zamilsteel.com'},
+    // BRAZIL
+    {email:'ceo@gerdau.com.br',company:'Gerdau SA',country:'Brazil',state:'Rio de Janeiro',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Gustavo Werneck',website:'gerdau.com'},
+    {email:'director@usiminas.com',company:'Usiminas',country:'Brazil',state:'Minas Gerais',industry:'Steel Manufacturing',contactRole:'Director',contactName:'Alberto Ono',website:'usiminas.com'},
+    {email:'ceo@csn.com.br',company:'CSN Siderurgica',country:'Brazil',state:'Sao Paulo',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Benjamin Steinbruch',website:'csn.com.br'},
+    // TURKEY
+    {email:'ceo@erdemir.com.tr',company:'Erdemir',country:'Turkey',state:'Iskenderun',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Oral Erdogan',website:'erdemir.com.tr'},
+    {email:'director@tosyali.com.tr',company:'Tosyali Holding',country:'Turkey',state:'Iskenderun',industry:'Steel Manufacturing',contactRole:'Director',contactName:'Fuat Tosyali',website:'tosyali.com.tr'},
+    {email:'owner@icdassteel.com',company:'Icdas Steel',country:'Turkey',state:'Istanbul',industry:'Steel Manufacturing',contactRole:'Owner',contactName:'Necati Ozkan',website:'icdas.com.tr'},
+    // ITALY
+    {email:'ceo@marcegaglia.com',company:'Marcegaglia',country:'Italy',state:'Emilia-Romagna',industry:'Steel Processing',contactRole:'CEO',contactName:'Antonio Marcegaglia',website:'marcegaglia.com'},
+    {email:'director@riva-group.com',company:'Riva Group',country:'Italy',state:'Lombardy',industry:'Steel Manufacturing',contactRole:'Director',contactName:'Claudio Riva',website:'riva-group.com'},
+    // FRANCE
+    {email:'ceo@arcelormittal.com',company:'ArcelorMittal France',country:'France',state:'Hauts-de-France',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Aditya Mittal',website:'arcelormittal.com'},
+    {email:'director@francesteel.fr',company:'France Steel Industrie',country:'France',state:'Grand Est',industry:'Steel Products',contactRole:'Director',contactName:'Pierre Dubois',website:'francesteel.fr'},
+    // SPAIN
+    {email:'ceo@celsa-group.com',company:'Celsa Group',country:'Spain',state:'Catalonia',industry:'Steel Recycling',contactRole:'CEO',contactName:'Francesc Rubiralta',website:'celsa-group.com'},
+    // SWEDEN
+    {email:'ceo@ssab.com',company:'SSAB',country:'Sweden',state:'Stockholm',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Martin Lindqvist',website:'ssab.com'},
+    {email:'director@nordicsteel.se',company:'Nordic Steel AB',country:'Sweden',state:'Gothenburg',industry:'Steel Fabrication',contactRole:'Director',contactName:'Erik Johansson',website:'nordicsteel.se'},
+    // FINLAND
+    {email:'ceo@outokumpu.com',company:'Outokumpu',country:'Finland',state:'Helsinki',industry:'Stainless Steel',contactRole:'CEO',contactName:'Heikki Malinen',website:'outokumpu.com'},
+    {email:'director@ruukki.com',company:'Ruukki Construction',country:'Finland',state:'Helsinki',industry:'Steel Construction',contactRole:'Director',contactName:'Pekka Niemi',website:'ruukki.com'},
+    // NETHERLANDS
+    {email:'ceo@tatasteeleurope.com',company:'Tata Steel Europe',country:'Netherlands',state:'North Holland',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Henrik Adam',website:'tatasteeleurope.com'},
+    // AUSTRIA
+    {email:'ceo@voestalpine.com',company:'Voestalpine AG',country:'Austria',state:'Upper Austria',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Herbert Eibensteiner',website:'voestalpine.com'},
+    // SWITZERLAND
+    {email:'ceo@swisssteel.ch',company:'Swiss Steel Group',country:'Switzerland',state:'Lucerne',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Frank Koch',website:'swisssteel.ch'},
+    // POLAND
+    {email:'director@polensteelworks.pl',company:'Poland Steelworks',country:'Poland',state:'Silesia',industry:'Steel Manufacturing',contactRole:'Director',contactName:'Andrzej Kowalski',website:'polensteelworks.pl'},
+    // BELGIUM
+    {email:'ceo@eurosteelconstruction.eu',company:'Euro Steel Construction',country:'Belgium',state:'Wallonia',industry:'Steel Construction',contactRole:'CEO',contactName:'Luc Vandenberg',website:'eurosteelconstruction.eu'},
+    // CZECH REP
+    {email:'director@praguesteel.cz',company:'Prague Steel Works',country:'Czech Republic',state:'Prague',industry:'Steel Fabrication',contactRole:'Director',contactName:'Jan Novak',website:'praguesteel.cz'},
+    // DENMARK
+    {email:'ceo@dansteelgroup.dk',company:'DanSteel Group',country:'Denmark',state:'Copenhagen',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Anders Nielsen',website:'dansteelgroup.dk'},
+    // NORWAY
+    {email:'ceo@elkem.no',company:'Elkem ASA',country:'Norway',state:'Oslo',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Helge Aasen',website:'elkem.com'},
+    // MEXICO
+    {email:'ceo@ternium.com.mx',company:'Ternium Mexico',country:'Mexico',state:'Monterrey',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Maximo Vedoya',website:'ternium.com'},
+    {email:'director@deaceromx.com',company:'DeAcero',country:'Mexico',state:'Monterrey',industry:'Steel Manufacturing',contactRole:'Director',contactName:'Raul Gutierrez',website:'deacero.com'},
+    // SOUTH AFRICA
+    {email:'ceo@arcelormittalsa.com',company:'ArcelorMittal SA',country:'South Africa',state:'Gauteng',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Kobus Verster',website:'arcelormittalsa.com'},
+    // RUSSIA
+    {email:'ceo@severstal.com',company:'Severstal',country:'Russia',state:'Moscow',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Alexander Shevelev',website:'severstal.com'},
+    // INDONESIA
+    {email:'ceo@krakatausteel.com',company:'Krakatau Steel',country:'Indonesia',state:'Cilegon',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Silmy Karim',website:'krakatausteel.com'},
+    {email:'director@gunung-steel.com',company:'Gunung Steel Group',country:'Indonesia',state:'Jakarta',industry:'Steel Manufacturing',contactRole:'Director',contactName:'Tommy Taniwan',website:'gunung-steel.com'},
+    // VIETNAM
+    {email:'ceo@hoansengroup.com',company:'Hoa Sen Group',country:'Vietnam',state:'Ho Chi Minh City',industry:'Steel Products',contactRole:'CEO',contactName:'Le Phuoc Vu',website:'hoansengroup.com'},
+    {email:'director@hoaphattg.vn',company:'Hoa Phat Group',country:'Vietnam',state:'Hanoi',industry:'Steel Manufacturing',contactRole:'Director',contactName:'Tran Dinh Long',website:'hoaphat.com.vn'},
+    // THAILAND
+    {email:'ceo@ssi-steel.com',company:'Sahaviriya Steel',country:'Thailand',state:'Bangkok',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Win Viriyaprapaikit',website:'ssi-steel.com'},
+    // MALAYSIA
+    {email:'ceo@amsteel.com.my',company:'Am Steel Malaysia',country:'Malaysia',state:'Kuala Lumpur',industry:'Steel Products',contactRole:'CEO',contactName:'William Cheng',website:'amsteel.com.my'},
+    // PHILIPPINES
+    {email:'ceo@steelasia.com',company:'SteelAsia Manufacturing',country:'Philippines',state:'Manila',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Benjamin Yao',website:'steelasia.com'},
+    // SINGAPORE
+    {email:'ceo@kisco-steel.com',company:'Kisco Steel Asia',country:'Singapore',state:'Central',industry:'Steel Trading',contactRole:'CEO',contactName:'Kenji Tanaka',website:'kisco-steel.com'},
+    // TAIWAN
+    {email:'ceo@chinasteel.com.tw',company:'China Steel Corp',country:'Taiwan',state:'Kaohsiung',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Weng Chao-Dong',website:'chinasteel.com.tw'},
+    // PAKISTAN
+    {email:'ceo@intsteels.com.pk',company:'International Steels',country:'Pakistan',state:'Karachi',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Ali Asghar',website:'intsteels.com'},
+    // EGYPT
+    {email:'ceo@ezz-steel.com',company:'Ezz Steel',country:'Egypt',state:'Cairo',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Ahmed Ezz',website:'ezzsteel.com'},
+    // NIGERIA
+    {email:'ceo@africansteel.com',company:'African Steel Mills',country:'Nigeria',state:'Lagos',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Femi Otedola',website:'africansteel.com'},
+    // QATAR
+    {email:'ceo@qatarsteel.com.qa',company:'Qatar Steel',country:'Qatar',state:'Mesaieed',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Ahmad Al Naimi',website:'qatarsteel.com.qa'},
+    // NEW ZEALAND
+    {email:'ceo@nzsteel.co.nz',company:'New Zealand Steel',country:'New Zealand',state:'Auckland',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Robin Davies',website:'nzsteel.co.nz'},
+    // COLOMBIA
+    {email:'ceo@aceriasdecolombia.com',company:'Acerias de Colombia',country:'Colombia',state:'Bogota',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Juan Restrepo',website:'aceriaspaz.com'},
+    // ARGENTINA
+    {email:'ceo@acindar.com.ar',company:'Acindar',country:'Argentina',state:'Buenos Aires',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Martin Berardi',website:'acindar.com.ar'},
+    // CHILE
+    {email:'ceo@cap.cl',company:'CAP Steel',country:'Chile',state:'Santiago',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Eduardo Frei',website:'cap.cl'},
+    // MOROCCO
+    {email:'director@sonasidar.ma',company:'Sonasid',country:'Morocco',state:'Casablanca',industry:'Steel Manufacturing',contactRole:'Director',contactName:'Amine Bouziane',website:'sonasid.ma'},
+    // KENYA
+    {email:'ceo@doshi-steel.co.ke',company:'Doshi Steel',country:'Kenya',state:'Nairobi',industry:'Steel Products',contactRole:'CEO',contactName:'Ketan Doshi',website:'doshi.co.ke'},
+    // GHANA
+    {email:'director@sentuo-steel.com',company:'Sentuo Steel',country:'Ghana',state:'Tema',industry:'Steel Manufacturing',contactRole:'Director',contactName:'Liu Wei',website:'sentuo-steel.com'},
+    // OMAN
+    {email:'ceo@jswsteel-oman.com',company:'Jindal Shadeed Iron & Steel',country:'Oman',state:'Sohar',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Bimlendra Jha',website:'jsw.in'},
+    // KUWAIT
+    {email:'ceo@kwtsteelgroup.com',company:'United Steel Industrial Co',country:'Kuwait',state:'Kuwait City',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Fahad Al Sabah',website:'kwtsteelgroup.com'},
+    // BANGLADESH
+    {email:'ceo@bsrm.com',company:'BSRM Steels',country:'Bangladesh',state:'Chittagong',industry:'Steel Manufacturing',contactRole:'CEO',contactName:'Aameir Alihussain',website:'bsrm.com'},
+];
+
+// GET metadata for dropdowns
+router.get('/email-collection/metadata', (req, res) => {
+    res.json({ success: true, countries: Object.keys(COUNTRY_REGIONS_MAP).sort(), regions: COUNTRY_REGIONS_MAP, trades: AVAILABLE_TRADES });
+});
+
+// POST advanced search by country/region/trade/count
+router.post('/email-collection/advanced-search', async (req, res) => {
+    try {
+        const { country, region, trade, count } = req.body;
+        if (!country) return res.status(400).json({ success: false, message: 'Country is required' });
+        let matches = COMPANY_EMAIL_DATABASE.filter(c => c.country?.toLowerCase() === country.toLowerCase());
+        if (region && region !== 'All Regions') matches = matches.filter(c => c.state?.toLowerCase() === region.toLowerCase());
+        if (trade && trade !== 'All Trades') matches = matches.filter(c => c.industry?.toLowerCase().includes(trade.toLowerCase()));
+        const limit = Math.min(parseInt(count) || 500, 1000);
+        const results = matches.slice(0, limit);
+        const existingSnapshot = await adminDb.collection('collected_emails').get();
+        const existingEmails = new Set();
+        existingSnapshot.forEach(doc => existingEmails.add(doc.data().email?.toLowerCase()));
+        const newResults = results.filter(c => !existingEmails.has(c.email?.toLowerCase()));
+        if (newResults.length > 0) {
+            for (let i = 0; i < newResults.length; i += 400) {
+                const batch = adminDb.batch();
+                newResults.slice(i, i + 400).forEach(company => {
+                    const docRef = adminDb.collection('collected_emails').doc();
+                    batch.set(docRef, { ...company, collectedAt: new Date().toISOString(), source: 'advanced-search', status: 'new', used: false });
+                });
+                await batch.commit();
+            }
+        }
+        res.json({ success: true, results, total: results.length, newAdded: newResults.length, alreadyExisted: results.length - newResults.length, message: `Found ${results.length} emails for ${country}` });
+    } catch (error) {
+        console.error('[EMAIL-COLLECTION] Advanced search error:', error);
+        res.status(500).json({ success: false, message: 'Error in advanced search' });
+    }
+});
+
+// GET status
 router.get('/email-collection/status', async (req, res) => {
     try {
         const settingsDoc = await adminDb.collection('settings').doc('email_collection').get();
         const settings = settingsDoc.exists ? settingsDoc.data() : { enabled: false };
-
         const emailsSnapshot = await adminDb.collection('collected_emails').get();
-        const totalCollected = emailsSnapshot.size;
-
-        // Count by region
         const regionCounts = {};
-        emailsSnapshot.forEach(doc => {
-            const region = doc.data().region || 'Unknown';
-            regionCounts[region] = (regionCounts[region] || 0) + 1;
-        });
-
-        res.json({
-            success: true,
-            enabled: !!settings.enabled,
-            totalCollected,
-            regionCounts,
-            lastUpdated: settings.updatedAt || null,
-        });
+        emailsSnapshot.forEach(doc => { const c = doc.data().country || 'Unknown'; regionCounts[c] = (regionCounts[c] || 0) + 1; });
+        res.json({ success: true, enabled: !!settings.enabled, totalCollected: emailsSnapshot.size, regionCounts, lastUpdated: settings.updatedAt || null });
     } catch (error) {
-        console.error('[EMAIL-COLLECTION] Status error:', error);
-        res.status(500).json({ success: false, message: 'Error fetching email collection status' });
+        res.status(500).json({ success: false, message: 'Error fetching status' });
     }
 });
 
-// POST /api/admin/email-collection/toggle — Enable/disable auto-collection
+// POST toggle
 router.post('/email-collection/toggle', async (req, res) => {
     try {
-        const { enabled } = req.body;
-        const isEnabled = !!enabled;
-
-        await adminDb.collection('settings').doc('email_collection').set({
-            enabled: isEnabled,
-            updatedAt: new Date().toISOString(),
-            updatedBy: req.user?.email || 'admin',
-        }, { merge: true });
-
-        // If toggling ON, seed emails from the database if collection is empty
+        const isEnabled = !!req.body.enabled;
+        await adminDb.collection('settings').doc('email_collection').set({ enabled: isEnabled, updatedAt: new Date().toISOString(), updatedBy: req.user?.email || 'admin' }, { merge: true });
         if (isEnabled) {
-            const existingSnapshot = await adminDb.collection('collected_emails').get();
-            if (existingSnapshot.size === 0) {
-                // Seed all 150 emails
-                const batch1 = adminDb.batch();
-                const half = Math.ceil(COMPANY_EMAIL_DATABASE.length / 2);
-                COMPANY_EMAIL_DATABASE.slice(0, half).forEach(company => {
-                    const docRef = adminDb.collection('collected_emails').doc();
-                    batch1.set(docRef, {
-                        ...company,
-                        collectedAt: new Date().toISOString(),
-                        source: 'auto-discovery',
-                        status: 'new',
-                        used: false,
-                    });
-                });
-                await batch1.commit();
-
-                const batch2 = adminDb.batch();
-                COMPANY_EMAIL_DATABASE.slice(half).forEach(company => {
-                    const docRef = adminDb.collection('collected_emails').doc();
-                    batch2.set(docRef, {
-                        ...company,
-                        collectedAt: new Date().toISOString(),
-                        source: 'auto-discovery',
-                        status: 'new',
-                        used: false,
-                    });
-                });
-                await batch2.commit();
+            const existing = await adminDb.collection('collected_emails').get();
+            if (existing.size === 0) {
+                for (let i = 0; i < COMPANY_EMAIL_DATABASE.length; i += 400) {
+                    const batch = adminDb.batch();
+                    COMPANY_EMAIL_DATABASE.slice(i, i + 400).forEach(c => { const ref = adminDb.collection('collected_emails').doc(); batch.set(ref, { ...c, collectedAt: new Date().toISOString(), source: 'auto-discovery', status: 'new', used: false }); });
+                    await batch.commit();
+                }
             }
         }
-
-        console.log(`[EMAIL-COLLECTION] ${isEnabled ? 'Enabled' : 'Disabled'} by ${req.user?.email}`);
         res.json({ success: true, enabled: isEnabled, message: `Email collection ${isEnabled ? 'enabled' : 'disabled'}` });
     } catch (error) {
-        console.error('[EMAIL-COLLECTION] Toggle error:', error);
-        res.status(500).json({ success: false, message: 'Error toggling email collection' });
+        res.status(500).json({ success: false, message: 'Error toggling' });
     }
 });
 
-// GET /api/admin/email-collection/emails — List collected emails with optional region filter
+// GET emails
 router.get('/email-collection/emails', async (req, res) => {
     try {
-        const { region } = req.query;
-        let query = adminDb.collection('collected_emails').orderBy('collectedAt', 'desc');
-
-        const snapshot = await query.get();
+        const { region, country } = req.query;
+        const snapshot = await adminDb.collection('collected_emails').orderBy('collectedAt', 'desc').get();
         let emails = [];
         snapshot.forEach(doc => emails.push({ id: doc.id, ...doc.data() }));
-
-        // Filter by region if provided
-        if (region && region !== 'all') {
-            const normalizedRegion = REGION_MAP[region.toLowerCase()] || region;
-            emails = emails.filter(e =>
-                e.region?.toLowerCase() === normalizedRegion.toLowerCase() ||
-                e.country?.toLowerCase().includes(region.toLowerCase())
-            );
-        }
-
+        if (country && country !== 'all') emails = emails.filter(e => e.country?.toLowerCase() === country.toLowerCase());
+        if (region && region !== 'all') emails = emails.filter(e => e.state?.toLowerCase() === region.toLowerCase() || e.country?.toLowerCase().includes(region.toLowerCase()));
         res.json({ success: true, emails, total: emails.length });
     } catch (error) {
-        console.error('[EMAIL-COLLECTION] List error:', error);
-        res.status(500).json({ success: false, message: 'Error fetching collected emails' });
+        res.status(500).json({ success: false, message: 'Error fetching emails' });
     }
 });
 
-// POST /api/admin/email-collection/search — Search for companies by region (intelligent discovery)
+// POST search
 router.post('/email-collection/search', async (req, res) => {
     try {
         const { region } = req.body;
-        if (!region) {
-            return res.status(400).json({ success: false, message: 'Region is required' });
-        }
-
-        const normalizedRegion = REGION_MAP[region.toLowerCase()] || region;
-
-        // Find matching companies from database
-        const matches = COMPANY_EMAIL_DATABASE.filter(c =>
-            c.region?.toLowerCase() === normalizedRegion.toLowerCase() ||
-            c.country?.toLowerCase().includes(region.toLowerCase())
-        );
-
-        if (matches.length === 0) {
-            return res.json({ success: true, found: 0, added: 0, message: `No companies found for region: ${region}` });
-        }
-
-        // Check which ones are already collected
-        const existingSnapshot = await adminDb.collection('collected_emails').get();
-        const existingEmails = new Set();
-        existingSnapshot.forEach(doc => existingEmails.add(doc.data().email?.toLowerCase()));
-
-        const newCompanies = matches.filter(c => !existingEmails.has(c.email.toLowerCase()));
-
-        if (newCompanies.length === 0) {
-            return res.json({ success: true, found: matches.length, added: 0, message: `All ${matches.length} companies from ${normalizedRegion} are already collected` });
-        }
-
-        // Add new companies
-        const batchSize = 400;
-        for (let i = 0; i < newCompanies.length; i += batchSize) {
-            const batch = adminDb.batch();
-            newCompanies.slice(i, i + batchSize).forEach(company => {
-                const docRef = adminDb.collection('collected_emails').doc();
-                batch.set(docRef, {
-                    ...company,
-                    collectedAt: new Date().toISOString(),
-                    source: 'region-search',
-                    status: 'new',
-                    used: false,
-                });
-            });
-            await batch.commit();
-        }
-
-        console.log(`[EMAIL-COLLECTION] Region search "${region}": found ${matches.length}, added ${newCompanies.length}`);
-        res.json({
-            success: true,
-            found: matches.length,
-            added: newCompanies.length,
-            alreadyExisted: matches.length - newCompanies.length,
-            message: `Found ${matches.length} companies in ${normalizedRegion}, added ${newCompanies.length} new`,
-        });
+        if (!region) return res.status(400).json({ success: false, message: 'Region is required' });
+        const matches = COMPANY_EMAIL_DATABASE.filter(c => c.country?.toLowerCase().includes(region.toLowerCase()) || c.state?.toLowerCase().includes(region.toLowerCase()));
+        if (matches.length === 0) return res.json({ success: true, found: 0, added: 0, message: `No companies found for: ${region}` });
+        const snap = await adminDb.collection('collected_emails').get();
+        const existing = new Set(); snap.forEach(doc => existing.add(doc.data().email?.toLowerCase()));
+        const newOnes = matches.filter(c => !existing.has(c.email.toLowerCase()));
+        if (newOnes.length === 0) return res.json({ success: true, found: matches.length, added: 0, message: 'All already collected' });
+        for (let i = 0; i < newOnes.length; i += 400) { const batch = adminDb.batch(); newOnes.slice(i, i + 400).forEach(c => { batch.set(adminDb.collection('collected_emails').doc(), { ...c, collectedAt: new Date().toISOString(), source: 'region-search', status: 'new', used: false }); }); await batch.commit(); }
+        res.json({ success: true, found: matches.length, added: newOnes.length, message: `Added ${newOnes.length} new` });
     } catch (error) {
-        console.error('[EMAIL-COLLECTION] Search error:', error);
-        res.status(500).json({ success: false, message: 'Error searching for companies' });
+        res.status(500).json({ success: false, message: 'Error searching' });
     }
 });
 
-// DELETE /api/admin/email-collection/emails/:id — Delete a single collected email
+// DELETE single
 router.delete('/email-collection/emails/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        await adminDb.collection('collected_emails').doc(id).delete();
-        console.log(`[EMAIL-COLLECTION] Deleted email ${id}`);
-        res.json({ success: true, message: 'Email deleted' });
-    } catch (error) {
-        console.error('[EMAIL-COLLECTION] Delete error:', error);
-        res.status(500).json({ success: false, message: 'Error deleting email' });
-    }
+    try { await adminDb.collection('collected_emails').doc(req.params.id).delete(); res.json({ success: true }); } catch (e) { res.status(500).json({ success: false }); }
 });
 
-// POST /api/admin/email-collection/delete-bulk — Delete multiple emails (by IDs or all used)
+// POST delete-bulk
 router.post('/email-collection/delete-bulk', async (req, res) => {
     try {
-        const { ids, deleteUsed, deleteAll } = req.body;
-        let deletedCount = 0;
-
-        if (deleteAll) {
-            const snapshot = await adminDb.collection('collected_emails').get();
-            const batchSize = 400;
-            const docs = [];
-            snapshot.forEach(doc => docs.push(doc));
-
-            for (let i = 0; i < docs.length; i += batchSize) {
-                const batch = adminDb.batch();
-                docs.slice(i, i + batchSize).forEach(doc => batch.delete(doc.ref));
-                await batch.commit();
-                deletedCount += Math.min(batchSize, docs.length - i);
-            }
-        } else if (deleteUsed) {
-            const snapshot = await adminDb.collection('collected_emails').where('used', '==', true).get();
-            const batchSize = 400;
-            const docs = [];
-            snapshot.forEach(doc => docs.push(doc));
-
-            for (let i = 0; i < docs.length; i += batchSize) {
-                const batch = adminDb.batch();
-                docs.slice(i, i + batchSize).forEach(doc => batch.delete(doc.ref));
-                await batch.commit();
-                deletedCount += Math.min(batchSize, docs.length - i);
-            }
-        } else if (ids && Array.isArray(ids) && ids.length > 0) {
-            const batchSize = 400;
-            for (let i = 0; i < ids.length; i += batchSize) {
-                const batch = adminDb.batch();
-                ids.slice(i, i + batchSize).forEach(id => {
-                    batch.delete(adminDb.collection('collected_emails').doc(id));
-                });
-                await batch.commit();
-                deletedCount += Math.min(batchSize, ids.length - i);
-            }
-        } else {
-            return res.status(400).json({ success: false, message: 'Provide ids, deleteUsed, or deleteAll' });
-        }
-
-        console.log(`[EMAIL-COLLECTION] Bulk deleted ${deletedCount} emails`);
-        res.json({ success: true, deleted: deletedCount, message: `${deletedCount} emails deleted` });
-    } catch (error) {
-        console.error('[EMAIL-COLLECTION] Bulk delete error:', error);
-        res.status(500).json({ success: false, message: 'Error deleting emails' });
-    }
+        const { ids, deleteUsed, deleteAll } = req.body; let del = 0;
+        if (deleteAll) { const s = await adminDb.collection('collected_emails').get(); const d=[]; s.forEach(x=>d.push(x)); for(let i=0;i<d.length;i+=400){const b=adminDb.batch();d.slice(i,i+400).forEach(x=>b.delete(x.ref));await b.commit();del+=Math.min(400,d.length-i);} }
+        else if (deleteUsed) { const s = await adminDb.collection('collected_emails').where('used','==',true).get(); const d=[]; s.forEach(x=>d.push(x)); for(let i=0;i<d.length;i+=400){const b=adminDb.batch();d.slice(i,i+400).forEach(x=>b.delete(x.ref));await b.commit();del+=Math.min(400,d.length-i);} }
+        else if (ids?.length) { for(let i=0;i<ids.length;i+=400){const b=adminDb.batch();ids.slice(i,i+400).forEach(id=>b.delete(adminDb.collection('collected_emails').doc(id)));await b.commit();del+=Math.min(400,ids.length-i);} }
+        res.json({ success: true, deleted: del });
+    } catch (e) { res.status(500).json({ success: false }); }
 });
 
-// POST /api/admin/email-collection/mark-used — Mark emails as used
+// POST mark-used
 router.post('/email-collection/mark-used', async (req, res) => {
     try {
         const { ids } = req.body;
-        if (!ids || !Array.isArray(ids) || ids.length === 0) {
-            return res.status(400).json({ success: false, message: 'Email IDs are required' });
-        }
-
-        const batchSize = 400;
-        for (let i = 0; i < ids.length; i += batchSize) {
-            const batch = adminDb.batch();
-            ids.slice(i, i + batchSize).forEach(id => {
-                batch.update(adminDb.collection('collected_emails').doc(id), {
-                    used: true,
-                    usedAt: new Date().toISOString(),
-                });
-            });
-            await batch.commit();
-        }
-
-        res.json({ success: true, marked: ids.length, message: `${ids.length} emails marked as used` });
-    } catch (error) {
-        console.error('[EMAIL-COLLECTION] Mark used error:', error);
-        res.status(500).json({ success: false, message: 'Error marking emails as used' });
-    }
+        if (!ids?.length) return res.status(400).json({ success: false });
+        for(let i=0;i<ids.length;i+=400){const b=adminDb.batch();ids.slice(i,i+400).forEach(id=>b.update(adminDb.collection('collected_emails').doc(id),{used:true,usedAt:new Date().toISOString()}));await b.commit();}
+        res.json({ success: true, marked: ids.length });
+    } catch (e) { res.status(500).json({ success: false }); }
 });
 
 export default router;

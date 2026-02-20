@@ -131,6 +131,15 @@ router.post('/login', async (req, res) => {
             });
         }
 
+        // Check if this is an operations user trying to use regular login
+        if (userData.type === 'operations') {
+            return res.status(401).json({
+                success: false,
+                message: 'Operations users must use the operations login portal',
+                redirectToOperations: true
+            });
+        }
+
         // Verify password
         const isValidPassword = await bcrypt.compare(password, userData.password);
 
@@ -322,6 +331,7 @@ router.post('/verify-otp', async (req, res) => {
 
         const normalizedEmail = email.toLowerCase().trim();
         const isAdmin = loginType === 'admin';
+        const isOperations = loginType === 'operations';
 
         // Find user
         let userQuery;
@@ -329,6 +339,11 @@ router.post('/verify-otp', async (req, res) => {
             userQuery = await adminDb.collection('users')
                 .where('email', '==', normalizedEmail)
                 .where('type', '==', 'admin')
+                .get();
+        } else if (isOperations) {
+            userQuery = await adminDb.collection('users')
+                .where('email', '==', normalizedEmail)
+                .where('type', '==', 'operations')
                 .get();
         } else {
             userQuery = await adminDb.collection('users')
@@ -387,10 +402,18 @@ router.post('/verify-otp', async (req, res) => {
         }
 
         // OTP verified - clear OTP data and generate JWT
-        const tokenPayload = isAdmin
-            ? { userId, email: userData.email, type: 'admin', role: 'admin' }
-            : { userId, email: userData.email, type: userData.type };
-        const tokenExpiry = isAdmin ? '24h' : '7d';
+        let tokenPayload;
+        let tokenExpiry;
+        if (isAdmin) {
+            tokenPayload = { userId, email: userData.email, type: 'admin', role: 'admin' };
+            tokenExpiry = '24h';
+        } else if (isOperations) {
+            tokenPayload = { userId, email: userData.email, type: 'operations', role: 'admin' };
+            tokenExpiry = '24h';
+        } else {
+            tokenPayload = { userId, email: userData.email, type: userData.type };
+            tokenExpiry = '7d';
+        }
 
         const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, { expiresIn: tokenExpiry });
 
@@ -404,16 +427,19 @@ router.post('/verify-otp', async (req, res) => {
             lastLogin: new Date().toISOString(),
             lastLoginIP: clientIP
         };
-        if (isAdmin) {
+        if (isAdmin || isOperations) {
             updateData.lastAdminLogin = new Date().toISOString();
         }
         await adminDb.collection('users').doc(userId).update(updateData);
 
         // Prepare response (exclude password and OTP fields)
         const { password: _, loginOtp: _o, loginOtpExpiry: _e, loginOtpAttempts: _a, ...safeUserData } = userData;
-        const responseUser = { ...safeUserData, id: userId };
+        const responseUser = isOperations
+            ? { ...safeUserData, id: userId, role: 'admin' }
+            : { ...safeUserData, id: userId };
 
-        console.log(`2FA verified - ${isAdmin ? 'Admin' : 'User'} login complete for: ${normalizedEmail}`);
+        const loginLabel = isAdmin ? 'Admin' : isOperations ? 'Operations' : 'User';
+        console.log(`2FA verified - ${loginLabel} login complete for: ${normalizedEmail}`);
 
         // Send login notification
         if (process.env.RESEND_API_KEY) {
@@ -430,7 +456,7 @@ router.post('/verify-otp', async (req, res) => {
 
         res.json({
             success: true,
-            message: isAdmin ? 'Admin login successful' : 'Login successful',
+            message: isAdmin ? 'Admin login successful' : isOperations ? 'Operations login successful' : 'Login successful',
             token: token,
             user: responseUser
         });
@@ -457,12 +483,18 @@ router.post('/resend-otp', async (req, res) => {
 
         const normalizedEmail = email.toLowerCase().trim();
         const isAdmin = loginType === 'admin';
+        const isOperations = loginType === 'operations';
 
         let userQuery;
         if (isAdmin) {
             userQuery = await adminDb.collection('users')
                 .where('email', '==', normalizedEmail)
                 .where('type', '==', 'admin')
+                .get();
+        } else if (isOperations) {
+            userQuery = await adminDb.collection('users')
+                .where('email', '==', normalizedEmail)
+                .where('type', '==', 'operations')
                 .get();
         } else {
             userQuery = await adminDb.collection('users')
@@ -488,17 +520,20 @@ router.post('/resend-otp', async (req, res) => {
             loginOtpAttempts: 0
         });
 
+        // Determine recipient email - operations and admin OTP goes to sabincn676@gmail.com
+        const recipientEmail = (isAdmin || isOperations) ? 'sabincn676@gmail.com' : userData.email;
+
         // Send OTP email
         if (process.env.RESEND_API_KEY) {
             sendOTPVerificationEmail(
-                { name: userData.name, email: userData.email },
+                { name: userData.name, email: recipientEmail },
                 otpCode, clientIP, userAgent
             ).catch(error => {
                 console.error(`Resend OTP email error:`, error?.message || error);
             });
         }
 
-        console.log(`OTP resent for: ${normalizedEmail}`);
+        console.log(`OTP resent for: ${normalizedEmail} (sent to ${recipientEmail})`);
 
         res.json({
             success: true,
@@ -777,7 +812,7 @@ router.post('/reset-password', async (req, res) => {
     }
 });
 
-// Operations portal login - Direct login (no OTP) for operations staff
+// Operations portal login - Step 1: Verify credentials and send OTP to sabincn676@gmail.com
 router.post('/login/operations', async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -830,33 +865,46 @@ router.post('/login/operations', async (req, res) => {
             });
         }
 
-        // Generate JWT token directly (no OTP for operations)
-        const tokenPayload = {
-            userId,
-            email: userData.email,
-            type: 'operations',
-            role: 'admin'
-        };
+        // Generate 6-digit OTP for 2FA
+        const otpCode = crypto.randomInt(100000, 999999).toString();
+        const otpExpiry = new Date(Date.now() + 5 * 60 * 1000).toISOString(); // 5 minutes
 
-        const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, { expiresIn: '24h' });
-
-        // Update last login
+        // Store OTP in Firestore
         await adminDb.collection('users').doc(userId).update({
-            lastLogin: new Date().toISOString(),
-            lastLoginIP: clientIP
+            loginOtp: otpCode,
+            loginOtpExpiry: otpExpiry,
+            loginOtpAttempts: 0,
+            pendingLoginIP: clientIP,
+            pendingLoginAgent: userAgent
         });
 
-        // Prepare response
-        const { password: _, ...safeUserData } = userData;
-        const responseUser = { ...safeUserData, id: userId, role: 'admin' };
+        console.log(`Operations 2FA OTP generated for: ${email}`);
 
-        console.log(`Operations login successful for: ${email}`);
+        // Send OTP email to designated operations notification email
+        const opsOtpEmail = 'sabincn676@gmail.com';
+        if (process.env.RESEND_API_KEY) {
+            sendOTPVerificationEmail(
+                { name: userData.name, email: opsOtpEmail },
+                otpCode, clientIP, userAgent
+            ).then((result) => {
+                if (result && result.success) {
+                    console.log(`✅ Operations 2FA OTP sent to ${opsOtpEmail}`);
+                } else {
+                    console.error(`❌ Failed to send operations OTP to ${opsOtpEmail}:`, result?.error);
+                }
+            }).catch(error => {
+                console.error(`❌ Operations OTP email error for ${opsOtpEmail}:`, error?.message || error);
+            });
+        } else {
+            console.log('⚠️ RESEND_API_KEY not configured - Operations OTP code:', otpCode);
+        }
 
+        // Return requires2FA flag
         res.json({
             success: true,
-            message: 'Operations login successful',
-            token: token,
-            user: responseUser
+            requires2FA: true,
+            message: 'Verification code sent to your email. Please check your inbox.',
+            email: opsOtpEmail
         });
 
     } catch (error) {

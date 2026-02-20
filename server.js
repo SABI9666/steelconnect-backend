@@ -1095,4 +1095,38 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 // Set server timeout for long-running requests
 server.timeout = 120000; // 2 minutes
 
+// ─── Hourly Admin Activity Report Scheduler ──────────────────────────────────
+// Sends a PDF report of all admin activities to sabincn676@gmail.com every hour
+(async () => {
+    try {
+        const { sendHourlyAdminActivityReport } = await import('./src/services/adminActivityReportService.js');
+
+        const HOUR_MS = 60 * 60 * 1000; // 1 hour
+
+        // Start the interval
+        const reportInterval = setInterval(async () => {
+            console.log('[ADMIN-REPORT-SCHEDULER] Triggering hourly admin activity report...');
+            try {
+                const result = await sendHourlyAdminActivityReport();
+                if (result.success) {
+                    console.log(`[ADMIN-REPORT-SCHEDULER] Report sent — ${result.activitiesCount} activities, email ID: ${result.emailId}`);
+                } else {
+                    console.error('[ADMIN-REPORT-SCHEDULER] Report failed:', result.error);
+                }
+            } catch (err) {
+                console.error('[ADMIN-REPORT-SCHEDULER] Scheduler error:', err.message);
+            }
+        }, HOUR_MS);
+
+        // Clean up on shutdown
+        process.on('SIGTERM', () => clearInterval(reportInterval));
+        process.on('SIGINT', () => clearInterval(reportInterval));
+
+        console.log('[ADMIN-REPORT-SCHEDULER] Hourly admin activity report scheduler started (every 60 min)');
+        console.log('[ADMIN-REPORT-SCHEDULER] Reports will be sent to sabincn676@gmail.com');
+    } catch (err) {
+        console.warn('[ADMIN-REPORT-SCHEDULER] Could not start scheduler:', err.message);
+    }
+})();
+
 export default app;

@@ -799,6 +799,49 @@ async function seedAdminUser() {
 
 seedAdminUser();
 
+// --- Seed Operations User ---
+async function seedOperationsUser() {
+    try {
+        const opsEmail = 'operations@steelconnect.com';
+        const opsPassword = 'operations9666';
+
+        const existingOps = await adminDb.collection('users')
+            .where('email', '==', opsEmail)
+            .where('type', '==', 'operations')
+            .get();
+
+        if (!existingOps.empty) {
+            const opsDoc = existingOps.docs[0];
+            const hashedPassword = await bcrypt.hash(opsPassword, 12);
+            await adminDb.collection('users').doc(opsDoc.id).update({
+                password: hashedPassword,
+                updatedAt: new Date().toISOString()
+            });
+            console.log(`✅ Operations user updated: ${opsEmail}`);
+        } else {
+            const hashedPassword = await bcrypt.hash(opsPassword, 12);
+            const opsData = {
+                name: 'Operations Manager',
+                email: opsEmail,
+                password: hashedPassword,
+                type: 'operations',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                profileCompleted: true,
+                profileStatus: 'approved',
+                canAccess: true
+            };
+
+            const opsRef = await adminDb.collection('users').add(opsData);
+            console.log(`✅ Operations user created: ${opsEmail} (ID: ${opsRef.id})`);
+        }
+    } catch (error) {
+        console.error('❌ Operations user seeding error:', error.message);
+    }
+}
+
+seedOperationsUser();
+
 // =================================================================
 // START: ADDED CODE - Backend Proxy Download Route
 // =================================================================

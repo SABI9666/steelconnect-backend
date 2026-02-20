@@ -31,14 +31,15 @@ export const isAdmin = async (req, res, next) => {
             return next();
         }
         
-        // Check if it's a database admin
-        if (decoded.type === 'admin' && decoded.role === 'admin') {
-            console.log('🔍 Admin auth: Checking database admin...');
-            
-            // Verify the user still exists and is admin in database
+        // Check if it's a database admin or operations user
+        const allowedTypes = ['admin', 'operations'];
+        if (allowedTypes.includes(decoded.type) && decoded.role === 'admin') {
+            console.log('🔍 Admin auth: Checking database admin/operations...');
+
+            // Verify the user still exists and is admin/operations in database
             try {
                 const userDoc = await adminDb.collection('users').doc(decoded.userId).get();
-                
+
                 if (userDoc.exists) {
                     const userData = userDoc.data();
                     console.log('🔍 Admin auth: Database user found', {
@@ -46,22 +47,22 @@ export const isAdmin = async (req, res, next) => {
                         userType: userData.type,
                         userEmail: userData.email
                     });
-                    
-                    if (userData.type === 'admin') {
-                        console.log('✅ Database admin access granted:', userData.email);
+
+                    if (allowedTypes.includes(userData.type)) {
+                        console.log('✅ Database admin/operations access granted:', userData.email);
                         req.user = decoded;
                         return next();
                     } else {
-                        console.log('❌ Admin auth: User exists but not admin type:', userData.type);
+                        console.log('❌ Admin auth: User exists but not admin/operations type:', userData.type);
                     }
                 } else {
                     console.log('❌ Admin auth: User document not found in database:', decoded.userId);
                 }
             } catch (dbError) {
                 console.error('❌ Admin auth: Database verification failed:', dbError.message);
-                return res.status(500).json({ 
-                    success: false, 
-                    error: 'Database verification failed. Please try again.' 
+                return res.status(500).json({
+                    success: false,
+                    error: 'Database verification failed. Please try again.'
                 });
             }
         } else {
@@ -124,8 +125,8 @@ export const isAdminSimple = async (req, res, next) => {
             role: decoded.role
         });
         
-        // Check if the user has the 'admin' role OR is environment admin
-        if (decoded.role === 'admin' || (decoded.userId === 'env_admin' && decoded.type === 'admin')) {
+        // Check if the user has the 'admin' role OR is environment admin OR is operations user
+        if (decoded.role === 'admin' || (decoded.userId === 'env_admin' && decoded.type === 'admin') || decoded.type === 'operations') {
             console.log('✅ Simple admin access granted:', decoded.email);
             req.user = decoded;
             next();

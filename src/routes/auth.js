@@ -777,5 +777,96 @@ router.post('/reset-password', async (req, res) => {
     }
 });
 
+// Operations portal login - Direct login (no OTP) for operations staff
+router.post('/login/operations', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        const clientIP = getClientIP(req);
+        const userAgent = req.headers['user-agent'] || 'Unknown';
+
+        console.log(`Operations login attempt for: ${email} from IP: ${clientIP}`);
+
+        if (!email || !password) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email and password are required'
+            });
+        }
+
+        // Find operations user
+        const userQuery = await adminDb.collection('users')
+            .where('email', '==', email.toLowerCase().trim())
+            .where('type', '==', 'operations')
+            .get();
+
+        if (userQuery.empty) {
+            console.log(`Operations login failed: User not found for email ${email}`);
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid operations credentials'
+            });
+        }
+
+        const userDoc = userQuery.docs[0];
+        const userData = userDoc.data();
+        const userId = userDoc.id;
+
+        // Verify password
+        const isValidPassword = await bcrypt.compare(password, userData.password);
+
+        if (!isValidPassword) {
+            console.log(`Operations login failed: Invalid password for email ${email}`);
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid operations credentials'
+            });
+        }
+
+        // Check if account is active
+        if (userData.canAccess === false) {
+            return res.status(403).json({
+                success: false,
+                message: 'Operations account has been suspended'
+            });
+        }
+
+        // Generate JWT token directly (no OTP for operations)
+        const tokenPayload = {
+            userId,
+            email: userData.email,
+            type: 'operations',
+            role: 'admin'
+        };
+
+        const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, { expiresIn: '24h' });
+
+        // Update last login
+        await adminDb.collection('users').doc(userId).update({
+            lastLogin: new Date().toISOString(),
+            lastLoginIP: clientIP
+        });
+
+        // Prepare response
+        const { password: _, ...safeUserData } = userData;
+        const responseUser = { ...safeUserData, id: userId, role: 'admin' };
+
+        console.log(`Operations login successful for: ${email}`);
+
+        res.json({
+            success: true,
+            message: 'Operations login successful',
+            token: token,
+            user: responseUser
+        });
+
+    } catch (error) {
+        console.error('Operations login error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error during operations login'
+        });
+    }
+});
+
 export default router;
 

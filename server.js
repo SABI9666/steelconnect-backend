@@ -756,7 +756,7 @@ console.log('💾 Chatbot session save endpoint registered at POST /api/chatbot/
 // Record a new visitor session (called when someone opens the website)
 app.post('/api/visitors/track', async (req, res) => {
     try {
-        const { sessionId, referrer, landingPage, userAgent } = req.body;
+        const { sessionId, referrer, landingPage, userAgent, userEmail, userName, screenResolution, language } = req.body;
         if (!sessionId) return res.status(400).json({ success: false, message: 'sessionId is required' });
 
         // Parse user agent for device/browser info
@@ -779,8 +779,17 @@ app.post('/api/visitors/track', async (req, res) => {
         else if (/android/i.test(ua)) os = 'Android';
         else if (/iphone|ipad/i.test(ua)) os = 'iOS';
 
-        // Get IP-based location (from request headers)
+        // Get IP from request headers
         const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'Unknown';
+
+        // Check if session already exists (prevent duplicates)
+        const existing = await adminDb.collection('visitor_sessions')
+            .where('sessionId', '==', sessionId.substring(0, 100))
+            .limit(1).get();
+
+        if (!existing.empty) {
+            return res.json({ success: true, message: 'Session already tracked' });
+        }
 
         const visitorData = {
             sessionId: sessionId.substring(0, 100),
@@ -791,24 +800,57 @@ app.post('/api/visitors/track', async (req, res) => {
             browser,
             os,
             userAgent: ua.substring(0, 300),
+            screenResolution: (screenResolution || '').substring(0, 20),
+            language: (language || '').substring(0, 10),
             startedAt: new Date().toISOString(),
             lastActiveAt: new Date().toISOString(),
             pagesViewed: [{ page: (landingPage || '/').substring(0, 200), viewedAt: new Date().toISOString() }],
             totalTimeSeconds: 0,
             isActive: true,
+            // Contact info (if user is logged in)
+            userEmail: userEmail ? userEmail.toLowerCase().trim().substring(0, 200) : null,
+            userName: userName ? userName.substring(0, 100) : null,
+            // Location — will be populated async from IP geolocation
+            location: null,
         };
 
-        // Check if session already exists (prevent duplicates)
-        const existing = await adminDb.collection('visitor_sessions')
-            .where('sessionId', '==', visitorData.sessionId)
-            .limit(1).get();
-
-        if (!existing.empty) {
-            return res.json({ success: true, message: 'Session already tracked' });
-        }
-
-        await adminDb.collection('visitor_sessions').add(visitorData);
+        // Save immediately (don't wait for geolocation)
+        const docRef = await adminDb.collection('visitor_sessions').add(visitorData);
         res.json({ success: true, message: 'Visitor tracked' });
+
+        // Async: Resolve IP to location using ip-api.com (free, no key needed)
+        // This runs AFTER response is sent so it doesn't slow down the user
+        try {
+            if (ip && ip !== 'Unknown' && ip !== '127.0.0.1' && ip !== '::1') {
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 4000);
+                const geoRes = await fetch(
+                    `http://ip-api.com/json/${ip}?fields=status,country,countryCode,regionName,city,zip,lat,lon,timezone,isp,org`,
+                    { signal: controller.signal }
+                );
+                clearTimeout(timeout);
+                const geo = await geoRes.json();
+                if (geo.status === 'success') {
+                    await docRef.update({
+                        location: {
+                            country: geo.country || '',
+                            countryCode: geo.countryCode || '',
+                            region: geo.regionName || '',
+                            city: geo.city || '',
+                            zip: geo.zip || '',
+                            lat: geo.lat || 0,
+                            lon: geo.lon || 0,
+                            timezone: geo.timezone || '',
+                            isp: geo.isp || '',
+                            org: geo.org || '',
+                        }
+                    });
+                }
+            }
+        } catch (geoErr) {
+            // Geolocation failed — no problem, location stays null
+            console.log('[VISITOR] Geo lookup skipped:', geoErr.message);
+        }
     } catch (error) {
         console.error('Visitor track error:', error.message);
         res.json({ success: true }); // Don't block frontend
@@ -818,7 +860,7 @@ app.post('/api/visitors/track', async (req, res) => {
 // Update visitor activity (page change, heartbeat for time tracking)
 app.post('/api/visitors/heartbeat', async (req, res) => {
     try {
-        const { sessionId, currentPage, timeSpentSeconds } = req.body;
+        const { sessionId, currentPage, timeSpentSeconds, userEmail, userName } = req.body;
         if (!sessionId) return res.status(400).json({ success: false });
 
         const snapshot = await adminDb.collection('visitor_sessions')
@@ -834,6 +876,14 @@ app.post('/api/visitors/heartbeat', async (req, res) => {
             totalTimeSeconds: Math.min(parseInt(timeSpentSeconds) || 0, 86400), // cap at 24h
             isActive: true,
         };
+
+        // If user just logged in, capture their contact info
+        if (userEmail && !data.userEmail) {
+            updates.userEmail = userEmail.toLowerCase().trim().substring(0, 200);
+        }
+        if (userName && !data.userName) {
+            updates.userName = userName.substring(0, 100);
+        }
 
         // Add page to pagesViewed if it's new
         if (currentPage) {

@@ -752,6 +752,133 @@ app.post('/api/chatbot/save-session', async (req, res) => {
 });
 console.log('💾 Chatbot session save endpoint registered at POST /api/chatbot/save-session');
 
+// --- PUBLIC: Visitor Tracking (no auth required) ---
+// Record a new visitor session (called when someone opens the website)
+app.post('/api/visitors/track', async (req, res) => {
+    try {
+        const { sessionId, referrer, landingPage, userAgent } = req.body;
+        if (!sessionId) return res.status(400).json({ success: false, message: 'sessionId is required' });
+
+        // Parse user agent for device/browser info
+        const ua = userAgent || req.headers['user-agent'] || '';
+        const isMobile = /mobile|android|iphone|ipad/i.test(ua);
+        const isTablet = /tablet|ipad/i.test(ua);
+        const deviceType = isTablet ? 'Tablet' : isMobile ? 'Mobile' : 'Desktop';
+
+        let browser = 'Unknown';
+        if (/edg/i.test(ua)) browser = 'Edge';
+        else if (/chrome/i.test(ua)) browser = 'Chrome';
+        else if (/firefox/i.test(ua)) browser = 'Firefox';
+        else if (/safari/i.test(ua)) browser = 'Safari';
+        else if (/opera|opr/i.test(ua)) browser = 'Opera';
+
+        let os = 'Unknown';
+        if (/windows/i.test(ua)) os = 'Windows';
+        else if (/macintosh|mac os/i.test(ua)) os = 'macOS';
+        else if (/linux/i.test(ua)) os = 'Linux';
+        else if (/android/i.test(ua)) os = 'Android';
+        else if (/iphone|ipad/i.test(ua)) os = 'iOS';
+
+        // Get IP-based location (from request headers)
+        const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'Unknown';
+
+        const visitorData = {
+            sessionId: sessionId.substring(0, 100),
+            ip: ip.substring(0, 50),
+            referrer: (referrer || 'Direct').substring(0, 500),
+            landingPage: (landingPage || '/').substring(0, 200),
+            deviceType,
+            browser,
+            os,
+            userAgent: ua.substring(0, 300),
+            startedAt: new Date().toISOString(),
+            lastActiveAt: new Date().toISOString(),
+            pagesViewed: [{ page: (landingPage || '/').substring(0, 200), viewedAt: new Date().toISOString() }],
+            totalTimeSeconds: 0,
+            isActive: true,
+        };
+
+        // Check if session already exists (prevent duplicates)
+        const existing = await adminDb.collection('visitor_sessions')
+            .where('sessionId', '==', visitorData.sessionId)
+            .limit(1).get();
+
+        if (!existing.empty) {
+            return res.json({ success: true, message: 'Session already tracked' });
+        }
+
+        await adminDb.collection('visitor_sessions').add(visitorData);
+        res.json({ success: true, message: 'Visitor tracked' });
+    } catch (error) {
+        console.error('Visitor track error:', error.message);
+        res.json({ success: true }); // Don't block frontend
+    }
+});
+
+// Update visitor activity (page change, heartbeat for time tracking)
+app.post('/api/visitors/heartbeat', async (req, res) => {
+    try {
+        const { sessionId, currentPage, timeSpentSeconds } = req.body;
+        if (!sessionId) return res.status(400).json({ success: false });
+
+        const snapshot = await adminDb.collection('visitor_sessions')
+            .where('sessionId', '==', sessionId.substring(0, 100))
+            .limit(1).get();
+
+        if (snapshot.empty) return res.json({ success: true });
+
+        const doc = snapshot.docs[0];
+        const data = doc.data();
+        const updates = {
+            lastActiveAt: new Date().toISOString(),
+            totalTimeSeconds: Math.min(parseInt(timeSpentSeconds) || 0, 86400), // cap at 24h
+            isActive: true,
+        };
+
+        // Add page to pagesViewed if it's new
+        if (currentPage) {
+            const pages = data.pagesViewed || [];
+            const lastPage = pages[pages.length - 1]?.page;
+            if (lastPage !== currentPage && pages.length < 100) {
+                pages.push({ page: currentPage.substring(0, 200), viewedAt: new Date().toISOString() });
+                updates.pagesViewed = pages;
+            }
+        }
+
+        await doc.ref.update(updates);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Visitor heartbeat error:', error.message);
+        res.json({ success: true });
+    }
+});
+
+// Mark visitor as left (called on page unload)
+app.post('/api/visitors/leave', async (req, res) => {
+    try {
+        const { sessionId, timeSpentSeconds } = req.body;
+        if (!sessionId) return res.json({ success: true });
+
+        const snapshot = await adminDb.collection('visitor_sessions')
+            .where('sessionId', '==', sessionId.substring(0, 100))
+            .limit(1).get();
+
+        if (!snapshot.empty) {
+            await snapshot.docs[0].ref.update({
+                isActive: false,
+                lastActiveAt: new Date().toISOString(),
+                totalTimeSeconds: Math.min(parseInt(timeSpentSeconds) || 0, 86400),
+                endedAt: new Date().toISOString(),
+            });
+        }
+        res.json({ success: true });
+    } catch (error) {
+        res.json({ success: true });
+    }
+});
+
+console.log('👁️ Visitor tracking endpoints registered at /api/visitors/*');
+
 // --- Seed Default Admin User ---
 async function seedAdminUser() {
     try {

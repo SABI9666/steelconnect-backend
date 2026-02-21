@@ -7114,4 +7114,122 @@ router.post('/email-collection/mark-used', async (req, res) => {
     } catch (e) { res.status(500).json({ success: false }); }
 });
 
+// =====================================================
+// VISITOR ANALYTICS — Admin endpoints
+// =====================================================
+
+// GET all visitor sessions (with filters)
+router.get('/visitors', async (req, res) => {
+    try {
+        const { days, limit: queryLimit } = req.query;
+        const maxDays = parseInt(days) || 30;
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - maxDays);
+        const cutoffISO = cutoffDate.toISOString();
+
+        const snapshot = await adminDb.collection('visitor_sessions')
+            .where('startedAt', '>=', cutoffISO)
+            .orderBy('startedAt', 'desc')
+            .limit(parseInt(queryLimit) || 500)
+            .get();
+
+        const visitors = [];
+        snapshot.forEach(doc => visitors.push({ id: doc.id, ...doc.data() }));
+
+        // Calculate stats
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+        const todayVisitors = visitors.filter(v => v.startedAt >= today);
+        const activeNow = visitors.filter(v => {
+            if (!v.isActive) return false;
+            const lastActive = new Date(v.lastActiveAt);
+            return (now - lastActive) < 300000; // active in last 5 min
+        });
+
+        const totalTime = visitors.reduce((sum, v) => sum + (v.totalTimeSeconds || 0), 0);
+        const avgTime = visitors.length > 0 ? Math.round(totalTime / visitors.length) : 0;
+
+        // Device breakdown
+        const devices = { Desktop: 0, Mobile: 0, Tablet: 0 };
+        const browsers = {};
+        const osSystems = {};
+        const pages = {};
+        const hourly = {};
+        const daily = {};
+
+        visitors.forEach(v => {
+            devices[v.deviceType] = (devices[v.deviceType] || 0) + 1;
+            browsers[v.browser] = (browsers[v.browser] || 0) + 1;
+            osSystems[v.os] = (osSystems[v.os] || 0) + 1;
+
+            // Track page popularity
+            (v.pagesViewed || []).forEach(p => {
+                pages[p.page] = (pages[p.page] || 0) + 1;
+            });
+
+            // Hourly distribution
+            const hour = new Date(v.startedAt).getHours();
+            hourly[hour] = (hourly[hour] || 0) + 1;
+
+            // Daily distribution
+            const day = v.startedAt.split('T')[0];
+            daily[day] = (daily[day] || 0) + 1;
+        });
+
+        // Top referrers
+        const referrers = {};
+        visitors.forEach(v => {
+            const ref = v.referrer || 'Direct';
+            referrers[ref] = (referrers[ref] || 0) + 1;
+        });
+
+        const stats = {
+            totalVisitors: visitors.length,
+            todayVisitors: todayVisitors.length,
+            activeNow: activeNow.length,
+            avgTimeSeconds: avgTime,
+            devices,
+            browsers,
+            osSystems,
+            topPages: Object.entries(pages).sort((a, b) => b[1] - a[1]).slice(0, 10),
+            referrers: Object.entries(referrers).sort((a, b) => b[1] - a[1]).slice(0, 10),
+            hourlyDistribution: hourly,
+            dailyTrend: Object.entries(daily).sort((a, b) => a[0].localeCompare(b[0])).slice(-30),
+        };
+
+        res.json({ success: true, visitors, stats, total: visitors.length });
+    } catch (error) {
+        console.error('[VISITORS] Error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// DELETE clear old visitor data
+router.delete('/visitors/clear', async (req, res) => {
+    try {
+        const { olderThanDays } = req.body;
+        const days = parseInt(olderThanDays) || 30;
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - days);
+        const cutoffISO = cutoff.toISOString();
+
+        const old = await adminDb.collection('visitor_sessions')
+            .where('startedAt', '<', cutoffISO)
+            .get();
+
+        if (old.empty) return res.json({ success: true, deleted: 0 });
+
+        for (let i = 0; i < old.docs.length; i += 400) {
+            const batch = adminDb.batch();
+            old.docs.slice(i, i + 400).forEach(doc => batch.delete(doc.ref));
+            await batch.commit();
+        }
+
+        res.json({ success: true, deleted: old.size, message: `Deleted ${old.size} visitor records older than ${days} days` });
+    } catch (error) {
+        console.error('[VISITORS] Clear error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
 export default router;

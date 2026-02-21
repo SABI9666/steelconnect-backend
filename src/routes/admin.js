@@ -6950,7 +6950,43 @@ const COMPANY_EMAIL_DATABASE = [
 
 // GET metadata for dropdowns
 router.get('/email-collection/metadata', (req, res) => {
-    res.json({ success: true, countries: Object.keys(COUNTRY_REGIONS_MAP).sort(), regions: COUNTRY_REGIONS_MAP, trades: AVAILABLE_TRADES });
+    res.json({ success: true, countries: Object.keys(COUNTRY_REGIONS_MAP).sort(), regions: COUNTRY_REGIONS_MAP, trades: AVAILABLE_TRADES, totalAvailable: COMPANY_EMAIL_DATABASE.length });
+});
+
+// POST sync-all — Force load ALL 2695 entries into Firestore (skip existing)
+router.post('/email-collection/sync-all', async (req, res) => {
+    try {
+        const existingSnapshot = await adminDb.collection('collected_emails').get();
+        const existingEmails = new Set();
+        existingSnapshot.forEach(doc => existingEmails.add(doc.data().email?.toLowerCase()));
+
+        const newEntries = COMPANY_EMAIL_DATABASE.filter(c => !existingEmails.has(c.email?.toLowerCase()));
+
+        if (newEntries.length === 0) {
+            return res.json({ success: true, added: 0, total: existingSnapshot.size, message: `All ${COMPANY_EMAIL_DATABASE.length} emails already loaded` });
+        }
+
+        for (let i = 0; i < newEntries.length; i += 400) {
+            const batch = adminDb.batch();
+            newEntries.slice(i, i + 400).forEach(company => {
+                const docRef = adminDb.collection('collected_emails').doc();
+                batch.set(docRef, {
+                    ...company,
+                    collectedAt: new Date().toISOString(),
+                    source: 'sync-all',
+                    status: 'new',
+                    used: false,
+                });
+            });
+            await batch.commit();
+        }
+
+        console.log(`[EMAIL-COLLECTION] Synced all: added ${newEntries.length} new entries`);
+        res.json({ success: true, added: newEntries.length, total: existingSnapshot.size + newEntries.length, alreadyExisted: existingEmails.size, message: `Loaded ${newEntries.length} new emails (${COMPANY_EMAIL_DATABASE.length} total in database)` });
+    } catch (error) {
+        console.error('[EMAIL-COLLECTION] Sync all error:', error);
+        res.status(500).json({ success: false, message: 'Error syncing all emails' });
+    }
 });
 
 // POST advanced search by country/region/trade/count

@@ -1,5 +1,6 @@
 // src/routes/admin.js - COMPLETE FINAL MERGED VERSION WITH BUSINESS ANALYTICS & DASHBOARDS
 import express from 'express';
+import crypto from 'crypto';
 import multer from 'multer';
 import { authenticateToken, isAdmin } from '../middleware/authMiddleware.js';
 import { adminDb, admin, storage, uploadToFirebaseStorage, generateSignedUrl, deleteFileFromFirebase } from '../config/firebase.js';
@@ -7275,6 +7276,22 @@ router.get('/visitors', async (req, res) => {
             hourlyDistribution: hourly,
             dailyTrend: Object.entries(daily).sort((a, b) => a[0].localeCompare(b[0])).slice(-30),
         };
+
+        // Enrich visitors with Gravatar avatar and LinkedIn search URL
+        visitors.forEach(v => {
+            const email = v.userEmail || v.contactEmail;
+            if (email) {
+                const hash = crypto.createHash('md5').update(email.toLowerCase().trim()).digest('hex');
+                v.gravatarUrl = `https://www.gravatar.com/avatar/${hash}?s=80&d=404`;
+                // LinkedIn search URL from name or email
+                const searchTerm = v.userName || email.split('@')[0];
+                v.linkedinSearchUrl = `https://www.linkedin.com/search/results/all/?keywords=${encodeURIComponent(searchTerm)}`;
+            }
+            // Expose company/org from IP geolocation
+            if (v.location) {
+                v.company = v.location.org || v.location.isp || null;
+            }
+        });
 
         res.json({ success: true, visitors, stats, total: visitors.length });
     } catch (error) {

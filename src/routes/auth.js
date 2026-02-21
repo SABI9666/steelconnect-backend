@@ -21,13 +21,21 @@ function getClientIP(req) {
 // Register user
 router.post('/register', async (req, res) => {
     try {
-        const { name, email, password, type } = req.body;
+        const { name, email, password, type, termsAccepted } = req.body;
 
         // Validation
         if (!name || !email || !password || !type) {
             return res.status(400).json({
                 success: false,
                 message: 'All fields are required'
+            });
+        }
+
+        // Terms & Conditions must be accepted
+        if (!termsAccepted) {
+            return res.status(400).json({
+                success: false,
+                message: 'You must accept the Terms & Conditions and Privacy Policy to register'
             });
         }
 
@@ -61,6 +69,10 @@ router.post('/register', async (req, res) => {
             type: type,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
+            // Terms & Conditions acceptance
+            termsAccepted: true,
+            termsAcceptedAt: new Date().toISOString(),
+            termsVersion: '1.0',
             // Profile completion status
             profileCompleted: false,
             profileStatus: 'incomplete', // incomplete, pending, approved, rejected

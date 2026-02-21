@@ -7136,6 +7136,66 @@ router.get('/visitors', async (req, res) => {
         const visitors = [];
         snapshot.forEach(doc => visitors.push({ id: doc.id, ...doc.data() }));
 
+        // Cross-reference with chatbot_sessions and prospects for contact info
+        // Only fetch these if there are visitors without userEmail
+        const visitorsWithoutEmail = visitors.filter(v => !v.userEmail);
+        if (visitorsWithoutEmail.length > 0) {
+            try {
+                // Get recent chatbot sessions that captured emails
+                const chatbotSnap = await adminDb.collection('chatbot_sessions')
+                    .where('capturedAt', '>=', cutoffISO)
+                    .orderBy('capturedAt', 'desc')
+                    .limit(200)
+                    .get();
+                const chatbotEmails = [];
+                chatbotSnap.forEach(doc => {
+                    const d = doc.data();
+                    if (d.email) chatbotEmails.push({ email: d.email, capturedAt: d.capturedAt, source: 'chatbot' });
+                });
+
+                // Get recent prospects
+                const prospectSnap = await adminDb.collection('prospects')
+                    .where('capturedAt', '>=', cutoffISO)
+                    .orderBy('capturedAt', 'desc')
+                    .limit(200)
+                    .get();
+                const prospectEmails = [];
+                prospectSnap.forEach(doc => {
+                    const d = doc.data();
+                    if (d.email) prospectEmails.push({ email: d.email, capturedAt: d.capturedAt, source: 'prospect' });
+                });
+
+                // Match visitors without email by time window (within 30 min of chatbot/prospect capture)
+                visitorsWithoutEmail.forEach(v => {
+                    const vStart = new Date(v.startedAt).getTime();
+                    const vEnd = new Date(v.lastActiveAt || v.startedAt).getTime();
+
+                    // Check chatbot sessions captured during this visit
+                    for (const cb of chatbotEmails) {
+                        const cbTime = new Date(cb.capturedAt).getTime();
+                        if (cbTime >= vStart - 60000 && cbTime <= vEnd + 60000) {
+                            v.contactEmail = cb.email;
+                            v.contactSource = 'chatbot';
+                            break;
+                        }
+                    }
+                    // Check prospects if not already matched
+                    if (!v.contactEmail) {
+                        for (const p of prospectEmails) {
+                            const pTime = new Date(p.capturedAt).getTime();
+                            if (pTime >= vStart - 60000 && pTime <= vEnd + 60000) {
+                                v.contactEmail = p.email;
+                                v.contactSource = 'prospect';
+                                break;
+                            }
+                        }
+                    }
+                });
+            } catch (crossRefErr) {
+                console.log('[VISITORS] Cross-reference skipped:', crossRefErr.message);
+            }
+        }
+
         // Calculate stats
         const now = new Date();
         const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
@@ -7156,6 +7216,8 @@ router.get('/visitors', async (req, res) => {
         const pages = {};
         const hourly = {};
         const daily = {};
+        const countries = {};
+        const cities = {};
 
         visitors.forEach(v => {
             devices[v.deviceType] = (devices[v.deviceType] || 0) + 1;
@@ -7174,6 +7236,15 @@ router.get('/visitors', async (req, res) => {
             // Daily distribution
             const day = v.startedAt.split('T')[0];
             daily[day] = (daily[day] || 0) + 1;
+
+            // Location breakdown
+            if (v.location?.country) {
+                const key = v.location.countryCode ? `${v.location.country}|${v.location.countryCode}` : v.location.country;
+                countries[key] = (countries[key] || 0) + 1;
+            }
+            if (v.location?.city) {
+                cities[v.location.city] = (cities[v.location.city] || 0) + 1;
+            }
         });
 
         // Top referrers
@@ -7183,14 +7254,22 @@ router.get('/visitors', async (req, res) => {
             referrers[ref] = (referrers[ref] || 0) + 1;
         });
 
+        // Count visitors with contact info
+        const identifiedVisitors = visitors.filter(v => v.userEmail || v.contactEmail).length;
+        const uniqueCountries = Object.keys(countries).length;
+
         const stats = {
             totalVisitors: visitors.length,
             todayVisitors: todayVisitors.length,
             activeNow: activeNow.length,
             avgTimeSeconds: avgTime,
+            identifiedVisitors,
+            uniqueCountries,
             devices,
             browsers,
             osSystems,
+            countries: Object.entries(countries).sort((a, b) => b[1] - a[1]).slice(0, 20),
+            cities: Object.entries(cities).sort((a, b) => b[1] - a[1]).slice(0, 15),
             topPages: Object.entries(pages).sort((a, b) => b[1] - a[1]).slice(0, 10),
             referrers: Object.entries(referrers).sort((a, b) => b[1] - a[1]).slice(0, 10),
             hourlyDistribution: hourly,

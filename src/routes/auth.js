@@ -928,5 +928,179 @@ router.post('/login/operations', async (req, res) => {
     }
 });
 
+// Google Sign-In - verify Google ID token and login/register
+router.post('/google', async (req, res) => {
+    try {
+        const { credential, type, termsAccepted } = req.body;
+        const clientIP = getClientIP(req);
+        const userAgent = req.headers['user-agent'] || 'Unknown';
+
+        if (!credential) {
+            return res.status(400).json({
+                success: false,
+                message: 'Google credential is required'
+            });
+        }
+
+        // Decode and verify Google ID token
+        let googleUser;
+        try {
+            // Decode the JWT payload (Google ID tokens are JWTs)
+            const parts = credential.split('.');
+            if (parts.length !== 3) {
+                throw new Error('Invalid token format');
+            }
+            const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
+
+            // Verify token expiry
+            if (payload.exp && payload.exp * 1000 < Date.now()) {
+                throw new Error('Token has expired');
+            }
+
+            // Verify issuer
+            if (!['accounts.google.com', 'https://accounts.google.com'].includes(payload.iss)) {
+                throw new Error('Invalid token issuer');
+            }
+
+            // Verify audience matches our client ID
+            const googleClientId = process.env.GOOGLE_CLIENT_ID;
+            if (googleClientId && payload.aud !== googleClientId) {
+                throw new Error('Token audience mismatch');
+            }
+
+            if (!payload.email || !payload.email_verified) {
+                throw new Error('Email not verified by Google');
+            }
+
+            googleUser = {
+                email: payload.email.toLowerCase().trim(),
+                name: payload.name || payload.email.split('@')[0],
+                picture: payload.picture || null,
+                googleId: payload.sub
+            };
+        } catch (tokenError) {
+            console.error('Google token verification failed:', tokenError.message);
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid Google credential. Please try again.'
+            });
+        }
+
+        console.log(`Google login attempt for: ${googleUser.email} from IP: ${clientIP}`);
+
+        // Check if user already exists
+        const existingUserQuery = await adminDb.collection('users')
+            .where('email', '==', googleUser.email)
+            .get();
+
+        let userId;
+        let userData;
+
+        if (!existingUserQuery.empty) {
+            // Existing user - log them in directly
+            const userDoc = existingUserQuery.docs[0];
+            userId = userDoc.id;
+            userData = userDoc.data();
+
+            // Check if account is admin or operations (not allowed via Google login on frontend)
+            if (userData.type === 'admin' || userData.type === 'operations') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Admin and operations users cannot use Google Sign-In'
+                });
+            }
+
+            // Check if user can access
+            if (userData.canAccess === false && userData.profileStatus === 'rejected') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Your account access has been restricted. Please contact support.',
+                    profileStatus: userData.profileStatus
+                });
+            }
+
+            // Update last login and Google profile picture if not set
+            const updateData = {
+                lastLogin: new Date().toISOString(),
+                lastLoginIP: clientIP,
+                googleId: googleUser.googleId
+            };
+            if (googleUser.picture && !userData.profilePicture) {
+                updateData.profilePicture = googleUser.picture;
+            }
+            await adminDb.collection('users').doc(userId).update(updateData);
+
+            console.log(`Google login successful for existing user: ${googleUser.email}`);
+        } else {
+            // New user - register them via Google
+            if (!type || !['designer', 'contractor'].includes(type)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Please select your role (Designer or Contractor) to continue',
+                    requiresRegistration: true
+                });
+            }
+
+            if (!termsAccepted) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'You must accept the Terms & Conditions and Privacy Policy to register',
+                    requiresRegistration: true
+                });
+            }
+
+            // Create new user from Google profile
+            const newUserData = {
+                name: googleUser.name,
+                email: googleUser.email,
+                password: null, // No password for Google-only users
+                type: type,
+                authProvider: 'google',
+                googleId: googleUser.googleId,
+                profilePicture: googleUser.picture,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                termsAccepted: true,
+                termsAcceptedAt: new Date().toISOString(),
+                termsVersion: '1.0',
+                profileCompleted: false,
+                profileStatus: 'incomplete',
+                canAccess: true,
+                profileData: {},
+                lastLogin: new Date().toISOString(),
+                lastLoginIP: clientIP
+            };
+
+            const userRef = await adminDb.collection('users').add(newUserData);
+            userId = userRef.id;
+            userData = newUserData;
+
+            console.log(`New ${type} registered via Google: ${googleUser.email} (ID: ${userId})`);
+        }
+
+        // Generate JWT token (skip OTP for Google sign-in since Google already verified identity)
+        const tokenPayload = { userId, email: userData.email || googleUser.email, type: userData.type };
+        const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, { expiresIn: '7d' });
+
+        // Prepare safe user response
+        const { password: _, loginOtp: _o, loginOtpExpiry: _e, loginOtpAttempts: _a, resetCode: _r, resetCodeExpiry: _re, ...safeUserData } = userData;
+
+        res.json({
+            success: true,
+            message: existingUserQuery && !existingUserQuery.empty ? 'Google login successful' : 'Account created successfully via Google',
+            token: token,
+            user: { ...safeUserData, id: userId },
+            isNewUser: existingUserQuery ? existingUserQuery.empty : true
+        });
+
+    } catch (error) {
+        console.error('Google auth error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error during Google authentication'
+        });
+    }
+});
+
 export default router;
 

@@ -12,7 +12,7 @@ import { generateAIEstimate } from '../services/aiEstimationService.js';
 import { runMultiPassEstimation } from '../services/multiPassEstimationEngine.js';
 import { adminActivityLoggerMiddleware } from '../middleware/adminActivityMiddleware.js';
 import { getRecentActivities } from '../services/adminActivityLogger.js';
-import { sendHourlyAdminActivityReport, generateManualReport } from '../services/adminActivityReportService.js';
+import { sendRealTimeActivityAlert, generateManualReport } from '../services/adminActivityReportService.js';
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -4149,22 +4149,30 @@ router.get('/activity-logs', async (req, res) => {
     }
 });
 
-// POST /api/admin/activity-report/send-now - Manually trigger the hourly report email
+// POST /api/admin/activity-report/send-now - Manually trigger a test real-time alert
 router.post('/activity-report/send-now', async (req, res) => {
     try {
-        const result = await sendHourlyAdminActivityReport();
-        if (result.success) {
-            res.json({
-                success: true,
-                message: `Report sent successfully with ${result.activitiesCount} activities`,
-                emailId: result.emailId
-            });
-        } else {
-            res.status(500).json({ success: false, message: 'Failed to send report', error: result.error });
-        }
+        const testActivity = {
+            adminEmail: req.user?.email || 'admin@steelconnect.com',
+            adminName: req.user?.name || 'Admin',
+            category: 'System Admin',
+            action: 'Manual Test Alert',
+            description: 'Admin manually triggered a test activity alert',
+            method: 'POST',
+            endpoint: '/api/admin/activity-report/send-now',
+            ip: req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '',
+            timestamp: new Date().toISOString()
+        };
+        const result = await sendRealTimeActivityAlert(testActivity);
+        res.json({
+            success: true,
+            message: 'Real-time test alert sent (email + WhatsApp)',
+            email: result.email,
+            whatsapp: result.whatsapp
+        });
     } catch (error) {
         console.error('[ACTIVITY-REPORT] Manual send error:', error);
-        res.status(500).json({ success: false, message: 'Error sending activity report' });
+        res.status(500).json({ success: false, message: 'Error sending activity alert' });
     }
 });
 

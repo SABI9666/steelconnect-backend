@@ -1,15 +1,17 @@
 // src/services/adminActivityLogger.js - Tracks all admin actions in Firestore
+// and sends real-time email + WhatsApp notifications for every activity.
 import { adminDb } from '../config/firebase.js';
+import { sendRealTimeActivityAlert } from './adminActivityReportService.js';
 
 const COLLECTION = 'admin_activity_logs';
 
 /**
- * Log an admin activity to Firestore.
+ * Log an admin activity to Firestore and send real-time email + WhatsApp alert.
  *
  * @param {Object} opts
  * @param {string} opts.adminEmail   - Email of the admin performing the action
  * @param {string} opts.adminName    - Name of the admin (optional)
- * @param {string} opts.category     - Activity category (e.g. "User Management", "Profile Review", "Estimation", etc.)
+ * @param {string} opts.category     - Activity category (e.g. "User Management", "Profile Review", "Estimation", "Marketing", etc.)
  * @param {string} opts.action       - Short action label (e.g. "Approved Profile", "Blocked User")
  * @param {string} opts.description  - Human-readable description of what happened
  * @param {Object} opts.metadata     - Any extra data (userId affected, reviewId, etc.)
@@ -45,6 +47,11 @@ export async function logAdminActivity({
 
         await adminDb.collection(COLLECTION).add(logEntry);
         console.log(`[ACTIVITY-LOG] ${adminEmail} — ${action}: ${description}`);
+
+        // Send real-time email + WhatsApp notification (fire-and-forget)
+        sendRealTimeActivityAlert(logEntry).catch(err => {
+            console.error('[ACTIVITY-LOG] Real-time alert failed (non-blocking):', err.message);
+        });
     } catch (error) {
         // Never let logging failures break the main flow
         console.error('[ACTIVITY-LOG] Failed to write activity log:', error.message);

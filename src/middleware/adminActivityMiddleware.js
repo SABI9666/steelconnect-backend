@@ -453,6 +453,74 @@ const ROUTE_MAP = [
             action: req.body.enabled ? 'Enabled Operations Portal' : 'Disabled Operations Portal',
             description: `Operations portal ${req.body.enabled ? 'enabled' : 'disabled'}`
         })
+    },
+
+    // ── Email Collection ─────────────────────────────────────────────────
+    {
+        test: /^POST \/email-collection\/sync-all$/,
+        resolve: () => ({
+            category: 'Marketing',
+            action: 'Synced Email Collection',
+            description: 'Email collection sync-all triggered'
+        })
+    },
+    {
+        test: /^POST \/email-collection\/advanced-search$/,
+        resolve: (req) => ({
+            category: 'Marketing',
+            action: 'Advanced Email Search',
+            description: `Advanced email search performed${req.body.query ? ` — query: "${req.body.query}"` : ''}`
+        })
+    },
+    {
+        test: /^POST \/email-collection\/toggle$/,
+        resolve: (req) => ({
+            category: 'Marketing',
+            action: req.body.enabled ? 'Enabled Email Collection' : 'Disabled Email Collection',
+            description: `Email collection ${req.body.enabled ? 'enabled' : 'disabled'}`
+        })
+    },
+    {
+        test: /^POST \/email-collection\/search$/,
+        resolve: (req) => ({
+            category: 'Marketing',
+            action: 'Email Search',
+            description: `Email search performed${req.body.query ? ` — query: "${req.body.query}"` : ''}`
+        })
+    },
+    {
+        test: /^DELETE \/email-collection\/emails\/([^/]+)$/,
+        resolve: (req, m) => ({
+            category: 'Marketing',
+            action: 'Deleted Collected Email',
+            description: `Collected email ${m[1]} deleted`
+        })
+    },
+    {
+        test: /^POST \/email-collection\/delete-bulk$/,
+        resolve: (req) => ({
+            category: 'Marketing',
+            action: 'Bulk Deleted Emails',
+            description: `Bulk deleted ${(req.body.ids || []).length} collected emails`
+        })
+    },
+    {
+        test: /^POST \/email-collection\/mark-used$/,
+        resolve: (req) => ({
+            category: 'Marketing',
+            action: 'Marked Emails Used',
+            description: `Marked ${(req.body.ids || []).length} emails as used`
+        })
+    },
+
+    // ── Visitors ─────────────────────────────────────────────────────────
+    {
+        test: /^DELETE \/visitors\/clear$/,
+        resolve: () => ({
+            category: 'Business Analytics',
+            action: 'Cleared Visitor Data',
+            description: 'All visitor tracking data cleared'
+        })
     }
 ];
 
@@ -545,10 +613,10 @@ function guessCategory(path) {
     if (path.includes('profile-review')) return 'Profile Review';
     if (path.includes('estimation')) return 'Estimation';
     if (path.includes('support')) return 'Support';
-    if (path.includes('marketing') || path.includes('prospect')) return 'Marketing';
+    if (path.includes('marketing') || path.includes('prospect') || path.includes('email-collection')) return 'Marketing';
     if (path.includes('community')) return 'Community';
     if (path.includes('announcement')) return 'Announcements';
-    if (path.includes('business-analytics')) return 'Business Analytics';
+    if (path.includes('business-analytics') || path.includes('visitor')) return 'Business Analytics';
     if (path.includes('system-admin')) return 'System Admin';
     if (path.includes('dashboard')) return 'Dashboard';
     if (path.includes('bulk-email')) return 'Bulk Email';

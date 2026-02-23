@@ -13,6 +13,7 @@ import { runMultiPassEstimation } from '../services/multiPassEstimationEngine.js
 import { adminActivityLoggerMiddleware } from '../middleware/adminActivityMiddleware.js';
 import { getRecentActivities } from '../services/adminActivityLogger.js';
 import { sendRealTimeActivityAlert, generateManualReport } from '../services/adminActivityReportService.js';
+import { getWhatsAppConfig, sendWhatsAppText, verifyWhatsAppConnection } from '../services/whatsappService.js';
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -4190,6 +4191,108 @@ router.get('/activity-report/download', async (req, res) => {
     } catch (error) {
         console.error('[ACTIVITY-REPORT] Download error:', error);
         res.status(500).json({ success: false, message: 'Error generating activity report PDF' });
+    }
+});
+
+// ================================================================
+// WHATSAPP BUSINESS API — Status & Test Endpoints
+// ================================================================
+
+// GET /api/admin/whatsapp/status - Check WhatsApp configuration and connection status
+router.get('/whatsapp/status', async (req, res) => {
+    try {
+        const config = getWhatsAppConfig();
+
+        if (!config.configured) {
+            return res.json({
+                success: true,
+                configured: false,
+                message: 'WhatsApp Business API is not configured. Set WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN in your environment variables.',
+                setup_guide: 'https://developers.facebook.com → Your App → WhatsApp → API Setup'
+            });
+        }
+
+        // Verify connection with Meta API
+        const verification = await verifyWhatsAppConnection();
+
+        res.json({
+            success: true,
+            configured: true,
+            connected: verification.success,
+            phoneNumber: verification.phoneNumber || null,
+            displayName: verification.displayName || null,
+            qualityRating: verification.qualityRating || null,
+            error: verification.error || null
+        });
+    } catch (error) {
+        console.error('[WHATSAPP-STATUS] Error:', error);
+        res.status(500).json({ success: false, message: 'Error checking WhatsApp status' });
+    }
+});
+
+// POST /api/admin/whatsapp/test - Send a test WhatsApp message
+router.post('/whatsapp/test', async (req, res) => {
+    try {
+        const config = getWhatsAppConfig();
+        if (!config.configured) {
+            return res.status(400).json({
+                success: false,
+                message: 'WhatsApp is not configured. Set WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN first.'
+            });
+        }
+
+        const { to } = req.body;
+        const recipientNumber = to || '919895909666'; // Default to admin WhatsApp
+
+        const result = await sendWhatsAppText({
+            to: recipientNumber,
+            message: `*SteelConnect WhatsApp Test*\n\nThis is a test message from SteelConnect Admin Panel.\n\n*Sent by:* ${req.user?.email || 'admin'}\n*Time:* ${new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}\n\n_WhatsApp Business API is working correctly._`
+        });
+
+        res.json({
+            success: result.success,
+            message: result.success ? 'Test WhatsApp message sent successfully' : 'Failed to send test message',
+            messageId: result.messageId || null,
+            error: result.error || null,
+            sentTo: recipientNumber
+        });
+    } catch (error) {
+        console.error('[WHATSAPP-TEST] Error:', error);
+        res.status(500).json({ success: false, message: 'Error sending test WhatsApp message' });
+    }
+});
+
+// POST /api/admin/whatsapp/send - Send a custom WhatsApp message to any number
+router.post('/whatsapp/send', async (req, res) => {
+    try {
+        const config = getWhatsAppConfig();
+        if (!config.configured) {
+            return res.status(400).json({
+                success: false,
+                message: 'WhatsApp is not configured.'
+            });
+        }
+
+        const { to, message } = req.body;
+
+        if (!to || !message) {
+            return res.status(400).json({
+                success: false,
+                message: 'Missing required fields: to (phone number), message (text body)'
+            });
+        }
+
+        const result = await sendWhatsAppText({ to, message });
+
+        res.json({
+            success: result.success,
+            message: result.success ? 'WhatsApp message sent' : 'Failed to send WhatsApp message',
+            messageId: result.messageId || null,
+            error: result.error || null
+        });
+    } catch (error) {
+        console.error('[WHATSAPP-SEND] Error:', error);
+        res.status(500).json({ success: false, message: 'Error sending WhatsApp message' });
     }
 });
 

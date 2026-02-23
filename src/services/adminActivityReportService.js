@@ -3,6 +3,7 @@
 // No hourly batch — every activity triggers an immediate alert.
 
 import { getRecentActivities } from './adminActivityLogger.js';
+import { sendWhatsAppText } from './whatsappService.js';
 
 const ADMIN_REPORT_EMAIL = 'sabincn676@gmail.com';
 const ADMIN_WHATSAPP_NUMBER = '919895909666'; // India country code + number
@@ -154,47 +155,19 @@ _Real-time alert from SteelConnect Admin Monitoring_`;
 // ─── Send WhatsApp notification via WhatsApp Business Cloud API ──────────────
 
 async function sendWhatsAppNotification(activity) {
-    try {
-        const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-        const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+    const messageBody = buildWhatsAppMessage(activity);
+    const result = await sendWhatsAppText({
+        to: ADMIN_WHATSAPP_NUMBER,
+        message: messageBody
+    });
 
-        if (!phoneNumberId || !accessToken) {
-            console.log('[ADMIN-ALERT] WhatsApp not configured (missing WHATSAPP_PHONE_NUMBER_ID or WHATSAPP_ACCESS_TOKEN). Skipping WhatsApp notification.');
-            return { success: false, error: 'WhatsApp not configured' };
-        }
-
-        const messageBody = buildWhatsAppMessage(activity);
-
-        const response = await fetch(
-            `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`,
-            {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${accessToken}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    messaging_product: 'whatsapp',
-                    to: ADMIN_WHATSAPP_NUMBER,
-                    type: 'text',
-                    text: { body: messageBody }
-                })
-            }
-        );
-
-        const data = await response.json();
-
-        if (response.ok && data.messages) {
-            console.log(`[ADMIN-ALERT] WhatsApp sent to ${ADMIN_WHATSAPP_NUMBER} — ID: ${data.messages[0]?.id}`);
-            return { success: true, messageId: data.messages[0]?.id };
-        } else {
-            console.error('[ADMIN-ALERT] WhatsApp API error:', JSON.stringify(data));
-            return { success: false, error: data.error?.message || 'WhatsApp API error' };
-        }
-    } catch (error) {
-        console.error('[ADMIN-ALERT] WhatsApp send failed:', error.message);
-        return { success: false, error: error.message };
+    if (result.success) {
+        console.log(`[ADMIN-ALERT] WhatsApp sent to ${ADMIN_WHATSAPP_NUMBER} — ID: ${result.messageId}`);
+    } else {
+        console.log(`[ADMIN-ALERT] WhatsApp skipped/failed: ${result.error}`);
     }
+
+    return result;
 }
 
 // ─── Send email notification for a single activity ───────────────────────────

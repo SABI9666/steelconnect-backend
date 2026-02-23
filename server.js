@@ -130,6 +130,22 @@ if (process.env.RESEND_API_KEY) {
     console.log('🔧 Add RESEND_API_KEY to your environment variables');
 }
 
+// --- WhatsApp Business API Configuration Check ---
+console.log('\n📱 WhatsApp Business API Configuration:');
+if (process.env.WHATSAPP_PHONE_NUMBER_ID && process.env.WHATSAPP_ACCESS_TOKEN) {
+    console.log('✅ WhatsApp Phone Number ID: Configured');
+    console.log('✅ WhatsApp Access Token: Configured');
+    console.log('📱 Admin activity alerts will be sent via WhatsApp');
+} else {
+    if (!process.env.WHATSAPP_PHONE_NUMBER_ID) {
+        console.log('❌ WHATSAPP_PHONE_NUMBER_ID: Missing');
+    }
+    if (!process.env.WHATSAPP_ACCESS_TOKEN) {
+        console.log('❌ WHATSAPP_ACCESS_TOKEN: Missing');
+    }
+    console.log('🔧 WhatsApp notifications disabled. Get credentials from https://developers.facebook.com → WhatsApp → API Setup');
+}
+
 // --- Database Connection with enhanced error handling ---
 if (process.env.MONGODB_URI) {
     mongoose.connect(process.env.MONGODB_URI, {
@@ -252,6 +268,7 @@ app.get('/health', (req, res) => {
             profile: profileRoutes ? 'available' : 'unavailable',
             support: supportRoutes ? 'available' : 'unavailable', // NEW
             email: process.env.RESEND_API_KEY ? (isVerifiedDomain ? 'verified_domain' : 'configured') : 'missing',
+            whatsapp: (process.env.WHATSAPP_PHONE_NUMBER_ID && process.env.WHATSAPP_ACCESS_TOKEN) ? 'configured' : 'not_configured',
             analysis: 'available' // NEW
         },
         email_config: {
@@ -259,6 +276,11 @@ app.get('/health', (req, res) => {
             from_domain: emailDomain,
             domain_status: isVerifiedDomain ? 'verified_steelconnectapp.com' : 'check_verification',
             ready_to_send: process.env.RESEND_API_KEY && isVerifiedDomain
+        },
+        whatsapp_config: {
+            phone_number_id: process.env.WHATSAPP_PHONE_NUMBER_ID ? 'configured' : 'missing',
+            access_token: process.env.WHATSAPP_ACCESS_TOKEN ? 'configured' : 'missing',
+            ready_to_send: !!(process.env.WHATSAPP_PHONE_NUMBER_ID && process.env.WHATSAPP_ACCESS_TOKEN)
         }
     };
     
@@ -1281,7 +1303,12 @@ server.timeout = 120000; // 2 minutes
 // The real-time alerts are triggered by the adminActivityLogger service
 // immediately after logging each activity to Firestore.
 console.log('[ADMIN-ACTIVITY-MONITOR] Real-time admin activity monitoring is active');
-console.log('[ADMIN-ACTIVITY-MONITOR] Notifications sent to email: sabincn676@gmail.com & WhatsApp: 9895909666');
+console.log('[ADMIN-ACTIVITY-MONITOR] Notifications sent to email: sabincn676@gmail.com');
+if (process.env.WHATSAPP_PHONE_NUMBER_ID && process.env.WHATSAPP_ACCESS_TOKEN) {
+    console.log('[ADMIN-ACTIVITY-MONITOR] WhatsApp alerts: ✅ Enabled (9895909666)');
+} else {
+    console.log('[ADMIN-ACTIVITY-MONITOR] WhatsApp alerts: ❌ Disabled (credentials not configured)');
+}
 console.log('[ADMIN-ACTIVITY-MONITOR] Every admin action triggers an immediate email + WhatsApp alert');
 
 export default app;

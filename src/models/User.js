@@ -7,16 +7,16 @@ const userSchema = new mongoose.Schema({
     password: { type: String, required: true },
     role: { type: String, enum: ['user', 'admin'], default: 'user' },
     status: { type: String, enum: ['active', 'suspended'], default: 'active' },
-    // --- NEW FEATURE START ---
     subscription: {
-        status: { 
-            type: String, 
-            enum: ['active', 'inactive'], 
-            default: 'inactive' 
+        status: {
+            type: String,
+            enum: ['active', 'inactive', 'free_override'],
+            default: 'inactive'
         },
-        endDate: { type: Date, default: null }
+        plan: { type: String, default: null },
+        endDate: { type: Date, default: null },
+        stripeCustomerId: { type: String, default: null },
     }
-    // --- NEW FEATURE END ---
 }, { timestamps: true });
 
 const User = mongoose.model('User', userSchema);

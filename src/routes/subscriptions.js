@@ -1,8 +1,10 @@
-// src/routes/subscriptions.js - Subscription Management & Stripe Integration
+// src/routes/subscriptions.js - Subscription Management, Stripe Integration & Invoice Generation
 import express from 'express';
 import { authenticateToken, isAdmin } from '../middleware/authMiddleware.js';
-import { adminDb } from '../config/firebase.js';
+import { adminDb, storage } from '../config/firebase.js';
 import Subscription from '../models/Subscription.js';
+import Invoice from '../models/Invoice.js';
+import { createInvoiceForSubscription, regenerateInvoicePDF } from '../services/invoiceService.js';
 
 const router = express.Router();
 
@@ -99,6 +101,51 @@ router.get('/my-subscription', authenticateToken, async (req, res) => {
     }
 });
 
+// GET /api/subscriptions/my-invoices - Get current user's invoices
+router.get('/my-invoices', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        const invoices = await Invoice.find({ userId })
+            .sort({ issuedAt: -1 })
+            .limit(50);
+
+        res.json({ success: true, invoices });
+    } catch (error) {
+        console.error('Error fetching user invoices:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch invoices' });
+    }
+});
+
+// GET /api/subscriptions/invoice/:invoiceId/download - Download invoice PDF
+router.get('/invoice/:invoiceId/download', authenticateToken, async (req, res) => {
+    try {
+        const invoice = await Invoice.findById(req.params.invoiceId);
+        if (!invoice) {
+            return res.status(404).json({ success: false, message: 'Invoice not found' });
+        }
+
+        // Verify user owns this invoice (or is admin)
+        const isOwner = invoice.userId === req.user.userId;
+        const isAdminUser = req.user.role === 'admin';
+        if (!isOwner && !isAdminUser) {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
+
+        if (invoice.pdfUrl) {
+            return res.json({ success: true, downloadUrl: invoice.pdfUrl });
+        }
+
+        // Regenerate PDF if missing
+        const { pdfBuffer } = await regenerateInvoicePDF(invoice._id);
+        const updatedInvoice = await Invoice.findById(invoice._id);
+
+        res.json({ success: true, downloadUrl: updatedInvoice.pdfUrl });
+    } catch (error) {
+        console.error('Error downloading invoice:', error);
+        res.status(500).json({ success: false, message: 'Failed to download invoice' });
+    }
+});
+
 // POST /api/subscriptions/create-checkout - Create Stripe checkout session
 router.post('/create-checkout', authenticateToken, async (req, res) => {
     try {
@@ -148,6 +195,13 @@ router.post('/create-checkout', authenticateToken, async (req, res) => {
                 });
             }
 
+            // Generate invoice for free plan
+            try {
+                await createInvoiceForSubscription(subscription);
+            } catch (invoiceErr) {
+                console.error('Invoice generation error (free plan):', invoiceErr);
+            }
+
             return res.json({
                 success: true,
                 message: 'Free plan activated',
@@ -155,8 +209,7 @@ router.post('/create-checkout', authenticateToken, async (req, res) => {
             });
         }
 
-        // For paid plans - return Stripe checkout details
-        // Stripe keys will be configured later; for now return a pending subscription
+        // For paid plans
         const now = new Date();
         const endDate = new Date(now);
         endDate.setMonth(endDate.getMonth() + 1);
@@ -234,11 +287,12 @@ router.post('/stripe-webhook', express.raw({ type: 'application/json' }), async 
     //     case 'checkout.session.completed': {
     //         const session = event.data.object;
     //         const { subscriptionId, userId, planId } = session.metadata;
-    //         await Subscription.findByIdAndUpdate(subscriptionId, {
+    //         const updatedSub = await Subscription.findByIdAndUpdate(subscriptionId, {
     //             status: 'active',
     //             stripeSubscriptionId: session.subscription,
     //             stripeCustomerId: session.customer,
-    //         });
+    //         }, { new: true });
+    //
     //         // Update Firestore user
     //         const usersRef = adminDb.collection('users');
     //         const snap = await usersRef.where('uid', '==', userId).get();
@@ -247,6 +301,36 @@ router.post('/stripe-webhook', express.raw({ type: 'application/json' }), async 
     //                 'subscription.status': 'active',
     //                 'subscription.plan': planId,
     //             });
+    //         }
+    //
+    //         // >>> GENERATE INVOICE on successful payment <<<
+    //         if (updatedSub) {
+    //             try {
+    //                 await createInvoiceForSubscription(updatedSub, {
+    //                     stripePaymentIntentId: session.payment_intent,
+    //                     stripeInvoiceId: session.invoice,
+    //                 });
+    //             } catch (invoiceErr) {
+    //                 console.error('Invoice generation error after Stripe payment:', invoiceErr);
+    //             }
+    //         }
+    //         break;
+    //     }
+    //     case 'invoice.payment_succeeded': {
+    //         // Recurring subscription payment — generate new invoice
+    //         const stripeInvoice = event.data.object;
+    //         const sub = await Subscription.findOne({
+    //             stripeSubscriptionId: stripeInvoice.subscription
+    //         });
+    //         if (sub) {
+    //             try {
+    //                 await createInvoiceForSubscription(sub, {
+    //                     stripePaymentIntentId: stripeInvoice.payment_intent,
+    //                     stripeInvoiceId: stripeInvoice.id,
+    //                 });
+    //             } catch (invoiceErr) {
+    //                 console.error('Invoice generation error on renewal:', invoiceErr);
+    //             }
     //         }
     //         break;
     //     }
@@ -319,14 +403,24 @@ router.get('/admin/all', authenticateToken, isAdmin, async (req, res) => {
                 // Skip enrichment if Firestore lookup fails
             }
 
+            // Get latest invoice for this subscription
+            let latestInvoice = null;
+            try {
+                latestInvoice = await Invoice.findOne({ subscriptionId: sub._id })
+                    .sort({ issuedAt: -1 })
+                    .select('invoiceNumber status total pdfUrl issuedAt');
+            } catch (e) { /* skip */ }
+
             enrichedSubscriptions.push({
                 ...sub.toObject(),
                 userData,
+                latestInvoice,
             });
         }
 
         // Compute stats
         const allSubs = await Subscription.find({});
+        const totalInvoices = await Invoice.countDocuments({});
         const stats = {
             total: allSubs.length,
             active: allSubs.filter(s => s.status === 'active').length,
@@ -339,6 +433,7 @@ router.get('/admin/all', authenticateToken, isAdmin, async (req, res) => {
                 .reduce((sum, s) => sum + (s.amount || 0), 0),
             designerCount: allSubs.filter(s => s.userType === 'designer' && s.status === 'active').length,
             contractorProCount: allSubs.filter(s => s.plan === 'contractor_pro' && s.status === 'active').length,
+            totalInvoices,
         };
 
         res.json({
@@ -362,6 +457,7 @@ router.get('/admin/all', authenticateToken, isAdmin, async (req, res) => {
 router.get('/admin/stats', authenticateToken, isAdmin, async (req, res) => {
     try {
         const allSubs = await Subscription.find({});
+        const totalInvoices = await Invoice.countDocuments({});
 
         const stats = {
             total: allSubs.length,
@@ -387,12 +483,72 @@ router.get('/admin/stats', authenticateToken, isAdmin, async (req, res) => {
                 designer_15: allSubs.filter(s => s.plan === 'designer_15' && s.status === 'active').length,
                 contractor_pro: allSubs.filter(s => s.plan === 'contractor_pro' && s.status === 'active').length,
             },
+            totalInvoices,
         };
 
         res.json({ success: true, stats });
     } catch (error) {
         console.error('Error fetching subscription stats:', error);
         res.status(500).json({ success: false, message: 'Failed to fetch stats' });
+    }
+});
+
+// GET /api/subscriptions/admin/invoices - Get all invoices (admin)
+router.get('/admin/invoices', authenticateToken, isAdmin, async (req, res) => {
+    try {
+        const { status, page = 1, limit = 50 } = req.query;
+        const filter = {};
+        if (status && status !== 'all') {
+            filter.status = status;
+        }
+
+        const total = await Invoice.countDocuments(filter);
+        const invoices = await Invoice.find(filter)
+            .sort({ issuedAt: -1 })
+            .skip((page - 1) * limit)
+            .limit(parseInt(limit));
+
+        res.json({
+            success: true,
+            invoices,
+            pagination: {
+                page: parseInt(page),
+                limit: parseInt(limit),
+                total,
+                pages: Math.ceil(total / limit),
+            },
+        });
+    } catch (error) {
+        console.error('Error fetching admin invoices:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch invoices' });
+    }
+});
+
+// GET /api/subscriptions/admin/invoices/:subscriptionId - Get invoices for a specific subscription
+router.get('/admin/invoices/:subscriptionId', authenticateToken, isAdmin, async (req, res) => {
+    try {
+        const invoices = await Invoice.find({ subscriptionId: req.params.subscriptionId })
+            .sort({ issuedAt: -1 });
+
+        res.json({ success: true, invoices });
+    } catch (error) {
+        console.error('Error fetching subscription invoices:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch invoices' });
+    }
+});
+
+// POST /api/subscriptions/admin/invoices/:invoiceId/regenerate - Regenerate invoice PDF
+router.post('/admin/invoices/:invoiceId/regenerate', authenticateToken, isAdmin, async (req, res) => {
+    try {
+        const { invoice } = await regenerateInvoicePDF(req.params.invoiceId);
+        res.json({
+            success: true,
+            message: 'Invoice PDF regenerated',
+            invoice,
+        });
+    } catch (error) {
+        console.error('Error regenerating invoice:', error);
+        res.status(500).json({ success: false, message: 'Failed to regenerate invoice' });
     }
 });
 
@@ -561,6 +717,13 @@ router.post('/admin/create-manual', authenticateToken, isAdmin, async (req, res)
             'subscription.plan': planId,
             'subscription.endDate': endDate,
         });
+
+        // Generate invoice for the new subscription
+        try {
+            await createInvoiceForSubscription(subscription);
+        } catch (invoiceErr) {
+            console.error('Invoice generation error (manual):', invoiceErr);
+        }
 
         res.json({
             success: true,

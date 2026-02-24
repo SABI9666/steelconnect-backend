@@ -93,6 +93,17 @@ try {
     console.warn('🔧 Community feed will not work');
 }
 
+// NEW: Import subscription routes
+let subscriptionRoutes;
+try {
+    const subscriptionModule = await import('./src/routes/subscriptions.js');
+    subscriptionRoutes = subscriptionModule.default;
+    console.log('✅ Subscription routes imported successfully');
+} catch (error) {
+    console.warn('⚠️ Subscription routes not available:', error.message);
+    console.warn('🔧 Subscription management will not work');
+}
+
 dotenv.config();
 
 const app = express();
@@ -563,6 +574,18 @@ if (communityRoutes) {
     console.log('   • Image uploads to GCS');
 } else {
     console.warn('⚠️ Community routes unavailable - community feed disabled');
+}
+
+// Subscription routes
+if (subscriptionRoutes) {
+    app.use('/api/subscriptions', subscriptionRoutes);
+    console.log('✅ Subscription routes registered at /api/subscriptions');
+    console.log('💳 Subscriptions: ENABLED');
+    console.log('   • Plan management');
+    console.log('   • Stripe checkout (pending configuration)');
+    console.log('   • Admin subscription controls');
+} else {
+    console.warn('⚠️ Subscription routes unavailable - subscription management disabled');
 }
 
 console.log('📦 Route registration completed');

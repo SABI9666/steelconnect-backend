@@ -4,22 +4,66 @@ import mongoose from 'mongoose';
 
 const subscriptionSchema = new mongoose.Schema({
     userId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
+        type: String,
+        required: true,
+    },
+    userEmail: {
+        type: String,
+        required: true,
+    },
+    userName: {
+        type: String,
+        default: '',
+    },
+    userType: {
+        type: String,
+        enum: ['designer', 'contractor'],
         required: true,
     },
     plan: {
         type: String,
         required: true,
+        enum: [
+            'designer_free',
+            'designer_5',
+            'designer_10',
+            'designer_15',
+            'contractor_pro'
+        ],
         trim: true,
+    },
+    planLabel: {
+        type: String,
+        default: '',
     },
     amount: {
         type: Number,
         required: true,
     },
+    currency: {
+        type: String,
+        default: 'usd',
+    },
+    quotesAllowed: {
+        type: Number,
+        default: 0,
+    },
+    quotesUsed: {
+        type: Number,
+        default: 0,
+    },
+    // Contractor Pro specific fields
+    aiEstimationRate: {
+        type: Number,
+        default: null,
+    },
+    aiAnalysisRate: {
+        type: Number,
+        default: null,
+    },
     status: {
         type: String,
-        enum: ['active', 'cancelled', 'expired', 'pending'],
+        enum: ['active', 'cancelled', 'expired', 'pending', 'free_override'],
         default: 'active',
     },
     startDate: {
@@ -30,13 +74,53 @@ const subscriptionSchema = new mongoose.Schema({
         type: Date,
         required: true,
     },
+    // Stripe integration fields
+    stripeCustomerId: {
+        type: String,
+        default: null,
+    },
+    stripeSubscriptionId: {
+        type: String,
+        default: null,
+    },
+    stripePaymentIntentId: {
+        type: String,
+        default: null,
+    },
     paymentMethod: {
         type: String,
-        default: 'Manual',
+        enum: ['stripe', 'manual', 'free'],
+        default: 'manual',
+    },
+    // Admin override: when true, subscription is free (admin granted)
+    freeOverride: {
+        type: Boolean,
+        default: false,
+    },
+    freeOverrideBy: {
+        type: String,
+        default: null,
+    },
+    freeOverrideAt: {
+        type: Date,
+        default: null,
+    },
+    cancelledAt: {
+        type: Date,
+        default: null,
+    },
+    cancelReason: {
+        type: String,
+        default: null,
     },
 }, {
-    timestamps: true // Automatically adds createdAt and updatedAt fields
+    timestamps: true
 });
+
+// Index for fast lookups
+subscriptionSchema.index({ userId: 1, status: 1 });
+subscriptionSchema.index({ stripeSubscriptionId: 1 });
+subscriptionSchema.index({ userEmail: 1 });
 
 const Subscription = mongoose.model('Subscription', subscriptionSchema);
 

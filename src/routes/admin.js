@@ -14,7 +14,7 @@ import { adminActivityLoggerMiddleware } from '../middleware/adminActivityMiddle
 import { getRecentActivities } from '../services/adminActivityLogger.js';
 import { sendRealTimeActivityAlert, sendComprehensiveActivityAlert, generateManualReport } from '../services/adminActivityReportService.js';
 import { getRecentUserActivities, getVisitorAnalyticsSummary } from '../services/userActivityLogger.js';
-import { getWhatsAppStatus, sendWhatsAppText, sendBulkWhatsApp } from '../services/whatsappService.js';
+import { getWhatsAppStatus, sendWhatsAppText, sendWhatsAppTemplate, sendBulkWhatsApp } from '../services/whatsappService.js';
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -4173,6 +4173,8 @@ router.post('/whatsapp/send', async (req, res) => {
 });
 
 // POST /api/admin/whatsapp/send-single - Send to a single number (quick send / test)
+// Strategy: Try text message first. If it fails (e.g. 24-hour window not open),
+// fall back to the pre-approved "hello_world" template which works anytime.
 router.post('/whatsapp/send-single', async (req, res) => {
     try {
         const { phone, message } = req.body;
@@ -4180,24 +4182,38 @@ router.post('/whatsapp/send-single', async (req, res) => {
         if (!phone) return res.status(400).json({ success: false, message: 'Phone number is required' });
         if (!message) return res.status(400).json({ success: false, message: 'Message is required' });
 
-        const result = await sendWhatsAppText(phone, message);
+        let result = await sendWhatsAppText(phone, message);
+        let usedTemplate = false;
+
+        // If text message failed (e.g. 24-hour window not open), try template fallback
+        if (!result.success) {
+            console.log(`[WHATSAPP] Text failed for ${phone} (${result.error}), trying template fallback...`);
+            result = await sendWhatsAppTemplate(phone, 'hello_world', 'en_US');
+            usedTemplate = true;
+            if (result.success) {
+                console.log(`[WHATSAPP] Template fallback succeeded for ${phone}`);
+            }
+        }
 
         // Log to campaigns
         await adminDb.collection('whatsapp_campaigns').add({
             name: 'Quick Send',
-            message: message.substring(0, 500),
+            message: usedTemplate ? `[Template fallback] ${message.substring(0, 450)}` : message.substring(0, 500),
             totalRecipients: 1,
             sent: result.success ? 1 : 0,
             failed: result.success ? 0 : 1,
             sentBy: req.user?.email || 'admin',
             senderNumber: process.env.WHATSAPP_SENDER_NUMBER || '9895909666',
-            results: [{ phone, success: result.success, messageId: result.messageId || null, error: result.error || null }],
+            results: [{ phone, success: result.success, messageId: result.messageId || null, error: result.error || null, usedTemplate }],
             createdAt: new Date().toISOString()
         });
 
         res.json({
             success: result.success,
-            message: result.success ? `Message sent to ${phone}` : `Failed: ${result.error}`,
+            message: result.success
+                ? (usedTemplate ? `Template message sent to ${phone} (text message requires 24hr window — recipient must message the sender number first)` : `Message sent to ${phone}`)
+                : `Failed: ${result.error}`,
+            usedTemplate,
             ...result
         });
     } catch (error) {

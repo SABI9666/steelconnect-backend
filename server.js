@@ -776,6 +776,16 @@ app.post('/api/chatbot/save-session', async (req, res) => {
 console.log('💾 Chatbot session save endpoint registered at POST /api/chatbot/save-session');
 
 // --- PUBLIC: Visitor Tracking (no auth required) ---
+// Import user activity logger for visitor notifications
+let logVisitorActivity;
+try {
+    const userActivityModule = await import('./src/services/userActivityLogger.js');
+    logVisitorActivity = userActivityModule.logUserActivity;
+} catch (e) {
+    console.log('[VISITOR] User activity logger not available:', e.message);
+    logVisitorActivity = () => Promise.resolve();
+}
+
 // Record a new visitor session (called when someone opens the website)
 app.post('/api/visitors/track', async (req, res) => {
     try {
@@ -840,6 +850,21 @@ app.post('/api/visitors/track', async (req, res) => {
         // Save immediately (don't wait for geolocation)
         const docRef = await adminDb.collection('visitor_sessions').add(visitorData);
         res.json({ success: true, message: 'Visitor tracked' });
+
+        // Log visitor activity notification (fire-and-forget)
+        if (logVisitorActivity) {
+            logVisitorActivity({
+                userEmail: userEmail || 'Anonymous Visitor',
+                userName: userName || '',
+                userId: '',
+                userType: 'visitor',
+                category: 'Visitor Activity',
+                action: 'New Visitor Session',
+                description: `New visitor from ${deviceType} (${browser}/${os}) — ${referrer || 'Direct'} — ${landingPage || '/'}`,
+                metadata: { sessionId: sessionId.substring(0, 100), deviceType, browser, os, referrer: referrer || 'Direct' },
+                ip
+            }).catch(() => {});
+        }
 
         // Async: Resolve IP to location using ip-api.com (free, no key needed)
         // This runs AFTER response is sent so it doesn't slow down the user

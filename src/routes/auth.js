@@ -5,6 +5,7 @@ import jwt from 'jsonwebtoken';
 import { adminDb } from '../config/firebase.js';
 import crypto from 'crypto';
 import { sendLoginNotification, sendPasswordResetEmail, sendOTPVerificationEmail } from '../utils/emailService.js';
+import { logUserActivity } from '../services/userActivityLogger.js';
 
 const router = express.Router();
 
@@ -84,6 +85,19 @@ router.post('/register', async (req, res) => {
         const userRef = await adminDb.collection('users').add(userData);
 
         console.log(`New ${type} registered: ${email} (ID: ${userRef.id})`);
+
+        // Log user registration activity (fire-and-forget)
+        logUserActivity({
+            userEmail: email.toLowerCase().trim(),
+            userName: name.trim(),
+            userId: userRef.id,
+            userType: type,
+            category: 'User Registration',
+            action: 'New User Registered',
+            description: `New ${type} registered: ${name.trim()} (${email.toLowerCase().trim()})`,
+            metadata: { userId: userRef.id, type },
+            ip: getClientIP(req)
+        }).catch(() => {});
 
         res.status(201).json({
             success: true,
@@ -452,6 +466,19 @@ router.post('/verify-otp', async (req, res) => {
 
         const loginLabel = isAdmin ? 'Admin' : isOperations ? 'Operations' : 'User';
         console.log(`2FA verified - ${loginLabel} login complete for: ${normalizedEmail}`);
+
+        // Log user login activity (fire-and-forget)
+        logUserActivity({
+            userEmail: normalizedEmail,
+            userName: userData.name || '',
+            userId,
+            userType: userData.type || 'user',
+            category: 'User Login',
+            action: `${loginLabel} Login`,
+            description: `${loginLabel} login completed: ${userData.name || normalizedEmail} (${userData.type || 'user'})`,
+            metadata: { userId, loginType: loginLabel, userAgent },
+            ip: clientIP
+        }).catch(() => {});
 
         // Send login notification
         if (process.env.RESEND_API_KEY) {

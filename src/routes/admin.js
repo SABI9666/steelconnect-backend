@@ -3984,6 +3984,80 @@ router.get('/whatsapp/status', (req, res) => {
     res.json({ success: true, ...status });
 });
 
+// POST /api/admin/whatsapp/test - Send a test message and return FULL debug info
+router.post('/whatsapp/test', async (req, res) => {
+    try {
+        const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+        const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+        const testPhone = req.body.phone || '919895909666';
+
+        if (!phoneNumberId || !accessToken) {
+            return res.json({
+                success: false,
+                message: 'WhatsApp not configured',
+                phoneNumberId: !!phoneNumberId,
+                accessToken: accessToken ? accessToken.substring(0, 15) + '...' : null
+            });
+        }
+
+        const apiUrl = `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`;
+        const headers = {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+        };
+
+        // Test 1: Try text message
+        const textBody = {
+            messaging_product: 'whatsapp',
+            to: testPhone,
+            type: 'text',
+            text: { preview_url: false, body: 'SteelConnect WhatsApp Test — If you see this, text messages are working!' }
+        };
+
+        console.log(`[WA-TEST] Sending text to ${testPhone}...`);
+        const textRes = await fetch(apiUrl, { method: 'POST', headers, body: JSON.stringify(textBody) });
+        const textData = await textRes.json();
+
+        // Test 2: Try template message
+        const templateBody = {
+            messaging_product: 'whatsapp',
+            to: testPhone,
+            type: 'template',
+            template: { name: 'hello_world', language: { code: 'en_US' } }
+        };
+
+        console.log(`[WA-TEST] Sending template to ${testPhone}...`);
+        const templateRes = await fetch(apiUrl, { method: 'POST', headers, body: JSON.stringify(templateBody) });
+        const templateData = await templateRes.json();
+
+        res.json({
+            success: true,
+            message: 'Test complete — check results below',
+            testPhone,
+            phoneNumberId: '***' + phoneNumberId.slice(-6),
+            textMessage: {
+                httpStatus: textRes.status,
+                ok: textRes.ok,
+                sent: !!(textRes.ok && textData.messages),
+                messageId: textData.messages?.[0]?.id || null,
+                error: textData.error || null,
+                fullResponse: textData
+            },
+            templateMessage: {
+                httpStatus: templateRes.status,
+                ok: templateRes.ok,
+                sent: !!(templateRes.ok && templateData.messages),
+                messageId: templateData.messages?.[0]?.id || null,
+                error: templateData.error || null,
+                fullResponse: templateData
+            }
+        });
+    } catch (error) {
+        console.error('[WA-TEST] Error:', error);
+        res.status(500).json({ success: false, message: error.message, stack: error.stack });
+    }
+});
+
 // GET /api/admin/whatsapp/recipients - Get all users with phone numbers
 router.get('/whatsapp/recipients', async (req, res) => {
     try {

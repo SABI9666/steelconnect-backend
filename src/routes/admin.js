@@ -14,6 +14,7 @@ import { adminActivityLoggerMiddleware } from '../middleware/adminActivityMiddle
 import { getRecentActivities } from '../services/adminActivityLogger.js';
 import { sendRealTimeActivityAlert, sendComprehensiveActivityAlert, generateManualReport } from '../services/adminActivityReportService.js';
 import { getRecentUserActivities, getVisitorAnalyticsSummary } from '../services/userActivityLogger.js';
+import { getWhatsAppStatus, sendWhatsAppText, sendBulkWhatsApp } from '../services/whatsappService.js';
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -3968,6 +3969,271 @@ router.post('/chatbot/reply', async (req, res) => {
     } catch (error) {
         console.error('[CHATBOT-REPLY] Error:', error);
         res.status(500).json({ success: false, message: 'Error sending reply' });
+    }
+});
+
+// ================================================================
+// WHATSAPP MARKETING — Send WhatsApp messages to clients
+// Uses WhatsApp Business Cloud API (Meta Graph API)
+// Sender: 9895909666 (testing) → will change to Dubai number
+// ================================================================
+
+// GET /api/admin/whatsapp/status - Check WhatsApp API configuration
+router.get('/whatsapp/status', (req, res) => {
+    const status = getWhatsAppStatus();
+    res.json({ success: true, ...status });
+});
+
+// POST /api/admin/whatsapp/test - Send a test message and return FULL debug info
+router.post('/whatsapp/test', async (req, res) => {
+    try {
+        const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+        const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+        const testPhone = req.body.phone || '919895909666';
+
+        if (!phoneNumberId || !accessToken) {
+            return res.json({
+                success: false,
+                message: 'WhatsApp not configured',
+                phoneNumberId: !!phoneNumberId,
+                accessToken: accessToken ? accessToken.substring(0, 15) + '...' : null
+            });
+        }
+
+        const apiUrl = `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`;
+        const headers = {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+        };
+
+        // Test 1: Try text message
+        const textBody = {
+            messaging_product: 'whatsapp',
+            to: testPhone,
+            type: 'text',
+            text: { preview_url: false, body: 'SteelConnect WhatsApp Test — If you see this, text messages are working!' }
+        };
+
+        console.log(`[WA-TEST] Sending text to ${testPhone}...`);
+        const textRes = await fetch(apiUrl, { method: 'POST', headers, body: JSON.stringify(textBody) });
+        const textData = await textRes.json();
+
+        // Test 2: Try template message
+        const templateBody = {
+            messaging_product: 'whatsapp',
+            to: testPhone,
+            type: 'template',
+            template: { name: 'hello_world', language: { code: 'en_US' } }
+        };
+
+        console.log(`[WA-TEST] Sending template to ${testPhone}...`);
+        const templateRes = await fetch(apiUrl, { method: 'POST', headers, body: JSON.stringify(templateBody) });
+        const templateData = await templateRes.json();
+
+        res.json({
+            success: true,
+            message: 'Test complete — check results below',
+            testPhone,
+            phoneNumberId: '***' + phoneNumberId.slice(-6),
+            textMessage: {
+                httpStatus: textRes.status,
+                ok: textRes.ok,
+                sent: !!(textRes.ok && textData.messages),
+                messageId: textData.messages?.[0]?.id || null,
+                error: textData.error || null,
+                fullResponse: textData
+            },
+            templateMessage: {
+                httpStatus: templateRes.status,
+                ok: templateRes.ok,
+                sent: !!(templateRes.ok && templateData.messages),
+                messageId: templateData.messages?.[0]?.id || null,
+                error: templateData.error || null,
+                fullResponse: templateData
+            }
+        });
+    } catch (error) {
+        console.error('[WA-TEST] Error:', error);
+        res.status(500).json({ success: false, message: error.message, stack: error.stack });
+    }
+});
+
+// GET /api/admin/whatsapp/recipients - Get all users with phone numbers
+router.get('/whatsapp/recipients', async (req, res) => {
+    try {
+        const usersSnap = await adminDb.collection('users')
+            .where('profileStatus', '==', 'approved')
+            .get();
+
+        const recipients = [];
+        usersSnap.forEach(doc => {
+            const u = doc.data();
+            // Look for phone in multiple possible fields
+            const phone = u.phone || u.phoneNumber || u.mobile ||
+                          u.profileData?.phone || u.profileData?.phoneNumber ||
+                          u.profileData?.mobile || u.profileData?.contactNumber || null;
+            recipients.push({
+                id: doc.id,
+                name: u.name || '',
+                email: u.email || '',
+                phone: phone,
+                type: u.type || 'user',
+                hasPhone: !!phone
+            });
+        });
+
+        // Also get prospects that have phone numbers
+        const prospectsSnap = await adminDb.collection('prospects')
+            .limit(500)
+            .get();
+
+        prospectsSnap.forEach(doc => {
+            const p = doc.data();
+            if (p.phone || p.phoneNumber) {
+                recipients.push({
+                    id: doc.id,
+                    name: p.name || p.companyName || '',
+                    email: p.email || '',
+                    phone: p.phone || p.phoneNumber,
+                    type: 'prospect',
+                    hasPhone: true
+                });
+            }
+        });
+
+        const withPhone = recipients.filter(r => r.hasPhone);
+
+        res.json({
+            success: true,
+            recipients,
+            total: recipients.length,
+            withPhone: withPhone.length,
+            withoutPhone: recipients.length - withPhone.length
+        });
+    } catch (error) {
+        console.error('[WHATSAPP] Recipients fetch error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// POST /api/admin/whatsapp/send - Send WhatsApp message to selected recipients
+router.post('/whatsapp/send', async (req, res) => {
+    try {
+        const { recipients, message, campaignName } = req.body;
+
+        if (!recipients || !Array.isArray(recipients) || recipients.length === 0) {
+            return res.status(400).json({ success: false, message: 'At least one recipient is required' });
+        }
+        if (!message || message.trim().length === 0) {
+            return res.status(400).json({ success: false, message: 'Message is required' });
+        }
+        if (message.length > 4096) {
+            return res.status(400).json({ success: false, message: 'Message too long (max 4096 characters)' });
+        }
+
+        console.log(`[WHATSAPP-MARKETING] Sending to ${recipients.length} recipients — Campaign: ${campaignName || 'Unnamed'}`);
+
+        // Send messages
+        const result = await sendBulkWhatsApp(recipients, message, 1000);
+
+        // Save campaign to Firestore
+        const campaignData = {
+            name: campaignName || `WhatsApp Campaign ${new Date().toLocaleDateString()}`,
+            message: message.substring(0, 500),
+            totalRecipients: recipients.length,
+            sent: result.sent,
+            failed: result.failed,
+            sentBy: req.user?.email || 'admin',
+            sentByName: req.user?.name || 'Admin',
+            senderNumber: process.env.WHATSAPP_SENDER_NUMBER || '9895909666',
+            results: result.results.map(r => ({
+                phone: r.recipientPhone,
+                name: r.recipientName,
+                success: r.success,
+                messageId: r.messageId || null,
+                error: r.error || null
+            })),
+            createdAt: new Date().toISOString()
+        };
+
+        await adminDb.collection('whatsapp_campaigns').add(campaignData);
+
+        res.json({
+            success: true,
+            message: `WhatsApp campaign sent: ${result.sent} delivered, ${result.failed} failed out of ${result.total}`,
+            sent: result.sent,
+            failed: result.failed,
+            total: result.total,
+            results: result.results
+        });
+    } catch (error) {
+        console.error('[WHATSAPP-MARKETING] Send error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// POST /api/admin/whatsapp/send-single - Send to a single number (quick send / test)
+router.post('/whatsapp/send-single', async (req, res) => {
+    try {
+        const { phone, message } = req.body;
+
+        if (!phone) return res.status(400).json({ success: false, message: 'Phone number is required' });
+        if (!message) return res.status(400).json({ success: false, message: 'Message is required' });
+
+        const result = await sendWhatsAppText(phone, message);
+
+        // Log to campaigns
+        await adminDb.collection('whatsapp_campaigns').add({
+            name: 'Quick Send',
+            message: message.substring(0, 500),
+            totalRecipients: 1,
+            sent: result.success ? 1 : 0,
+            failed: result.success ? 0 : 1,
+            sentBy: req.user?.email || 'admin',
+            senderNumber: process.env.WHATSAPP_SENDER_NUMBER || '9895909666',
+            results: [{ phone, success: result.success, messageId: result.messageId, error: result.error }],
+            createdAt: new Date().toISOString()
+        });
+
+        res.json({
+            success: result.success,
+            message: result.success ? `Message sent to ${phone}` : `Failed: ${result.error}`,
+            ...result
+        });
+    } catch (error) {
+        console.error('[WHATSAPP] Single send error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// GET /api/admin/whatsapp/campaigns - Fetch past WhatsApp campaigns
+router.get('/whatsapp/campaigns', async (req, res) => {
+    try {
+        const snapshot = await adminDb.collection('whatsapp_campaigns')
+            .orderBy('createdAt', 'desc')
+            .limit(50)
+            .get();
+
+        const campaigns = [];
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            campaigns.push({
+                id: doc.id,
+                name: data.name,
+                message: data.message,
+                totalRecipients: data.totalRecipients,
+                sent: data.sent,
+                failed: data.failed,
+                sentBy: data.sentBy,
+                senderNumber: data.senderNumber,
+                createdAt: data.createdAt
+            });
+        });
+
+        res.json({ success: true, campaigns, total: campaigns.length });
+    } catch (error) {
+        console.error('[WHATSAPP] Campaigns fetch error:', error);
+        res.status(500).json({ success: false, message: error.message });
     }
 });
 

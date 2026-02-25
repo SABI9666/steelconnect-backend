@@ -284,6 +284,8 @@ _Real-time alert from SteelConnect Monitoring_`;
 }
 
 // ─── Send WhatsApp notification via WhatsApp Business Cloud API ──────────────
+// Strategy: Try text message first. If it fails with error 131047 (24-hour window
+// not open), fall back to the pre-approved "hello_world" template which works anytime.
 
 async function sendWhatsAppNotification(activity, source = 'admin', visitorStats = null) {
     try {
@@ -291,40 +293,78 @@ async function sendWhatsAppNotification(activity, source = 'admin', visitorStats
         const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
 
         if (!phoneNumberId || !accessToken) {
-            console.log('[ADMIN-ALERT] WhatsApp not configured (missing WHATSAPP_PHONE_NUMBER_ID or WHATSAPP_ACCESS_TOKEN). Skipping WhatsApp notification.');
+            console.log('[ADMIN-ALERT] WhatsApp not configured (missing WHATSAPP_PHONE_NUMBER_ID or WHATSAPP_ACCESS_TOKEN). Skipping.');
             return { success: false, error: 'WhatsApp not configured' };
         }
 
         const messageBody = buildWhatsAppMessage(activity, source, visitorStats);
+        const apiUrl = `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`;
+        const headers = {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+        };
 
-        const response = await fetch(
-            `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`,
-            {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${accessToken}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    messaging_product: 'whatsapp',
-                    to: ADMIN_WHATSAPP_NUMBER,
-                    type: 'text',
-                    text: { body: messageBody }
-                })
-            }
-        );
+        // Attempt 1: Send as text message (works within 24-hour conversation window)
+        console.log(`[ADMIN-ALERT] Attempting text message to ${ADMIN_WHATSAPP_NUMBER}...`);
+        const textResponse = await fetch(apiUrl, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                messaging_product: 'whatsapp',
+                to: ADMIN_WHATSAPP_NUMBER,
+                type: 'text',
+                text: { preview_url: false, body: messageBody }
+            })
+        });
 
-        const data = await response.json();
+        const textData = await textResponse.json();
 
-        if (response.ok && data.messages) {
-            console.log(`[ADMIN-ALERT] WhatsApp sent to ${ADMIN_WHATSAPP_NUMBER} — ID: ${data.messages[0]?.id}`);
-            return { success: true, messageId: data.messages[0]?.id };
-        } else {
-            console.error('[ADMIN-ALERT] WhatsApp API error:', JSON.stringify(data));
-            return { success: false, error: data.error?.message || 'WhatsApp API error' };
+        if (textResponse.ok && textData.messages) {
+            console.log(`[ADMIN-ALERT] WhatsApp TEXT sent to ${ADMIN_WHATSAPP_NUMBER} — ID: ${textData.messages[0]?.id}`);
+            return { success: true, messageId: textData.messages[0]?.id, method: 'text' };
         }
+
+        // Log the error for debugging
+        const errorCode = textData.error?.code;
+        const errorMsg = textData.error?.message || 'Unknown';
+        console.log(`[ADMIN-ALERT] Text message failed (code: ${errorCode}): ${errorMsg}`);
+
+        // Attempt 2: Fall back to template message (works without 24-hour window)
+        // "hello_world" is a pre-approved template that comes with every WhatsApp Business account
+        console.log(`[ADMIN-ALERT] Falling back to template message...`);
+        const templateResponse = await fetch(apiUrl, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                messaging_product: 'whatsapp',
+                to: ADMIN_WHATSAPP_NUMBER,
+                type: 'template',
+                template: {
+                    name: 'hello_world',
+                    language: { code: 'en_US' }
+                }
+            })
+        });
+
+        const templateData = await templateResponse.json();
+
+        if (templateResponse.ok && templateData.messages) {
+            console.log(`[ADMIN-ALERT] WhatsApp TEMPLATE sent to ${ADMIN_WHATSAPP_NUMBER} — ID: ${templateData.messages[0]?.id}`);
+            return { success: true, messageId: templateData.messages[0]?.id, method: 'template' };
+        }
+
+        // Both attempts failed — log full errors for debugging
+        console.error('[ADMIN-ALERT] WhatsApp BOTH attempts failed.');
+        console.error('[ADMIN-ALERT] Text error:', JSON.stringify(textData.error || textData));
+        console.error('[ADMIN-ALERT] Template error:', JSON.stringify(templateData.error || templateData));
+        return {
+            success: false,
+            error: templateData.error?.message || textData.error?.message || 'Both text and template failed',
+            textError: textData.error || null,
+            templateError: templateData.error || null
+        };
     } catch (error) {
-        console.error('[ADMIN-ALERT] WhatsApp send failed:', error.message);
+        console.error('[ADMIN-ALERT] WhatsApp send exception:', error.message);
         return { success: false, error: error.message };
     }
 }

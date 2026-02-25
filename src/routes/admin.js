@@ -4191,7 +4191,7 @@ router.post('/whatsapp/send-single', async (req, res) => {
             failed: result.success ? 0 : 1,
             sentBy: req.user?.email || 'admin',
             senderNumber: process.env.WHATSAPP_SENDER_NUMBER || '9895909666',
-            results: [{ phone, success: result.success, messageId: result.messageId, error: result.error }],
+            results: [{ phone, success: result.success, messageId: result.messageId || null, error: result.error || null }],
             createdAt: new Date().toISOString()
         });
 

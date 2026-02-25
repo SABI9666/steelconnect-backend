@@ -1,14 +1,19 @@
 // src/services/adminActivityReportService.js
-// Sends real-time email & WhatsApp notifications when ANY activity occurs
-// (admin actions, user activities like registrations/logins/jobs/quotes/estimations).
-// Every activity triggers an immediate alert INCLUDING visitor analytics summary.
+// BATCHED alerts: Collects all admin + user activities and sends ONE combined
+// WhatsApp + email summary every 1 hour. Includes detailed visitor analytics
+// (location, time, duration, pages viewed, device, browser).
 
+import { adminDb } from '../config/firebase.js';
 import { getRecentActivities } from './adminActivityLogger.js';
 import { getVisitorAnalyticsSummary } from './userActivityLogger.js';
 
 const ADMIN_REPORT_EMAIL = 'sabincn676@gmail.com';
 const ADMIN_WHATSAPP_NUMBER = '919895909666'; // India country code + number
 const ADMIN_PHONE_NUMBER = '9895909666';
+const BATCH_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+
+// ─── In-memory activity queue ────────────────────────────────────────────────
+const activityQueue = [];  // { activity, source }
 
 // ─── Category colours (for email badges) ─────────────────────────────────────
 const CATEGORY_COLORS = {
@@ -28,7 +33,6 @@ const CATEGORY_COLORS = {
     'Chatbot':             { bg: '#fffbeb', text: '#78350f', border: '#fbbf24' },
     'Jobs':                { bg: '#f1f5f9', text: '#334155', border: '#94a3b8' },
     'Quotes':              { bg: '#f8fafc', text: '#475569', border: '#cbd5e1' },
-    // User activity categories
     'User Registration':   { bg: '#dbeafe', text: '#1e40af', border: '#60a5fa' },
     'User Login':          { bg: '#d1fae5', text: '#065f46', border: '#34d399' },
     'Profile Completion':  { bg: '#fef3c7', text: '#92400e', border: '#fbbf24' },
@@ -40,158 +44,210 @@ const CATEGORY_COLORS = {
     'Default':             { bg: '#f1f5f9', text: '#475569', border: '#cbd5e1' }
 };
 
-// ─── Build visitor analytics HTML section ────────────────────────────────────
+// ─── Queue an activity for the next hourly batch ─────────────────────────────
 
-function buildVisitorAnalyticsHTML(visitorStats) {
-    if (!visitorStats || visitorStats.todayTotal === 0) {
-        return `
-<div style="margin:20px 0; padding:16px; background:#f8fafc; border-radius:8px; border:1px solid #e2e8f0;">
-    <h3 style="font-size:16px; font-weight:700; color:#0f172a; margin:0 0 8px 0;">Visitor Analytics (Today)</h3>
-    <p style="font-size:14px; color:#64748b; margin:0;">No visitor sessions recorded today.</p>
-</div>`;
-    }
-
-    const avgMinutes = Math.floor(visitorStats.avgTimeSeconds / 60);
-    const avgSeconds = visitorStats.avgTimeSeconds % 60;
-
-    let recentVisitorsHTML = '';
-    if (visitorStats.recentVisitors && visitorStats.recentVisitors.length > 0) {
-        const rows = visitorStats.recentVisitors.map(v => {
-            const timeStr = new Date(v.time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-            const mins = Math.floor(v.timeSpent / 60);
-            return `<tr>
-                <td style="padding:6px 10px; font-size:12px; border-bottom:1px solid #f1f5f9; color:#334155;">${v.email}</td>
-                <td style="padding:6px 10px; font-size:12px; border-bottom:1px solid #f1f5f9; color:#64748b;">${v.country}${v.city ? ', ' + v.city : ''}</td>
-                <td style="padding:6px 10px; font-size:12px; border-bottom:1px solid #f1f5f9; color:#64748b;">${v.device} / ${v.browser}</td>
-                <td style="padding:6px 10px; font-size:12px; border-bottom:1px solid #f1f5f9; color:#64748b;">${mins}m</td>
-                <td style="padding:6px 10px; font-size:12px; border-bottom:1px solid #f1f5f9; color:#64748b;">${v.pages} pages</td>
-                <td style="padding:6px 10px; font-size:12px; border-bottom:1px solid #f1f5f9; color:#64748b;">${timeStr}</td>
-            </tr>`;
-        }).join('');
-
-        recentVisitorsHTML = `
-        <h4 style="font-size:14px; font-weight:600; color:#334155; margin:14px 0 8px 0;">Recent Visitors</h4>
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; font-size:12px;">
-            <tr style="background:#f1f5f9;">
-                <td style="padding:6px 10px; font-weight:600; color:#475569;">Visitor</td>
-                <td style="padding:6px 10px; font-weight:600; color:#475569;">Location</td>
-                <td style="padding:6px 10px; font-weight:600; color:#475569;">Device</td>
-                <td style="padding:6px 10px; font-weight:600; color:#475569;">Time</td>
-                <td style="padding:6px 10px; font-weight:600; color:#475569;">Pages</td>
-                <td style="padding:6px 10px; font-weight:600; color:#475569;">At</td>
-            </tr>
-            ${rows}
-        </table>`;
-    }
-
-    const topCountriesHTML = visitorStats.topCountries.length > 0
-        ? visitorStats.topCountries.map(([country, count]) =>
-            `<span style="display:inline-block; padding:2px 8px; margin:2px; background:#ecfdf5; color:#065f46; border-radius:10px; font-size:11px;">${country}: ${count}</span>`
-        ).join('')
-        : '<span style="color:#94a3b8; font-size:12px;">N/A</span>';
-
-    return `
-<div style="margin:20px 0; padding:16px; background:#f0f9ff; border-radius:8px; border:1px solid #bae6fd;">
-    <h3 style="font-size:16px; font-weight:700; color:#0c4a6e; margin:0 0 12px 0;">Visitor Analytics Summary</h3>
-
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; margin-bottom:12px;">
-        <tr>
-            <td style="width:25%; text-align:center; padding:10px;">
-                <div style="font-size:24px; font-weight:800; color:#0369a1;">${visitorStats.todayTotal}</div>
-                <div style="font-size:11px; color:#64748b; margin-top:2px;">Today</div>
-            </td>
-            <td style="width:25%; text-align:center; padding:10px;">
-                <div style="font-size:24px; font-weight:800; color:#059669;">${visitorStats.activeNow}</div>
-                <div style="font-size:11px; color:#64748b; margin-top:2px;">Active Now</div>
-            </td>
-            <td style="width:25%; text-align:center; padding:10px;">
-                <div style="font-size:24px; font-weight:800; color:#7c3aed;">${visitorStats.last24hTotal}</div>
-                <div style="font-size:11px; color:#64748b; margin-top:2px;">Last 24h</div>
-            </td>
-            <td style="width:25%; text-align:center; padding:10px;">
-                <div style="font-size:24px; font-weight:800; color:#ea580c;">${avgMinutes}m ${avgSeconds}s</div>
-                <div style="font-size:11px; color:#64748b; margin-top:2px;">Avg. Time</div>
-            </td>
-        </tr>
-    </table>
-
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
-        <tr>
-            <td style="padding:4px 10px; font-size:13px; color:#64748b;">Identified Visitors:</td>
-            <td style="padding:4px 10px; font-size:13px; color:#1e293b; font-weight:600;">${visitorStats.identifiedVisitors} of ${visitorStats.todayTotal}</td>
-        </tr>
-        <tr>
-            <td style="padding:4px 10px; font-size:13px; color:#64748b;">Devices:</td>
-            <td style="padding:4px 10px; font-size:13px; color:#1e293b;">Desktop: ${visitorStats.devices.Desktop || 0} | Mobile: ${visitorStats.devices.Mobile || 0} | Tablet: ${visitorStats.devices.Tablet || 0}</td>
-        </tr>
-        <tr>
-            <td style="padding:4px 10px; font-size:13px; color:#64748b;">Top Countries:</td>
-            <td style="padding:4px 10px;">${topCountriesHTML}</td>
-        </tr>
-    </table>
-
-    ${recentVisitorsHTML}
-</div>`;
+/**
+ * Queue an activity for the next hourly batch alert.
+ * Replaces the old instant-send approach.
+ *
+ * @param {Object} activity - The activity log entry
+ * @param {string} source - 'admin' or 'user'
+ */
+export function queueActivityForBatch(activity, source = 'admin') {
+    activityQueue.push({ activity, source, queuedAt: new Date().toISOString() });
+    console.log(`[BATCH-QUEUE] Queued [${source}] ${activity.category} — ${activity.action} (queue size: ${activityQueue.length})`);
 }
 
-// ─── Build email HTML for a single activity (admin or user) ──────────────────
+// ─── Fetch detailed visitor sessions for the last N hours ────────────────────
 
-function buildActivityEmailHTML(activity, source = 'admin') {
-    const colors = CATEGORY_COLORS[activity.category] || CATEGORY_COLORS['Default'];
-    const time = activity.timestamp
-        ? new Date(activity.timestamp).toLocaleString('en-US', {
-            dateStyle: 'medium',
-            timeStyle: 'medium'
-        })
-        : new Date().toLocaleString();
+async function getDetailedVisitorSessions(hours = 1) {
+    try {
+        const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
 
-    const isUserActivity = source === 'user';
-    const personLabel = isUserActivity
-        ? (activity.userEmail || activity.userName || 'Unknown User')
-        : (activity.adminEmail || 'system');
-    const titleLabel = isUserActivity ? 'Platform Activity Alert' : 'Admin Activity Alert';
-    const introText = isUserActivity
-        ? 'A user activity was just detected on SteelConnect:'
-        : 'An admin action was just performed on SteelConnect:';
+        const snapshot = await adminDb.collection('visitor_sessions')
+            .where('startedAt', '>=', since)
+            .orderBy('startedAt', 'desc')
+            .limit(20)
+            .get();
 
-    return `
-<h2 style="font-size:20px; font-weight:700; color:#0f172a; margin:0 0 16px 0;">${titleLabel}</h2>
-<p style="font-size:15px; color:#334155; margin:0 0 14px 0; line-height:1.7;">
-    ${introText}
-</p>
+        return snapshot.docs.map(doc => {
+            const v = doc.data();
+            return {
+                email: v.userEmail || v.contactEmail || 'Anonymous',
+                location: v.location
+                    ? `${v.location.city || ''}${v.location.city && v.location.country ? ', ' : ''}${v.location.country || 'Unknown'}`
+                    : 'Unknown',
+                visitedAt: v.startedAt,
+                timeSpent: v.totalTimeSeconds || 0,
+                pagesViewed: (v.pagesViewed || []).map(p => p.page || p).filter(Boolean),
+                device: v.deviceType || 'Unknown',
+                browser: v.browser || 'Unknown',
+                os: v.os || '',
+                isActive: v.isActive || false
+            };
+        });
+    } catch (error) {
+        console.error('[BATCH] Failed to fetch detailed visitor sessions:', error.message);
+        return [];
+    }
+}
 
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; margin:16px 0;">
-    <tr>
-        <td style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9; width:35%;">Category</td>
-        <td style="padding:10px 14px; font-size:14px; border-bottom:1px solid #f1f5f9;">
-            <span style="display:inline-block; padding:3px 12px; border-radius:12px; background:${colors.bg}; color:${colors.text}; font-size:13px; font-weight:600;">${activity.category || 'Other'}</span>
-        </td>
-    </tr>
-    <tr>
-        <td style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9;">Action</td>
-        <td style="padding:10px 14px; font-size:14px; color:#1e293b; font-weight:700; border-bottom:1px solid #f1f5f9;">${activity.action || 'N/A'}</td>
-    </tr>
-    <tr>
-        <td style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9;">Description</td>
-        <td style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;">${activity.description || 'N/A'}</td>
-    </tr>
-    <tr>
-        <td style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9;">${isUserActivity ? 'User' : 'Admin'}</td>
-        <td style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;">${personLabel}${activity.userType ? ' (' + activity.userType + ')' : ''}</td>
-    </tr>
-    <tr>
-        <td style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9;">Time</td>
-        <td style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;">${time}</td>
-    </tr>
-    ${activity.method ? `<tr>
-        <td style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9;">Method</td>
-        <td style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;">${activity.method} ${activity.endpoint || ''}</td>
-    </tr>` : ''}
-    <tr>
-        <td style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9;">IP Address</td>
-        <td style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;">${activity.ip || 'N/A'}</td>
-    </tr>
-</table>`;
+// ─── Build batch WhatsApp message ────────────────────────────────────────────
+
+function buildBatchWhatsAppMessage(adminActivities, userActivities, visitors) {
+    const now = new Date();
+    const hourAgo = new Date(now.getTime() - BATCH_INTERVAL_MS);
+    const timeRange = `${hourAgo.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })} — ${now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+    const dateStr = now.toLocaleDateString('en-US', { dateStyle: 'medium' });
+
+    let msg = `*SteelConnect Hourly Report*\n*${dateStr} | ${timeRange}*`;
+
+    // Admin activities summary
+    if (adminActivities.length > 0) {
+        msg += `\n\n*--- Admin Actions (${adminActivities.length}) ---*`;
+        // Show up to 10 admin activities
+        const showItems = adminActivities.slice(0, 10);
+        for (const item of showItems) {
+            const time = item.activity.timestamp
+                ? new Date(item.activity.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+                : '-';
+            msg += `\n${time} | ${item.activity.category || 'Other'} | ${item.activity.action || '-'}`;
+        }
+        if (adminActivities.length > 10) {
+            msg += `\n_...and ${adminActivities.length - 10} more_`;
+        }
+    }
+
+    // User activities summary
+    if (userActivities.length > 0) {
+        msg += `\n\n*--- User Activities (${userActivities.length}) ---*`;
+        const showItems = userActivities.slice(0, 10);
+        for (const item of showItems) {
+            const time = item.activity.timestamp
+                ? new Date(item.activity.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+                : '-';
+            const user = item.activity.userEmail || item.activity.userName || 'Unknown';
+            msg += `\n${time} | ${item.activity.action || '-'} | ${user}`;
+        }
+        if (userActivities.length > 10) {
+            msg += `\n_...and ${userActivities.length - 10} more_`;
+        }
+    }
+
+    // Detailed visitor analytics
+    if (visitors.length > 0) {
+        msg += `\n\n*--- Visitors (${visitors.length}) ---*`;
+        // Show up to 8 visitors to stay within WhatsApp 4096 char limit
+        const showVisitors = visitors.slice(0, 8);
+        for (let i = 0; i < showVisitors.length; i++) {
+            const v = showVisitors[i];
+            const visitTime = v.visitedAt
+                ? new Date(v.visitedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+                : '-';
+            const mins = Math.floor(v.timeSpent / 60);
+            const secs = v.timeSpent % 60;
+            const duration = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+            const pages = v.pagesViewed.length > 0
+                ? v.pagesViewed.slice(0, 5).join(', ') + (v.pagesViewed.length > 5 ? '...' : '')
+                : 'N/A';
+            const status = v.isActive ? ' (Active)' : '';
+
+            msg += `\n\n*${i + 1}. ${v.email}*${status}`;
+            msg += `\nLocation: ${v.location}`;
+            msg += `\nTime: ${visitTime} | Duration: ${duration}`;
+            msg += `\nDevice: ${v.device} | Browser: ${v.browser}`;
+            msg += `\nPages: ${pages}`;
+        }
+        if (visitors.length > 8) {
+            msg += `\n\n_...and ${visitors.length - 8} more visitors_`;
+        }
+    } else {
+        msg += `\n\n*--- Visitors ---*\nNo visitors in the last hour.`;
+    }
+
+    if (adminActivities.length === 0 && userActivities.length === 0 && visitors.length === 0) {
+        msg += `\n\nNo activity recorded in the last hour.`;
+    }
+
+    msg += `\n\n_Hourly batch report — SteelConnect_`;
+
+    return msg;
+}
+
+// ─── Build batch email HTML ──────────────────────────────────────────────────
+
+function buildBatchEmailHTML(adminActivities, userActivities, visitors) {
+    const now = new Date();
+    const hourAgo = new Date(now.getTime() - BATCH_INTERVAL_MS);
+    const timeRange = `${hourAgo.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })} — ${now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+    const dateStr = now.toLocaleDateString('en-US', { dateStyle: 'medium' });
+
+    let html = `<h2 style="font-size:20px; font-weight:700; color:#0f172a; margin:0 0 8px 0;">Hourly Activity Report</h2>
+<p style="font-size:14px; color:#64748b; margin:0 0 20px 0;">${dateStr} | ${timeRange}</p>`;
+
+    // Admin activities
+    if (adminActivities.length > 0) {
+        html += `<div style="margin:16px 0; padding:14px; background:#f5f3ff; border-radius:8px; border:1px solid #c4b5fd;">
+<h3 style="font-size:15px; font-weight:700; color:#5b21b6; margin:0 0 10px 0;">Admin Actions (${adminActivities.length})</h3>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; font-size:12px;">
+<tr style="background:#ede9fe;"><td style="padding:6px 8px; font-weight:600;">Time</td><td style="padding:6px 8px; font-weight:600;">Category</td><td style="padding:6px 8px; font-weight:600;">Action</td><td style="padding:6px 8px; font-weight:600;">Admin</td></tr>`;
+        for (const item of adminActivities) {
+            const time = item.activity.timestamp ? new Date(item.activity.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '-';
+            html += `<tr><td style="padding:5px 8px; border-bottom:1px solid #f1f5f9;">${time}</td><td style="padding:5px 8px; border-bottom:1px solid #f1f5f9;">${item.activity.category || '-'}</td><td style="padding:5px 8px; border-bottom:1px solid #f1f5f9;">${item.activity.action || '-'}</td><td style="padding:5px 8px; border-bottom:1px solid #f1f5f9;">${item.activity.adminEmail || 'system'}</td></tr>`;
+        }
+        html += `</table></div>`;
+    }
+
+    // User activities
+    if (userActivities.length > 0) {
+        html += `<div style="margin:16px 0; padding:14px; background:#ecfdf5; border-radius:8px; border:1px solid #86efac;">
+<h3 style="font-size:15px; font-weight:700; color:#065f46; margin:0 0 10px 0;">User Activities (${userActivities.length})</h3>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; font-size:12px;">
+<tr style="background:#d1fae5;"><td style="padding:6px 8px; font-weight:600;">Time</td><td style="padding:6px 8px; font-weight:600;">Action</td><td style="padding:6px 8px; font-weight:600;">User</td><td style="padding:6px 8px; font-weight:600;">Type</td></tr>`;
+        for (const item of userActivities) {
+            const time = item.activity.timestamp ? new Date(item.activity.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '-';
+            html += `<tr><td style="padding:5px 8px; border-bottom:1px solid #f1f5f9;">${time}</td><td style="padding:5px 8px; border-bottom:1px solid #f1f5f9;">${item.activity.action || '-'}</td><td style="padding:5px 8px; border-bottom:1px solid #f1f5f9;">${item.activity.userEmail || 'unknown'}</td><td style="padding:5px 8px; border-bottom:1px solid #f1f5f9;">${item.activity.userType || '-'}</td></tr>`;
+        }
+        html += `</table></div>`;
+    }
+
+    // Detailed visitor analytics
+    html += `<div style="margin:16px 0; padding:14px; background:#f0f9ff; border-radius:8px; border:1px solid #bae6fd;">
+<h3 style="font-size:15px; font-weight:700; color:#0c4a6e; margin:0 0 10px 0;">Visitor Details (${visitors.length})</h3>`;
+
+    if (visitors.length > 0) {
+        html += `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; font-size:12px;">
+<tr style="background:#e0f2fe;"><td style="padding:6px 6px; font-weight:600;">Visitor</td><td style="padding:6px 6px; font-weight:600;">Location</td><td style="padding:6px 6px; font-weight:600;">Time</td><td style="padding:6px 6px; font-weight:600;">Duration</td><td style="padding:6px 6px; font-weight:600;">Device/Browser</td><td style="padding:6px 6px; font-weight:600;">Pages Viewed</td></tr>`;
+        for (const v of visitors) {
+            const visitTime = v.visitedAt ? new Date(v.visitedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '-';
+            const mins = Math.floor(v.timeSpent / 60);
+            const secs = v.timeSpent % 60;
+            const duration = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+            const pages = v.pagesViewed.length > 0 ? v.pagesViewed.join(', ') : 'N/A';
+            const status = v.isActive ? '<span style="color:#059669; font-weight:600;"> (Active)</span>' : '';
+            html += `<tr>
+<td style="padding:5px 6px; border-bottom:1px solid #f1f5f9;">${v.email}${status}</td>
+<td style="padding:5px 6px; border-bottom:1px solid #f1f5f9;">${v.location}</td>
+<td style="padding:5px 6px; border-bottom:1px solid #f1f5f9;">${visitTime}</td>
+<td style="padding:5px 6px; border-bottom:1px solid #f1f5f9;">${duration}</td>
+<td style="padding:5px 6px; border-bottom:1px solid #f1f5f9;">${v.device} / ${v.browser}</td>
+<td style="padding:5px 6px; border-bottom:1px solid #f1f5f9; max-width:150px; word-break:break-all;">${pages}</td>
+</tr>`;
+        }
+        html += `</table>`;
+    } else {
+        html += `<p style="font-size:13px; color:#64748b; margin:0;">No visitors in the last hour.</p>`;
+    }
+    html += `</div>`;
+
+    if (adminActivities.length === 0 && userActivities.length === 0 && visitors.length === 0) {
+        html += `<p style="font-size:14px; color:#64748b; margin:16px 0;">No activity recorded in the last hour.</p>`;
+    }
+
+    html += `<div style="padding:12px 16px; background:#f0fdf4; border-left:3px solid #22c55e; border-radius:4px; margin:18px 0; font-size:13px; color:#14532d;">
+Hourly batch report. Next report in ~1 hour.</div>`;
+
+    return html;
 }
 
 // ─── Full email wrapper ──────────────────────────────────────────────────────
@@ -215,7 +271,7 @@ function buildFullEmailHTML(content) {
 <span style="font-size:18px; font-weight:700; color:#1e3a8a; letter-spacing:-0.5px; margin-left:8px; vertical-align:middle;">SteelConnect</span>
 </td>
 <td style="text-align:right;">
-<span style="font-size:11px; color:#94a3b8;">Activity Monitor</span>
+<span style="font-size:11px; color:#94a3b8;">Hourly Report</span>
 </td>
 </tr>
 </table>
@@ -229,8 +285,7 @@ ${content}
 <tr>
 <td style="padding:20px 32px; border-top:1px solid #e2e8f0; font-size:13px; color:#94a3b8; line-height:1.6;">
 <p style="margin:0 0 6px 0;">SteelConnect &mdash; Professional Steel Construction Platform</p>
-<p style="margin:0;">Real-time activity + visitor monitoring. Notifications: ${ADMIN_REPORT_EMAIL} | ${ADMIN_PHONE_NUMBER}</p>
-<p style="margin:4px 0 0 0;">Contact <a href="mailto:support@steelconnectapp.com" style="color:#2563eb; text-decoration:none;">support@steelconnectapp.com</a> for questions.</p>
+<p style="margin:0;">Hourly batch monitoring. Notifications: ${ADMIN_REPORT_EMAIL} | ${ADMIN_PHONE_NUMBER}</p>
 </td>
 </tr>
 </table>
@@ -240,72 +295,25 @@ ${content}
 </html>`;
 }
 
-// ─── Build WhatsApp message body (supports both admin and user activities) ───
+// ─── Send WhatsApp via Cloud API with template fallback ──────────────────────
 
-function buildWhatsAppMessage(activity, source = 'admin', visitorStats = null) {
-    const time = activity.timestamp
-        ? new Date(activity.timestamp).toLocaleString('en-US', {
-            dateStyle: 'medium',
-            timeStyle: 'short'
-        })
-        : new Date().toLocaleString();
-
-    const isUser = source === 'user';
-    const personLabel = isUser
-        ? (activity.userEmail || activity.userName || 'Unknown')
-        : (activity.adminEmail || 'system');
-    const alertTitle = isUser ? 'Platform Activity Alert' : 'Admin Activity Alert';
-
-    let msg = `*SteelConnect ${alertTitle}*
-
-*Category:* ${activity.category || 'Other'}
-*Action:* ${activity.action || 'N/A'}
-*Description:* ${activity.description || 'N/A'}
-*${isUser ? 'User' : 'Admin'}:* ${personLabel}${activity.userType ? ' (' + activity.userType + ')' : ''}
-*Time:* ${time}
-*IP:* ${activity.ip || 'N/A'}`;
-
-    if (visitorStats && visitorStats.todayTotal > 0) {
-        msg += `
-
---- Visitor Stats ---
-*Today:* ${visitorStats.todayTotal} visitors
-*Active Now:* ${visitorStats.activeNow}
-*Last 24h:* ${visitorStats.last24hTotal}
-*Identified:* ${visitorStats.identifiedVisitors}
-*Avg Time:* ${Math.floor(visitorStats.avgTimeSeconds / 60)}m ${visitorStats.avgTimeSeconds % 60}s`;
-    }
-
-    msg += `
-
-_Real-time alert from SteelConnect Monitoring_`;
-
-    return msg;
-}
-
-// ─── Send WhatsApp notification via WhatsApp Business Cloud API ──────────────
-// Strategy: Try text message first. If it fails with error 131047 (24-hour window
-// not open), fall back to the pre-approved "hello_world" template which works anytime.
-
-async function sendWhatsAppNotification(activity, source = 'admin', visitorStats = null) {
+async function sendWhatsAppBatch(messageBody) {
     try {
         const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
         const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
 
         if (!phoneNumberId || !accessToken) {
-            console.log('[ADMIN-ALERT] WhatsApp not configured (missing WHATSAPP_PHONE_NUMBER_ID or WHATSAPP_ACCESS_TOKEN). Skipping.');
+            console.log('[BATCH] WhatsApp not configured. Skipping.');
             return { success: false, error: 'WhatsApp not configured' };
         }
 
-        const messageBody = buildWhatsAppMessage(activity, source, visitorStats);
         const apiUrl = `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`;
         const headers = {
             'Authorization': `Bearer ${accessToken}`,
             'Content-Type': 'application/json'
         };
 
-        // Attempt 1: Send as text message (works within 24-hour conversation window)
-        console.log(`[ADMIN-ALERT] Attempting text message to ${ADMIN_WHATSAPP_NUMBER}...`);
+        // Attempt 1: Text message
         const textResponse = await fetch(apiUrl, {
             method: 'POST',
             headers,
@@ -320,18 +328,13 @@ async function sendWhatsAppNotification(activity, source = 'admin', visitorStats
         const textData = await textResponse.json();
 
         if (textResponse.ok && textData.messages) {
-            console.log(`[ADMIN-ALERT] WhatsApp TEXT sent to ${ADMIN_WHATSAPP_NUMBER} — ID: ${textData.messages[0]?.id}`);
+            console.log(`[BATCH] WhatsApp TEXT sent — ID: ${textData.messages[0]?.id}`);
             return { success: true, messageId: textData.messages[0]?.id, method: 'text' };
         }
 
-        // Log the error for debugging
-        const errorCode = textData.error?.code;
-        const errorMsg = textData.error?.message || 'Unknown';
-        console.log(`[ADMIN-ALERT] Text message failed (code: ${errorCode}): ${errorMsg}`);
+        console.log(`[BATCH] Text failed (${textData.error?.code}): ${textData.error?.message}`);
 
-        // Attempt 2: Fall back to template message (works without 24-hour window)
-        // "hello_world" is a pre-approved template that comes with every WhatsApp Business account
-        console.log(`[ADMIN-ALERT] Falling back to template message...`);
+        // Attempt 2: Template fallback
         const templateResponse = await fetch(apiUrl, {
             method: 'POST',
             headers,
@@ -339,153 +342,140 @@ async function sendWhatsAppNotification(activity, source = 'admin', visitorStats
                 messaging_product: 'whatsapp',
                 to: ADMIN_WHATSAPP_NUMBER,
                 type: 'template',
-                template: {
-                    name: 'hello_world',
-                    language: { code: 'en_US' }
-                }
+                template: { name: 'hello_world', language: { code: 'en_US' } }
             })
         });
 
         const templateData = await templateResponse.json();
 
         if (templateResponse.ok && templateData.messages) {
-            console.log(`[ADMIN-ALERT] WhatsApp TEMPLATE sent to ${ADMIN_WHATSAPP_NUMBER} — ID: ${templateData.messages[0]?.id}`);
+            console.log(`[BATCH] WhatsApp TEMPLATE fallback sent — ID: ${templateData.messages[0]?.id}`);
             return { success: true, messageId: templateData.messages[0]?.id, method: 'template' };
         }
 
-        // Both attempts failed — log full errors for debugging
-        console.error('[ADMIN-ALERT] WhatsApp BOTH attempts failed.');
-        console.error('[ADMIN-ALERT] Text error:', JSON.stringify(textData.error || textData));
-        console.error('[ADMIN-ALERT] Template error:', JSON.stringify(templateData.error || templateData));
-        return {
-            success: false,
-            error: templateData.error?.message || textData.error?.message || 'Both text and template failed',
-            textError: textData.error || null,
-            templateError: templateData.error || null
-        };
+        console.error('[BATCH] WhatsApp both attempts failed.');
+        return { success: false, error: templateData.error?.message || textData.error?.message };
     } catch (error) {
-        console.error('[ADMIN-ALERT] WhatsApp send exception:', error.message);
+        console.error('[BATCH] WhatsApp send exception:', error.message);
         return { success: false, error: error.message };
     }
 }
 
-// ─── Send email notification with visitor analytics included ─────────────────
+// ─── Send batch email ────────────────────────────────────────────────────────
 
-async function sendEmailNotification(activity, source = 'admin', visitorStats = null) {
+async function sendBatchEmail(htmlContent, activityCount, visitorCount) {
     try {
         const { Resend } = await import('resend');
         const resend = new Resend(process.env.RESEND_API_KEY);
 
-        const activityHTML = buildActivityEmailHTML(activity, source);
-        const visitorHTML = buildVisitorAnalyticsHTML(visitorStats);
-
-        const noticeText = `
-<div style="padding:14px 16px; background:#f0fdf4; border-left:3px solid #22c55e; border-radius:4px; margin:18px 0; font-size:14px; color:#14532d;">
-    Real-time notification sent immediately when activity is detected. Includes live visitor analytics.
-</div>
-<p style="font-size:13px; color:#94a3b8; margin-top:20px;">SteelConnect Activity Monitoring System — ${ADMIN_REPORT_EMAIL} | ${ADMIN_PHONE_NUMBER}</p>`;
-
-        const htmlContent = activityHTML + visitorHTML + noticeText;
-
-        const isUser = source === 'user';
-        const categoryLabel = activity.category || (isUser ? 'User' : 'Admin');
-        const actionLabel = activity.action || 'Activity';
-        const personLabel = isUser
-            ? (activity.userEmail || 'User')
-            : (activity.adminEmail || 'system');
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
         const response = await resend.emails.send({
             from: 'SteelConnect System <noreply@steelconnectapp.com>',
             reply_to: 'support@steelconnectapp.com',
             to: ADMIN_REPORT_EMAIL,
-            subject: `[${categoryLabel}] ${actionLabel} — ${personLabel} — SteelConnect`,
+            subject: `Hourly Report — ${activityCount} activities, ${visitorCount} visitors — ${timeStr} — SteelConnect`,
             html: buildFullEmailHTML(htmlContent)
         });
 
         if (response.error) {
-            console.error('[ADMIN-ALERT] Email send error:', response.error);
+            console.error('[BATCH] Email error:', response.error);
             return { success: false, error: response.error };
         }
 
-        console.log(`[ADMIN-ALERT] Email sent to ${ADMIN_REPORT_EMAIL} — ID: ${response.data?.id}`);
+        console.log(`[BATCH] Email sent — ID: ${response.data?.id}`);
         return { success: true, emailId: response.data?.id };
     } catch (error) {
-        console.error('[ADMIN-ALERT] Email send failed:', error.message);
+        console.error('[BATCH] Email failed:', error.message);
         return { success: false, error: error.message };
     }
 }
 
-// ─── Public API: Send real-time notification for admin activity ───────────────
+// ─── Main batch send function ────────────────────────────────────────────────
 
-/**
- * Send an immediate email + WhatsApp notification for a single admin activity.
- * Called by the adminActivityLogger right after logging to Firestore.
- * Now includes visitor analytics summary in the notification.
- */
+async function sendBatchAlerts() {
+    try {
+        // Drain the queue
+        const items = activityQueue.splice(0, activityQueue.length);
+
+        // Fetch detailed visitor sessions from the last hour
+        const visitors = await getDetailedVisitorSessions(1);
+
+        // Skip if nothing happened
+        if (items.length === 0 && visitors.length === 0) {
+            console.log('[BATCH] No activities or visitors in the last hour. Skipping batch.');
+            return;
+        }
+
+        // Split into admin vs user activities
+        const adminItems = items.filter(i => i.source === 'admin');
+        const userItems = items.filter(i => i.source === 'user');
+
+        console.log(`[BATCH] Sending hourly report: ${adminItems.length} admin, ${userItems.length} user activities, ${visitors.length} visitors`);
+
+        // Build messages
+        const whatsappMsg = buildBatchWhatsAppMessage(adminItems, userItems, visitors);
+        const emailHTML = buildBatchEmailHTML(adminItems, userItems, visitors);
+
+        // Send both in parallel
+        const [emailResult, whatsappResult] = await Promise.allSettled([
+            sendBatchEmail(emailHTML, items.length, visitors.length),
+            sendWhatsAppBatch(whatsappMsg)
+        ]);
+
+        const email = emailResult.status === 'fulfilled' ? emailResult.value : { success: false, error: emailResult.reason?.message };
+        const whatsapp = whatsappResult.status === 'fulfilled' ? whatsappResult.value : { success: false, error: whatsappResult.reason?.message };
+
+        console.log(`[BATCH] Email: ${email.success ? 'sent' : 'failed'} | WhatsApp: ${whatsapp.success ? 'sent' : 'failed'}`);
+    } catch (error) {
+        console.error('[BATCH] Batch send failed:', error.message);
+    }
+}
+
+// ─── Start the 1-hour batch scheduler ────────────────────────────────────────
+
+let batchTimer = null;
+
+export function startBatchScheduler() {
+    if (batchTimer) {
+        console.log('[BATCH] Scheduler already running.');
+        return;
+    }
+
+    console.log(`[BATCH] Starting hourly batch scheduler (every ${BATCH_INTERVAL_MS / 60000} minutes)`);
+
+    batchTimer = setInterval(() => {
+        sendBatchAlerts().catch(err => {
+            console.error('[BATCH] Scheduler error:', err.message);
+        });
+    }, BATCH_INTERVAL_MS);
+
+    // Send first batch 5 minutes after startup (to collect initial activities)
+    setTimeout(() => {
+        console.log('[BATCH] Sending initial batch (5 min after startup)...');
+        sendBatchAlerts().catch(err => {
+            console.error('[BATCH] Initial batch error:', err.message);
+        });
+    }, 5 * 60 * 1000);
+}
+
+// Auto-start the scheduler when this module is loaded
+startBatchScheduler();
+
+// ─── Legacy: Keep old functions working (now they just queue) ────────────────
+
 export async function sendRealTimeActivityAlert(activity) {
-    try {
-        console.log(`[ADMIN-ALERT] Sending real-time alert for: [${activity.category}] ${activity.action}`);
-
-        // Fetch visitor stats in parallel with sending
-        const visitorStats = await getVisitorAnalyticsSummary().catch(() => null);
-
-        const [emailResult, whatsappResult] = await Promise.allSettled([
-            sendEmailNotification(activity, 'admin', visitorStats),
-            sendWhatsAppNotification(activity, 'admin', visitorStats)
-        ]);
-
-        const email = emailResult.status === 'fulfilled' ? emailResult.value : { success: false, error: emailResult.reason?.message };
-        const whatsapp = whatsappResult.status === 'fulfilled' ? whatsappResult.value : { success: false, error: whatsappResult.reason?.message };
-
-        console.log(`[ADMIN-ALERT] Email: ${email.success ? 'sent' : 'failed'} | WhatsApp: ${whatsapp.success ? 'sent' : 'failed'}`);
-
-        return { email, whatsapp };
-    } catch (error) {
-        console.error('[ADMIN-ALERT] Real-time alert failed:', error.message);
-        return {
-            email: { success: false, error: error.message },
-            whatsapp: { success: false, error: error.message }
-        };
-    }
+    queueActivityForBatch(activity, 'admin');
+    return { email: { success: true, queued: true }, whatsapp: { success: true, queued: true } };
 }
 
-// ─── Public API: Send comprehensive alert for user activities ────────────────
-
-/**
- * Send an immediate email + WhatsApp notification for ANY platform activity
- * (user registration, login, job post, quote, estimation, etc.).
- * Includes visitor analytics summary.
- *
- * @param {Object} activity - The activity log entry
- * @param {string} source - 'admin' or 'user'
- */
 export async function sendComprehensiveActivityAlert(activity, source = 'user') {
-    try {
-        console.log(`[ACTIVITY-ALERT] Sending ${source} alert for: [${activity.category}] ${activity.action}`);
-
-        const visitorStats = await getVisitorAnalyticsSummary().catch(() => null);
-
-        const [emailResult, whatsappResult] = await Promise.allSettled([
-            sendEmailNotification(activity, source, visitorStats),
-            sendWhatsAppNotification(activity, source, visitorStats)
-        ]);
-
-        const email = emailResult.status === 'fulfilled' ? emailResult.value : { success: false, error: emailResult.reason?.message };
-        const whatsapp = whatsappResult.status === 'fulfilled' ? whatsappResult.value : { success: false, error: whatsappResult.reason?.message };
-
-        console.log(`[ACTIVITY-ALERT] Email: ${email.success ? 'sent' : 'failed'} | WhatsApp: ${whatsapp.success ? 'sent' : 'failed'}`);
-
-        return { email, whatsapp };
-    } catch (error) {
-        console.error('[ACTIVITY-ALERT] Comprehensive alert failed:', error.message);
-        return {
-            email: { success: false, error: error.message },
-            whatsapp: { success: false, error: error.message }
-        };
-    }
+    queueActivityForBatch(activity, source);
+    return { email: { success: true, queued: true }, whatsapp: { success: true, queued: true } };
 }
 
-// ─── PDF Report Generation (legacy for download endpoint) ────────────────────
+// ─── PDF Report Generation (unchanged) ───────────────────────────────────────
 
 export async function generateManualReport(hours = 1) {
     const PDFDocument = (await import('pdfkit')).default;
@@ -493,7 +483,6 @@ export async function generateManualReport(hours = 1) {
     const periodStart = new Date(periodEnd.getTime() - hours * 60 * 60 * 1000);
     const activities = await getRecentActivities(hours);
 
-    // Also fetch user activities and visitor stats for comprehensive report
     let userActivities = [];
     let visitorStats = null;
     try {
@@ -537,7 +526,7 @@ function generatePDFReport(PDFDocument, adminActivities, userActivities, visitor
             doc.fillColor('#000000');
             let y = 115;
 
-            // ── Visitor Analytics Section ──
+            // Visitor Analytics Section
             if (visitorStats) {
                 doc.rect(50, y, doc.page.width - 100, 24).fill('#0369a1');
                 doc.fontSize(12).font('Helvetica-Bold').fillColor('#ffffff').text('VISITOR ANALYTICS', 60, y + 6);
@@ -570,7 +559,7 @@ function generatePDFReport(PDFDocument, adminActivities, userActivities, visitor
                 y += 10;
             }
 
-            // ── Admin Activities Section ──
+            // Admin Activities Section
             if (adminActivities.length > 0) {
                 if (y > doc.page.height - 100) { doc.addPage(); y = 50; }
                 doc.rect(50, y, doc.page.width - 100, 24).fill('#7c3aed');
@@ -603,7 +592,7 @@ function generatePDFReport(PDFDocument, adminActivities, userActivities, visitor
                 }
             }
 
-            // ── User Activities Section ──
+            // User Activities Section
             if (userActivities.length > 0) {
                 if (y > doc.page.height - 100) { doc.addPage(); y = 50; }
                 doc.rect(50, y, doc.page.width - 100, 24).fill('#059669');
@@ -636,13 +625,11 @@ function generatePDFReport(PDFDocument, adminActivities, userActivities, visitor
                 }
             }
 
-            // No activities
             if (adminActivities.length === 0 && userActivities.length === 0) {
                 doc.fontSize(13).font('Helvetica').fillColor('#64748b')
                     .text('No activities recorded during this period.', 50, y);
             }
 
-            // Page footers
             const pageCount = doc.bufferedPageRange().count;
             for (let i = 0; i < pageCount; i++) {
                 doc.switchToPage(i);
@@ -658,6 +645,8 @@ function generatePDFReport(PDFDocument, adminActivities, userActivities, visitor
 }
 
 export default {
+    queueActivityForBatch,
+    startBatchScheduler,
     sendRealTimeActivityAlert,
     sendComprehensiveActivityAlert,
     generateManualReport

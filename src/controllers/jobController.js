@@ -1,5 +1,6 @@
 import { adminDb, admin } from '../config/firebase.js';
 import { uploadMultipleFilesToFirebase } from '../middleware/upload.js';
+import { logUserActivity } from '../services/userActivityLogger.js';
 
 // Create a new job
 export const createJob = async (req, res, next) => {
@@ -84,11 +85,24 @@ export const createJob = async (req, res, next) => {
     };
 
     console.log('Job created successfully:', jobRef.id);
-    
-    res.status(201).json({ 
-      success: true, 
-      message: 'Job created successfully.', 
-      data: responseData 
+
+    // Log job posting activity (fire-and-forget)
+    logUserActivity({
+        userEmail: req.user?.email || '',
+        userName: req.user?.name || jobData.posterName,
+        userId: req.user?.userId || '',
+        userType: 'contractor',
+        category: 'Job Posting',
+        action: 'New Job Posted',
+        description: `New project posted: "${jobData.title}" with budget ${jobData.budget}`,
+        metadata: { jobId: jobRef.id, title: jobData.title, budget: jobData.budget },
+        ip: req.headers?.['x-forwarded-for'] || req.socket?.remoteAddress || ''
+    }).catch(() => {});
+
+    res.status(201).json({
+      success: true,
+      message: 'Job created successfully.',
+      data: responseData
     });
 
   } catch (error) {

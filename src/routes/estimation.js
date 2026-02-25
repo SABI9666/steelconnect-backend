@@ -2,6 +2,7 @@
 import express from 'express';
 import multer from 'multer';
 import { authenticateToken, isContractor, isAdmin } from '../middleware/authMiddleware.js';
+import { logUserActivity } from '../services/userActivityLogger.js';
 import { 
   adminDb, 
   storage,
@@ -409,6 +410,19 @@ router.post('/contractor/submit', authenticateToken, isContractor, async (req, r
 
     const estimationRef = await adminDb.collection('estimations').add(estimationData);
     console.log(`[CONTRACTOR] Estimation saved with ID: ${estimationRef.id}, starting background AI generation`);
+
+    // Log estimation submission activity (fire-and-forget)
+    logUserActivity({
+        userEmail: req.user?.email || contractorEmail || '',
+        userName: contractorName || req.user?.name || '',
+        userId: req.user?.userId || '',
+        userType: 'contractor',
+        category: 'Estimation Request',
+        action: 'New Estimation Submitted',
+        description: `Estimation request: "${projectTitle}" with ${uploadedFiles.length} file(s)`,
+        metadata: { estimationId: estimationRef.id, projectTitle, fileCount: uploadedFiles.length },
+        ip: req.headers?.['x-forwarded-for'] || req.socket?.remoteAddress || ''
+    }).catch(() => {});
 
     // Return success IMMEDIATELY - don't wait for AI estimate
     res.status(201).json({

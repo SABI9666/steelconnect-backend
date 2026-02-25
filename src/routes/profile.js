@@ -5,6 +5,7 @@ import { authenticateToken } from '../middleware/authMiddleware.js';
 import { adminDb, admin } from '../config/firebase.js';
 import { uploadToFirebaseStorage, deleteFileFromFirebase } from '../utils/firebaseStorage.js';
 import { sendProfileApprovalRequestToAdmin } from '../utils/emailService.js';
+import { logUserActivity } from '../services/userActivityLogger.js';
 
 // Sanitize filenames to prevent special character issues in storage URLs
 function sanitizeFilename(filename) {
@@ -298,6 +299,19 @@ router.put('/complete', upload.fields([
         }
 
         console.log(`Profile submitted for review: ${currentUserData.email}`);
+
+        // Log profile completion activity (fire-and-forget)
+        logUserActivity({
+            userEmail: currentUserData.email,
+            userName: currentUserData.name || '',
+            userId,
+            userType: currentUserData.type || 'user',
+            category: 'Profile Completion',
+            action: 'Profile Submitted for Review',
+            description: `${currentUserData.name || currentUserData.email} (${currentUserData.type}) submitted profile for review`,
+            metadata: { userId, userType: currentUserData.type },
+            ip: req.headers['x-forwarded-for'] || req.socket?.remoteAddress || ''
+        }).catch(() => {});
 
         res.json({
             success: true,

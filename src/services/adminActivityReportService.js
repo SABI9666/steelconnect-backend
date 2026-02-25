@@ -1,11 +1,14 @@
 // src/services/adminActivityReportService.js
-// Sends real-time email & WhatsApp notifications when any admin activity occurs.
-// No hourly batch — every activity triggers an immediate alert.
+// Sends real-time email & WhatsApp notifications when ANY activity occurs
+// (admin actions, user activities like registrations/logins/jobs/quotes/estimations).
+// Every activity triggers an immediate alert INCLUDING visitor analytics summary.
 
 import { getRecentActivities } from './adminActivityLogger.js';
+import { getVisitorAnalyticsSummary } from './userActivityLogger.js';
 
 const ADMIN_REPORT_EMAIL = 'sabincn676@gmail.com';
 const ADMIN_WHATSAPP_NUMBER = '919895909666'; // India country code + number
+const ADMIN_PHONE_NUMBER = '9895909666';
 
 // ─── Category colours (for email badges) ─────────────────────────────────────
 const CATEGORY_COLORS = {
@@ -25,12 +28,115 @@ const CATEGORY_COLORS = {
     'Chatbot':             { bg: '#fffbeb', text: '#78350f', border: '#fbbf24' },
     'Jobs':                { bg: '#f1f5f9', text: '#334155', border: '#94a3b8' },
     'Quotes':              { bg: '#f8fafc', text: '#475569', border: '#cbd5e1' },
+    // User activity categories
+    'User Registration':   { bg: '#dbeafe', text: '#1e40af', border: '#60a5fa' },
+    'User Login':          { bg: '#d1fae5', text: '#065f46', border: '#34d399' },
+    'Profile Completion':  { bg: '#fef3c7', text: '#92400e', border: '#fbbf24' },
+    'Job Posting':         { bg: '#e0e7ff', text: '#3730a3', border: '#818cf8' },
+    'Quote Submission':    { bg: '#fce7f3', text: '#9d174d', border: '#f472b6' },
+    'Estimation Request':  { bg: '#fff7ed', text: '#9a3412', border: '#fb923c' },
+    'User Message':        { bg: '#f0fdfa', text: '#134e4a', border: '#2dd4bf' },
+    'Visitor Activity':    { bg: '#ecfdf5', text: '#065f46', border: '#6ee7b7' },
     'Default':             { bg: '#f1f5f9', text: '#475569', border: '#cbd5e1' }
 };
 
-// ─── Build email HTML for a single activity ──────────────────────────────────
+// ─── Build visitor analytics HTML section ────────────────────────────────────
 
-function buildActivityEmailHTML(activity) {
+function buildVisitorAnalyticsHTML(visitorStats) {
+    if (!visitorStats || visitorStats.todayTotal === 0) {
+        return `
+<div style="margin:20px 0; padding:16px; background:#f8fafc; border-radius:8px; border:1px solid #e2e8f0;">
+    <h3 style="font-size:16px; font-weight:700; color:#0f172a; margin:0 0 8px 0;">Visitor Analytics (Today)</h3>
+    <p style="font-size:14px; color:#64748b; margin:0;">No visitor sessions recorded today.</p>
+</div>`;
+    }
+
+    const avgMinutes = Math.floor(visitorStats.avgTimeSeconds / 60);
+    const avgSeconds = visitorStats.avgTimeSeconds % 60;
+
+    let recentVisitorsHTML = '';
+    if (visitorStats.recentVisitors && visitorStats.recentVisitors.length > 0) {
+        const rows = visitorStats.recentVisitors.map(v => {
+            const timeStr = new Date(v.time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+            const mins = Math.floor(v.timeSpent / 60);
+            return `<tr>
+                <td style="padding:6px 10px; font-size:12px; border-bottom:1px solid #f1f5f9; color:#334155;">${v.email}</td>
+                <td style="padding:6px 10px; font-size:12px; border-bottom:1px solid #f1f5f9; color:#64748b;">${v.country}${v.city ? ', ' + v.city : ''}</td>
+                <td style="padding:6px 10px; font-size:12px; border-bottom:1px solid #f1f5f9; color:#64748b;">${v.device} / ${v.browser}</td>
+                <td style="padding:6px 10px; font-size:12px; border-bottom:1px solid #f1f5f9; color:#64748b;">${mins}m</td>
+                <td style="padding:6px 10px; font-size:12px; border-bottom:1px solid #f1f5f9; color:#64748b;">${v.pages} pages</td>
+                <td style="padding:6px 10px; font-size:12px; border-bottom:1px solid #f1f5f9; color:#64748b;">${timeStr}</td>
+            </tr>`;
+        }).join('');
+
+        recentVisitorsHTML = `
+        <h4 style="font-size:14px; font-weight:600; color:#334155; margin:14px 0 8px 0;">Recent Visitors</h4>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; font-size:12px;">
+            <tr style="background:#f1f5f9;">
+                <td style="padding:6px 10px; font-weight:600; color:#475569;">Visitor</td>
+                <td style="padding:6px 10px; font-weight:600; color:#475569;">Location</td>
+                <td style="padding:6px 10px; font-weight:600; color:#475569;">Device</td>
+                <td style="padding:6px 10px; font-weight:600; color:#475569;">Time</td>
+                <td style="padding:6px 10px; font-weight:600; color:#475569;">Pages</td>
+                <td style="padding:6px 10px; font-weight:600; color:#475569;">At</td>
+            </tr>
+            ${rows}
+        </table>`;
+    }
+
+    const topCountriesHTML = visitorStats.topCountries.length > 0
+        ? visitorStats.topCountries.map(([country, count]) =>
+            `<span style="display:inline-block; padding:2px 8px; margin:2px; background:#ecfdf5; color:#065f46; border-radius:10px; font-size:11px;">${country}: ${count}</span>`
+        ).join('')
+        : '<span style="color:#94a3b8; font-size:12px;">N/A</span>';
+
+    return `
+<div style="margin:20px 0; padding:16px; background:#f0f9ff; border-radius:8px; border:1px solid #bae6fd;">
+    <h3 style="font-size:16px; font-weight:700; color:#0c4a6e; margin:0 0 12px 0;">Visitor Analytics Summary</h3>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; margin-bottom:12px;">
+        <tr>
+            <td style="width:25%; text-align:center; padding:10px;">
+                <div style="font-size:24px; font-weight:800; color:#0369a1;">${visitorStats.todayTotal}</div>
+                <div style="font-size:11px; color:#64748b; margin-top:2px;">Today</div>
+            </td>
+            <td style="width:25%; text-align:center; padding:10px;">
+                <div style="font-size:24px; font-weight:800; color:#059669;">${visitorStats.activeNow}</div>
+                <div style="font-size:11px; color:#64748b; margin-top:2px;">Active Now</div>
+            </td>
+            <td style="width:25%; text-align:center; padding:10px;">
+                <div style="font-size:24px; font-weight:800; color:#7c3aed;">${visitorStats.last24hTotal}</div>
+                <div style="font-size:11px; color:#64748b; margin-top:2px;">Last 24h</div>
+            </td>
+            <td style="width:25%; text-align:center; padding:10px;">
+                <div style="font-size:24px; font-weight:800; color:#ea580c;">${avgMinutes}m ${avgSeconds}s</div>
+                <div style="font-size:11px; color:#64748b; margin-top:2px;">Avg. Time</div>
+            </td>
+        </tr>
+    </table>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+        <tr>
+            <td style="padding:4px 10px; font-size:13px; color:#64748b;">Identified Visitors:</td>
+            <td style="padding:4px 10px; font-size:13px; color:#1e293b; font-weight:600;">${visitorStats.identifiedVisitors} of ${visitorStats.todayTotal}</td>
+        </tr>
+        <tr>
+            <td style="padding:4px 10px; font-size:13px; color:#64748b;">Devices:</td>
+            <td style="padding:4px 10px; font-size:13px; color:#1e293b;">Desktop: ${visitorStats.devices.Desktop || 0} | Mobile: ${visitorStats.devices.Mobile || 0} | Tablet: ${visitorStats.devices.Tablet || 0}</td>
+        </tr>
+        <tr>
+            <td style="padding:4px 10px; font-size:13px; color:#64748b;">Top Countries:</td>
+            <td style="padding:4px 10px;">${topCountriesHTML}</td>
+        </tr>
+    </table>
+
+    ${recentVisitorsHTML}
+</div>`;
+}
+
+// ─── Build email HTML for a single activity (admin or user) ──────────────────
+
+function buildActivityEmailHTML(activity, source = 'admin') {
     const colors = CATEGORY_COLORS[activity.category] || CATEGORY_COLORS['Default'];
     const time = activity.timestamp
         ? new Date(activity.timestamp).toLocaleString('en-US', {
@@ -38,12 +144,20 @@ function buildActivityEmailHTML(activity) {
             timeStyle: 'medium'
         })
         : new Date().toLocaleString();
-    const adminLabel = activity.adminEmail || 'system';
+
+    const isUserActivity = source === 'user';
+    const personLabel = isUserActivity
+        ? (activity.userEmail || activity.userName || 'Unknown User')
+        : (activity.adminEmail || 'system');
+    const titleLabel = isUserActivity ? 'Platform Activity Alert' : 'Admin Activity Alert';
+    const introText = isUserActivity
+        ? 'A user activity was just detected on SteelConnect:'
+        : 'An admin action was just performed on SteelConnect:';
 
     return `
-<h2 style="font-size:20px; font-weight:700; color:#0f172a; margin:0 0 16px 0;">Admin Activity Alert</h2>
+<h2 style="font-size:20px; font-weight:700; color:#0f172a; margin:0 0 16px 0;">${titleLabel}</h2>
 <p style="font-size:15px; color:#334155; margin:0 0 14px 0; line-height:1.7;">
-    An admin action was just performed on SteelConnect:
+    ${introText}
 </p>
 
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; margin:16px 0;">
@@ -62,28 +176,22 @@ function buildActivityEmailHTML(activity) {
         <td style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;">${activity.description || 'N/A'}</td>
     </tr>
     <tr>
-        <td style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9;">Admin</td>
-        <td style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;">${adminLabel}</td>
+        <td style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9;">${isUserActivity ? 'User' : 'Admin'}</td>
+        <td style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;">${personLabel}${activity.userType ? ' (' + activity.userType + ')' : ''}</td>
     </tr>
     <tr>
         <td style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9;">Time</td>
         <td style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;">${time}</td>
     </tr>
-    <tr>
+    ${activity.method ? `<tr>
         <td style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9;">Method</td>
-        <td style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;">${activity.method || 'N/A'} ${activity.endpoint || ''}</td>
-    </tr>
+        <td style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;">${activity.method} ${activity.endpoint || ''}</td>
+    </tr>` : ''}
     <tr>
         <td style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9;">IP Address</td>
         <td style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;">${activity.ip || 'N/A'}</td>
     </tr>
-</table>
-
-<div style="padding:14px 16px; background:#f0fdf4; border-left:3px solid #22c55e; border-radius:4px; margin:18px 0; font-size:14px; color:#14532d;">
-    This is a real-time notification sent immediately when admin activity is detected.
-</div>
-
-<p style="font-size:13px; color:#94a3b8; margin-top:20px;">SteelConnect Admin Activity Monitoring System</p>`;
+</table>`;
 }
 
 // ─── Full email wrapper ──────────────────────────────────────────────────────
@@ -97,7 +205,7 @@ function buildFullEmailHTML(content) {
 <body style="margin:0; padding:0; background-color:#f5f7fa; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f5f7fa;">
 <tr><td align="center" style="padding:32px 16px;">
-<table role="presentation" width="580" cellpadding="0" cellspacing="0" style="max-width:580px; width:100%; background:#ffffff; border-radius:8px; border:1px solid #e2e8f0;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px; width:100%; background:#ffffff; border-radius:8px; border:1px solid #e2e8f0;">
 <tr>
 <td style="padding:24px 32px; border-bottom:2px solid #2563eb;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
@@ -105,6 +213,9 @@ function buildFullEmailHTML(content) {
 <td>
 <span style="display:inline-block; background:#1e3a8a; color:#ffffff; font-weight:800; font-size:14px; padding:6px 10px; border-radius:6px; letter-spacing:0.5px; vertical-align:middle;">SC</span>
 <span style="font-size:18px; font-weight:700; color:#1e3a8a; letter-spacing:-0.5px; margin-left:8px; vertical-align:middle;">SteelConnect</span>
+</td>
+<td style="text-align:right;">
+<span style="font-size:11px; color:#94a3b8;">Activity Monitor</span>
 </td>
 </tr>
 </table>
@@ -118,7 +229,8 @@ ${content}
 <tr>
 <td style="padding:20px 32px; border-top:1px solid #e2e8f0; font-size:13px; color:#94a3b8; line-height:1.6;">
 <p style="margin:0 0 6px 0;">SteelConnect &mdash; Professional Steel Construction Platform</p>
-<p style="margin:0;">This is an automated real-time admin activity alert. Contact <a href="mailto:support@steelconnectapp.com" style="color:#2563eb; text-decoration:none;">support@steelconnectapp.com</a> for questions.</p>
+<p style="margin:0;">Real-time activity + visitor monitoring. Notifications: ${ADMIN_REPORT_EMAIL} | ${ADMIN_PHONE_NUMBER}</p>
+<p style="margin:4px 0 0 0;">Contact <a href="mailto:support@steelconnectapp.com" style="color:#2563eb; text-decoration:none;">support@steelconnectapp.com</a> for questions.</p>
 </td>
 </tr>
 </table>
@@ -128,9 +240,9 @@ ${content}
 </html>`;
 }
 
-// ─── Build WhatsApp message body ─────────────────────────────────────────────
+// ─── Build WhatsApp message body (supports both admin and user activities) ───
 
-function buildWhatsAppMessage(activity) {
+function buildWhatsAppMessage(activity, source = 'admin', visitorStats = null) {
     const time = activity.timestamp
         ? new Date(activity.timestamp).toLocaleString('en-US', {
             dateStyle: 'medium',
@@ -138,22 +250,42 @@ function buildWhatsAppMessage(activity) {
         })
         : new Date().toLocaleString();
 
-    return `*SteelConnect Admin Activity Alert*
+    const isUser = source === 'user';
+    const personLabel = isUser
+        ? (activity.userEmail || activity.userName || 'Unknown')
+        : (activity.adminEmail || 'system');
+    const alertTitle = isUser ? 'Platform Activity Alert' : 'Admin Activity Alert';
+
+    let msg = `*SteelConnect ${alertTitle}*
 
 *Category:* ${activity.category || 'Other'}
 *Action:* ${activity.action || 'N/A'}
 *Description:* ${activity.description || 'N/A'}
-*Admin:* ${activity.adminEmail || 'system'}
+*${isUser ? 'User' : 'Admin'}:* ${personLabel}${activity.userType ? ' (' + activity.userType + ')' : ''}
 *Time:* ${time}
-*Method:* ${activity.method || 'N/A'} ${activity.endpoint || ''}
-*IP:* ${activity.ip || 'N/A'}
+*IP:* ${activity.ip || 'N/A'}`;
 
-_Real-time alert from SteelConnect Admin Monitoring_`;
+    if (visitorStats && visitorStats.todayTotal > 0) {
+        msg += `
+
+--- Visitor Stats ---
+*Today:* ${visitorStats.todayTotal} visitors
+*Active Now:* ${visitorStats.activeNow}
+*Last 24h:* ${visitorStats.last24hTotal}
+*Identified:* ${visitorStats.identifiedVisitors}
+*Avg Time:* ${Math.floor(visitorStats.avgTimeSeconds / 60)}m ${visitorStats.avgTimeSeconds % 60}s`;
+    }
+
+    msg += `
+
+_Real-time alert from SteelConnect Monitoring_`;
+
+    return msg;
 }
 
 // ─── Send WhatsApp notification via WhatsApp Business Cloud API ──────────────
 
-async function sendWhatsAppNotification(activity) {
+async function sendWhatsAppNotification(activity, source = 'admin', visitorStats = null) {
     try {
         const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
         const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
@@ -163,7 +295,7 @@ async function sendWhatsAppNotification(activity) {
             return { success: false, error: 'WhatsApp not configured' };
         }
 
-        const messageBody = buildWhatsAppMessage(activity);
+        const messageBody = buildWhatsAppMessage(activity, source, visitorStats);
 
         const response = await fetch(
             `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`,
@@ -197,22 +329,36 @@ async function sendWhatsAppNotification(activity) {
     }
 }
 
-// ─── Send email notification for a single activity ───────────────────────────
+// ─── Send email notification with visitor analytics included ─────────────────
 
-async function sendEmailNotification(activity) {
+async function sendEmailNotification(activity, source = 'admin', visitorStats = null) {
     try {
         const { Resend } = await import('resend');
         const resend = new Resend(process.env.RESEND_API_KEY);
 
-        const htmlContent = buildActivityEmailHTML(activity);
-        const categoryLabel = activity.category || 'Admin';
+        const activityHTML = buildActivityEmailHTML(activity, source);
+        const visitorHTML = buildVisitorAnalyticsHTML(visitorStats);
+
+        const noticeText = `
+<div style="padding:14px 16px; background:#f0fdf4; border-left:3px solid #22c55e; border-radius:4px; margin:18px 0; font-size:14px; color:#14532d;">
+    Real-time notification sent immediately when activity is detected. Includes live visitor analytics.
+</div>
+<p style="font-size:13px; color:#94a3b8; margin-top:20px;">SteelConnect Activity Monitoring System — ${ADMIN_REPORT_EMAIL} | ${ADMIN_PHONE_NUMBER}</p>`;
+
+        const htmlContent = activityHTML + visitorHTML + noticeText;
+
+        const isUser = source === 'user';
+        const categoryLabel = activity.category || (isUser ? 'User' : 'Admin');
         const actionLabel = activity.action || 'Activity';
+        const personLabel = isUser
+            ? (activity.userEmail || 'User')
+            : (activity.adminEmail || 'system');
 
         const response = await resend.emails.send({
             from: 'SteelConnect System <noreply@steelconnectapp.com>',
             reply_to: 'support@steelconnectapp.com',
             to: ADMIN_REPORT_EMAIL,
-            subject: `[${categoryLabel}] ${actionLabel} — ${activity.adminEmail || 'system'} — SteelConnect`,
+            subject: `[${categoryLabel}] ${actionLabel} — ${personLabel} — SteelConnect`,
             html: buildFullEmailHTML(htmlContent)
         });
 
@@ -229,23 +375,23 @@ async function sendEmailNotification(activity) {
     }
 }
 
-// ─── Public API: Send real-time notification for a single activity ───────────
+// ─── Public API: Send real-time notification for admin activity ───────────────
 
 /**
  * Send an immediate email + WhatsApp notification for a single admin activity.
  * Called by the adminActivityLogger right after logging to Firestore.
- *
- * @param {Object} activity - The activity log entry
- * @returns {Object} { email: { success, ... }, whatsapp: { success, ... } }
+ * Now includes visitor analytics summary in the notification.
  */
 export async function sendRealTimeActivityAlert(activity) {
     try {
         console.log(`[ADMIN-ALERT] Sending real-time alert for: [${activity.category}] ${activity.action}`);
 
-        // Send email and WhatsApp in parallel
+        // Fetch visitor stats in parallel with sending
+        const visitorStats = await getVisitorAnalyticsSummary().catch(() => null);
+
         const [emailResult, whatsappResult] = await Promise.allSettled([
-            sendEmailNotification(activity),
-            sendWhatsAppNotification(activity)
+            sendEmailNotification(activity, 'admin', visitorStats),
+            sendWhatsAppNotification(activity, 'admin', visitorStats)
         ]);
 
         const email = emailResult.status === 'fulfilled' ? emailResult.value : { success: false, error: emailResult.reason?.message };
@@ -263,21 +409,66 @@ export async function sendRealTimeActivityAlert(activity) {
     }
 }
 
+// ─── Public API: Send comprehensive alert for user activities ────────────────
+
 /**
- * Generate and return the PDF buffer for a manual download (API endpoint).
- * Kept for backward compatibility with the download endpoint.
+ * Send an immediate email + WhatsApp notification for ANY platform activity
+ * (user registration, login, job post, quote, estimation, etc.).
+ * Includes visitor analytics summary.
+ *
+ * @param {Object} activity - The activity log entry
+ * @param {string} source - 'admin' or 'user'
  */
+export async function sendComprehensiveActivityAlert(activity, source = 'user') {
+    try {
+        console.log(`[ACTIVITY-ALERT] Sending ${source} alert for: [${activity.category}] ${activity.action}`);
+
+        const visitorStats = await getVisitorAnalyticsSummary().catch(() => null);
+
+        const [emailResult, whatsappResult] = await Promise.allSettled([
+            sendEmailNotification(activity, source, visitorStats),
+            sendWhatsAppNotification(activity, source, visitorStats)
+        ]);
+
+        const email = emailResult.status === 'fulfilled' ? emailResult.value : { success: false, error: emailResult.reason?.message };
+        const whatsapp = whatsappResult.status === 'fulfilled' ? whatsappResult.value : { success: false, error: whatsappResult.reason?.message };
+
+        console.log(`[ACTIVITY-ALERT] Email: ${email.success ? 'sent' : 'failed'} | WhatsApp: ${whatsapp.success ? 'sent' : 'failed'}`);
+
+        return { email, whatsapp };
+    } catch (error) {
+        console.error('[ACTIVITY-ALERT] Comprehensive alert failed:', error.message);
+        return {
+            email: { success: false, error: error.message },
+            whatsapp: { success: false, error: error.message }
+        };
+    }
+}
+
+// ─── PDF Report Generation (legacy for download endpoint) ────────────────────
+
 export async function generateManualReport(hours = 1) {
     const PDFDocument = (await import('pdfkit')).default;
     const periodEnd = new Date();
     const periodStart = new Date(periodEnd.getTime() - hours * 60 * 60 * 1000);
     const activities = await getRecentActivities(hours);
-    const pdfBuffer = await generatePDFReportLegacy(PDFDocument, activities, periodStart, periodEnd);
-    return { pdfBuffer, activitiesCount: activities.length, periodStart, periodEnd };
+
+    // Also fetch user activities and visitor stats for comprehensive report
+    let userActivities = [];
+    let visitorStats = null;
+    try {
+        const { getRecentUserActivities, getVisitorAnalyticsSummary: getVS } = await import('./userActivityLogger.js');
+        userActivities = await getRecentUserActivities(hours);
+        visitorStats = await getVS();
+    } catch (e) {
+        console.error('[REPORT] Failed to fetch user activities/visitor stats:', e.message);
+    }
+
+    const pdfBuffer = await generatePDFReport(PDFDocument, activities, userActivities, visitorStats, periodStart, periodEnd);
+    return { pdfBuffer, activitiesCount: activities.length + userActivities.length, periodStart, periodEnd };
 }
 
-// Legacy PDF generation kept for manual download endpoint
-function generatePDFReportLegacy(PDFDocument, activities, periodStart, periodEnd) {
+function generatePDFReport(PDFDocument, adminActivities, userActivities, visitorStats, periodStart, periodEnd) {
     return new Promise((resolve, reject) => {
         try {
             const doc = new PDFDocument({
@@ -285,9 +476,9 @@ function generatePDFReportLegacy(PDFDocument, activities, periodStart, periodEnd
                 margins: { top: 50, bottom: 50, left: 50, right: 50 },
                 bufferPages: true,
                 info: {
-                    Title: 'SteelConnect Admin Activity Report',
+                    Title: 'SteelConnect Comprehensive Activity Report',
                     Author: 'SteelConnect System',
-                    Subject: `Admin Activity Report — ${periodStart.toLocaleDateString()}`
+                    Subject: `Activity Report — ${periodStart.toLocaleDateString()}`
                 }
             });
 
@@ -296,48 +487,127 @@ function generatePDFReportLegacy(PDFDocument, activities, periodStart, periodEnd
             doc.on('end', () => resolve(Buffer.concat(chunks)));
             doc.on('error', reject);
 
+            // Header
             doc.rect(0, 0, doc.page.width, 100).fill('#1e3a8a');
-            doc.fontSize(22).font('Helvetica-Bold').fillColor('#ffffff').text('SteelConnect', 50, 25);
-            doc.fontSize(14).font('Helvetica').fillColor('#bfdbfe').text('Admin Activity Report', 50, 52);
+            doc.fontSize(22).font('Helvetica-Bold').fillColor('#ffffff').text('SteelConnect', 50, 20);
+            doc.fontSize(14).font('Helvetica').fillColor('#bfdbfe').text('Comprehensive Activity & Visitor Report', 50, 47);
             const periodLabel = `${periodStart.toLocaleString()} — ${periodEnd.toLocaleString()}`;
-            doc.fontSize(9).fillColor('#93c5fd').text(periodLabel, 50, 75);
+            doc.fontSize(9).fillColor('#93c5fd').text(periodLabel, 50, 68);
+            doc.fontSize(9).fillColor('#93c5fd').text(`Report to: ${ADMIN_REPORT_EMAIL} | ${ADMIN_PHONE_NUMBER}`, 50, 82);
             doc.fillColor('#000000');
-            let y = 120;
+            let y = 115;
 
-            if (activities.length === 0) {
-                doc.fontSize(13).font('Helvetica').fillColor('#64748b')
-                    .text('No admin activities recorded during this period.', 50, y);
-            } else {
+            // ── Visitor Analytics Section ──
+            if (visitorStats) {
+                doc.rect(50, y, doc.page.width - 100, 24).fill('#0369a1');
+                doc.fontSize(12).font('Helvetica-Bold').fillColor('#ffffff').text('VISITOR ANALYTICS', 60, y + 6);
+                y += 32;
+
+                doc.fontSize(10).font('Helvetica').fillColor('#334155');
+                doc.text(`Today: ${visitorStats.todayTotal} visitors | Active Now: ${visitorStats.activeNow} | Last 24h: ${visitorStats.last24hTotal}`, 55, y);
+                y += 16;
+                doc.text(`Avg Time: ${Math.floor(visitorStats.avgTimeSeconds / 60)}m ${visitorStats.avgTimeSeconds % 60}s | Identified: ${visitorStats.identifiedVisitors}`, 55, y);
+                y += 16;
+                doc.text(`Devices — Desktop: ${visitorStats.devices.Desktop || 0} | Mobile: ${visitorStats.devices.Mobile || 0} | Tablet: ${visitorStats.devices.Tablet || 0}`, 55, y);
+                y += 16;
+
+                if (visitorStats.topCountries.length > 0) {
+                    doc.text(`Top Countries: ${visitorStats.topCountries.map(([c, n]) => `${c}(${n})`).join(', ')}`, 55, y);
+                    y += 16;
+                }
+
+                if (visitorStats.recentVisitors.length > 0) {
+                    doc.fontSize(9).font('Helvetica-Bold').fillColor('#0369a1').text('Recent Visitors:', 55, y);
+                    y += 14;
+                    for (const v of visitorStats.recentVisitors) {
+                        if (y > doc.page.height - 60) { doc.addPage(); y = 50; }
+                        const mins = Math.floor(v.timeSpent / 60);
+                        doc.fontSize(8).font('Helvetica').fillColor('#334155')
+                            .text(`${v.email} | ${v.country}${v.city ? ', ' + v.city : ''} | ${v.device}/${v.browser} | ${mins}m | ${v.pages} pages`, 60, y, { width: doc.page.width - 120 });
+                        y += 14;
+                    }
+                }
+                y += 10;
+            }
+
+            // ── Admin Activities Section ──
+            if (adminActivities.length > 0) {
+                if (y > doc.page.height - 100) { doc.addPage(); y = 50; }
+                doc.rect(50, y, doc.page.width - 100, 24).fill('#7c3aed');
+                doc.fontSize(12).font('Helvetica-Bold').fillColor('#ffffff').text(`ADMIN ACTIVITIES (${adminActivities.length})`, 60, y + 6);
+                y += 32;
+
                 const grouped = {};
-                activities.forEach(a => {
+                adminActivities.forEach(a => {
                     const cat = a.category || 'Other';
                     if (!grouped[cat]) grouped[cat] = [];
                     grouped[cat].push(a);
                 });
 
                 for (const [category, items] of Object.entries(grouped).sort((a, b) => b[1].length - a[1].length)) {
-                    if (y > doc.page.height - 120) { doc.addPage(); y = 50; }
+                    if (y > doc.page.height - 80) { doc.addPage(); y = 50; }
                     const colors = CATEGORY_COLORS[category] || CATEGORY_COLORS['Default'];
-                    doc.rect(50, y, doc.page.width - 100, 28).fill(colors.bg);
-                    doc.rect(50, y, 4, 28).fill(colors.border);
-                    doc.fontSize(12).font('Helvetica-Bold').fillColor(colors.text).text(`${category}  (${items.length})`, 62, y + 8);
-                    y += 36;
+                    doc.rect(50, y, doc.page.width - 100, 22).fill(colors.bg);
+                    doc.rect(50, y, 4, 22).fill(colors.border);
+                    doc.fontSize(10).font('Helvetica-Bold').fillColor(colors.text).text(`${category} (${items.length})`, 62, y + 5);
+                    y += 28;
 
                     for (const item of items) {
                         if (y > doc.page.height - 60) { doc.addPage(); y = 50; }
-                        const time = item.timestamp ? new Date(item.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
-                        doc.fontSize(8).font('Helvetica').fillColor('#334155').text(`${time} | ${item.adminEmail || 'system'} | ${item.action || '—'} | ${item.description || '—'}`, 55, y, { width: doc.page.width - 110 });
-                        y += 16;
+                        const time = item.timestamp ? new Date(item.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '-';
+                        doc.fontSize(8).font('Helvetica').fillColor('#334155')
+                            .text(`${time} | ${item.adminEmail || 'system'} | ${item.action || '-'} | ${item.description || '-'}`, 55, y, { width: doc.page.width - 110 });
+                        y += 14;
                     }
-                    y += 10;
+                    y += 6;
                 }
             }
 
+            // ── User Activities Section ──
+            if (userActivities.length > 0) {
+                if (y > doc.page.height - 100) { doc.addPage(); y = 50; }
+                doc.rect(50, y, doc.page.width - 100, 24).fill('#059669');
+                doc.fontSize(12).font('Helvetica-Bold').fillColor('#ffffff').text(`USER ACTIVITIES (${userActivities.length})`, 60, y + 6);
+                y += 32;
+
+                const grouped = {};
+                userActivities.forEach(a => {
+                    const cat = a.category || 'Other';
+                    if (!grouped[cat]) grouped[cat] = [];
+                    grouped[cat].push(a);
+                });
+
+                for (const [category, items] of Object.entries(grouped).sort((a, b) => b[1].length - a[1].length)) {
+                    if (y > doc.page.height - 80) { doc.addPage(); y = 50; }
+                    const colors = CATEGORY_COLORS[category] || CATEGORY_COLORS['Default'];
+                    doc.rect(50, y, doc.page.width - 100, 22).fill(colors.bg);
+                    doc.rect(50, y, 4, 22).fill(colors.border);
+                    doc.fontSize(10).font('Helvetica-Bold').fillColor(colors.text).text(`${category} (${items.length})`, 62, y + 5);
+                    y += 28;
+
+                    for (const item of items) {
+                        if (y > doc.page.height - 60) { doc.addPage(); y = 50; }
+                        const time = item.timestamp ? new Date(item.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '-';
+                        doc.fontSize(8).font('Helvetica').fillColor('#334155')
+                            .text(`${time} | ${item.userEmail || 'unknown'} (${item.userType || ''}) | ${item.action || '-'} | ${item.description || '-'}`, 55, y, { width: doc.page.width - 110 });
+                        y += 14;
+                    }
+                    y += 6;
+                }
+            }
+
+            // No activities
+            if (adminActivities.length === 0 && userActivities.length === 0) {
+                doc.fontSize(13).font('Helvetica').fillColor('#64748b')
+                    .text('No activities recorded during this period.', 50, y);
+            }
+
+            // Page footers
             const pageCount = doc.bufferedPageRange().count;
             for (let i = 0; i < pageCount; i++) {
                 doc.switchToPage(i);
                 doc.fontSize(8).font('Helvetica').fillColor('#94a3b8')
-                    .text(`SteelConnect Admin Activity Report — Page ${i + 1} of ${pageCount} — Generated ${new Date().toLocaleString()}`, 50, doc.page.height - 35, { width: doc.page.width - 100, align: 'center' });
+                    .text(`SteelConnect Activity Report — Page ${i + 1} of ${pageCount} — Generated ${new Date().toLocaleString()} — ${ADMIN_REPORT_EMAIL}`, 50, doc.page.height - 35, { width: doc.page.width - 100, align: 'center' });
             }
 
             doc.end();
@@ -349,5 +619,6 @@ function generatePDFReportLegacy(PDFDocument, activities, periodStart, periodEnd
 
 export default {
     sendRealTimeActivityAlert,
+    sendComprehensiveActivityAlert,
     generateManualReport
 };

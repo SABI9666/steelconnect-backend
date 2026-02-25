@@ -12,7 +12,8 @@ import { generateAIEstimate } from '../services/aiEstimationService.js';
 import { runMultiPassEstimation } from '../services/multiPassEstimationEngine.js';
 import { adminActivityLoggerMiddleware } from '../middleware/adminActivityMiddleware.js';
 import { getRecentActivities } from '../services/adminActivityLogger.js';
-import { sendRealTimeActivityAlert, generateManualReport } from '../services/adminActivityReportService.js';
+import { sendRealTimeActivityAlert, sendComprehensiveActivityAlert, generateManualReport } from '../services/adminActivityReportService.js';
+import { getRecentUserActivities, getVisitorAnalyticsSummary } from '../services/userActivityLogger.js';
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -4146,6 +4147,35 @@ router.get('/activity-logs', async (req, res) => {
     } catch (error) {
         console.error('[ACTIVITY-LOGS] Error fetching activity logs:', error);
         res.status(500).json({ success: false, message: 'Error fetching activity logs' });
+    }
+});
+
+// GET /api/admin/comprehensive-activity-report - Fetch ALL activities (admin + user + visitor stats)
+router.get('/comprehensive-activity-report', async (req, res) => {
+    try {
+        const hours = parseInt(req.query.hours) || 24;
+
+        // Fetch all three data sources in parallel
+        const [adminActivities, userActivities, visitorStats] = await Promise.allSettled([
+            getRecentActivities(hours),
+            getRecentUserActivities(hours),
+            getVisitorAnalyticsSummary()
+        ]);
+
+        res.json({
+            success: true,
+            adminActivities: adminActivities.status === 'fulfilled' ? adminActivities.value : [],
+            userActivities: userActivities.status === 'fulfilled' ? userActivities.value : [],
+            visitorStats: visitorStats.status === 'fulfilled' ? visitorStats.value : null,
+            period: `Last ${hours} hour(s)`,
+            counts: {
+                admin: adminActivities.status === 'fulfilled' ? adminActivities.value.length : 0,
+                user: userActivities.status === 'fulfilled' ? userActivities.value.length : 0
+            }
+        });
+    } catch (error) {
+        console.error('[COMPREHENSIVE-REPORT] Error:', error);
+        res.status(500).json({ success: false, message: 'Error fetching comprehensive report' });
     }
 });
 

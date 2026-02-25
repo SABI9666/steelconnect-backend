@@ -1,6 +1,7 @@
 // src/controllers/quotecontroller.js - FIXED with proper file handling
 import { adminDb, admin } from '../config/firebase.js';
 import { uploadMultipleFilesToFirebase, validateFileUpload } from '../utils/firebaseStorage.js';
+import { logUserActivity } from '../services/userActivityLogger.js';
 
 // Create a new quote with proper file handling
 export const createQuote = async (req, res, next) => {
@@ -110,6 +111,19 @@ export const createQuote = async (req, res, next) => {
         });
 
         console.log(`Quote created successfully with ID: ${quoteRef.id}`);
+
+        // Log quote submission activity (fire-and-forget)
+        logUserActivity({
+            userEmail: req.user?.email || '',
+            userName: designerName,
+            userId: designerId,
+            userType: 'designer',
+            category: 'Quote Submission',
+            action: 'New Quote Submitted',
+            description: `Quote submitted for "${jobData.title}" — Amount: ${quoteAmount}`,
+            metadata: { quoteId: quoteRef.id, jobId, jobTitle: jobData.title, amount: quoteAmount },
+            ip: req.headers?.['x-forwarded-for'] || req.socket?.remoteAddress || ''
+        }).catch(() => {});
 
         res.status(201).json({
             success: true,

@@ -41,12 +41,26 @@ const PLAN_DEFINITIONS = {
     },
     designer_15: {
         id: 'designer_15',
-        label: 'Designer Premium',
+        label: 'Designer Plus',
         type: 'designer',
         price: 15,
         quotesAllowed: 20,
         description: '20 quotes per month',
         features: ['20 project quotes', 'Priority support', 'Analytics access'],
+    },
+    designer_30: {
+        id: 'designer_30',
+        label: 'Designer Premium',
+        type: 'designer',
+        price: 30,
+        quotesAllowed: null, // unlimited
+        description: 'Unlimited quotes for 1 month',
+        features: [
+            'Unlimited project quotes',
+            'Priority support',
+            'Full analytics access',
+            'Dedicated account manager',
+        ],
     },
     contractor_pro: {
         id: 'contractor_pro',
@@ -561,6 +575,7 @@ router.get('/admin/stats', authenticateToken, isAdmin, async (req, res) => {
                 designer_5: allSubs.filter(s => s.plan === 'designer_5' && s.status === 'active').length,
                 designer_10: allSubs.filter(s => s.plan === 'designer_10' && s.status === 'active').length,
                 designer_15: allSubs.filter(s => s.plan === 'designer_15' && s.status === 'active').length,
+                designer_30: allSubs.filter(s => s.plan === 'designer_30' && s.status === 'active').length,
                 contractor_pro: allSubs.filter(s => s.plan === 'contractor_pro' && s.status === 'active').length,
                 ai_analysis_daily_weekly: allSubs.filter(s => s.plan === 'ai_analysis_daily_weekly' && s.status === 'active').length,
                 ai_analysis_monthly: allSubs.filter(s => s.plan === 'ai_analysis_monthly' && s.status === 'active').length,

@@ -17,7 +17,7 @@ const subscriptionSchema = new mongoose.Schema({
     },
     userType: {
         type: String,
-        enum: ['designer', 'contractor'],
+        enum: ['designer', 'contractor', 'ai_analysis'],
         required: true,
     },
     plan: {
@@ -28,7 +28,10 @@ const subscriptionSchema = new mongoose.Schema({
             'designer_5',
             'designer_10',
             'designer_15',
+            'designer_30',
             'contractor_pro',
+            'contractor_ai_estimation',
+            'contractor_ai_analysis',
             'ai_analysis_daily_weekly',
             'ai_analysis_monthly',
             'ai_analysis_premium',

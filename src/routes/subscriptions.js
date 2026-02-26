@@ -65,6 +65,75 @@ const PLAN_DEFINITIONS = {
             'Dedicated support',
         ],
     },
+    // ── AI ANALYSIS PRICING TIERS ──
+    ai_analysis_daily_weekly: {
+        id: 'ai_analysis_daily_weekly',
+        label: 'AI Analysis — Daily/Weekly',
+        type: 'ai_analysis',
+        price: 5,
+        billingCycle: 'weekly',
+        aiAnalysisQuota: 1,
+        storageAllowedMB: null,
+        description: '$5 — Per day/week analysis chart',
+        features: [
+            '1 AI analysis chart per period',
+            'Daily or weekly data insights',
+            'Downloadable PDF reports',
+            'Email report delivery',
+        ],
+    },
+    ai_analysis_monthly: {
+        id: 'ai_analysis_monthly',
+        label: 'AI Analysis — Monthly',
+        type: 'ai_analysis',
+        price: 10,
+        billingCycle: 'monthly',
+        aiAnalysisQuota: 1,
+        storageAllowedMB: null,
+        description: '$10/month — Monthly analysis report',
+        features: [
+            '1 AI analysis report per month',
+            'Monthly trend analysis',
+            'Predictive insights',
+            'Downloadable PDF reports',
+            'Email report delivery',
+        ],
+    },
+    ai_analysis_premium: {
+        id: 'ai_analysis_premium',
+        label: 'AI Analysis — Premium',
+        type: 'ai_analysis',
+        price: 49,
+        billingCycle: 'monthly',
+        aiAnalysisQuota: 1,
+        storageAllowedMB: 100 * 1024, // 100 GB in MB
+        description: '$49/month — 100GB estimation + 1 free analysis',
+        features: [
+            'Up to 100 GB estimation storage',
+            '1 free AI analysis per week/month',
+            'Advanced predictive analytics',
+            'Priority processing',
+            'Dedicated email support',
+        ],
+    },
+    ai_analysis_pro: {
+        id: 'ai_analysis_pro',
+        label: 'AI Analysis — Pro',
+        type: 'ai_analysis',
+        price: 99,
+        billingCycle: 'monthly',
+        aiAnalysisQuota: 3,
+        storageAllowedMB: 500 * 1024, // 500 GB in MB
+        description: '$99/month — 500GB estimation + 3 free analyses',
+        features: [
+            'Up to 500 GB estimation storage',
+            '3 free AI analyses per week/month',
+            'Full predictive analytics suite',
+            'Priority processing & bulk support',
+            'Dedicated account manager',
+            'API access for integrations',
+        ],
+    },
 };
 
 // ============================================================
@@ -212,7 +281,12 @@ router.post('/create-checkout', authenticateToken, async (req, res) => {
         // For paid plans
         const now = new Date();
         const endDate = new Date(now);
-        endDate.setMonth(endDate.getMonth() + 1);
+        // AI daily/weekly plan: shorter cycle
+        if (plan.billingCycle === 'weekly') {
+            endDate.setDate(endDate.getDate() + 7);
+        } else {
+            endDate.setMonth(endDate.getMonth() + 1);
+        }
 
         const subscription = new Subscription({
             userId,
@@ -222,10 +296,15 @@ router.post('/create-checkout', authenticateToken, async (req, res) => {
             plan: planId,
             planLabel: plan.label,
             amount: plan.price,
-            quotesAllowed: plan.quotesAllowed,
+            quotesAllowed: plan.quotesAllowed || null,
             quotesUsed: 0,
             aiEstimationRate: plan.aiEstimationRate || null,
             aiAnalysisRate: plan.aiAnalysisRate || null,
+            aiAnalysisQuota: plan.aiAnalysisQuota || null,
+            aiAnalysesUsed: 0,
+            storageAllowedMB: plan.storageAllowedMB || null,
+            storageUsedMB: 0,
+            billingCycle: plan.billingCycle || null,
             status: 'pending',
             startDate: now,
             endDate,
@@ -433,6 +512,7 @@ router.get('/admin/all', authenticateToken, isAdmin, async (req, res) => {
                 .reduce((sum, s) => sum + (s.amount || 0), 0),
             designerCount: allSubs.filter(s => s.userType === 'designer' && s.status === 'active').length,
             contractorProCount: allSubs.filter(s => s.plan === 'contractor_pro' && s.status === 'active').length,
+            aiAnalysisCount: allSubs.filter(s => s.plan?.startsWith('ai_analysis_') && s.status === 'active').length,
             totalInvoices,
         };
 
@@ -482,7 +562,12 @@ router.get('/admin/stats', authenticateToken, isAdmin, async (req, res) => {
                 designer_10: allSubs.filter(s => s.plan === 'designer_10' && s.status === 'active').length,
                 designer_15: allSubs.filter(s => s.plan === 'designer_15' && s.status === 'active').length,
                 contractor_pro: allSubs.filter(s => s.plan === 'contractor_pro' && s.status === 'active').length,
+                ai_analysis_daily_weekly: allSubs.filter(s => s.plan === 'ai_analysis_daily_weekly' && s.status === 'active').length,
+                ai_analysis_monthly: allSubs.filter(s => s.plan === 'ai_analysis_monthly' && s.status === 'active').length,
+                ai_analysis_premium: allSubs.filter(s => s.plan === 'ai_analysis_premium' && s.status === 'active').length,
+                ai_analysis_pro: allSubs.filter(s => s.plan === 'ai_analysis_pro' && s.status === 'active').length,
             },
+            aiAnalysisCount: allSubs.filter(s => s.plan?.startsWith('ai_analysis_') && s.status === 'active').length,
             totalInvoices,
         };
 
@@ -686,7 +771,11 @@ router.post('/admin/create-manual', authenticateToken, isAdmin, async (req, res)
 
         const now = new Date();
         const endDate = new Date(now);
-        endDate.setMonth(endDate.getMonth() + 1);
+        if (plan.billingCycle === 'weekly') {
+            endDate.setDate(endDate.getDate() + 7);
+        } else {
+            endDate.setMonth(endDate.getMonth() + 1);
+        }
 
         const subscription = new Subscription({
             userId,
@@ -696,10 +785,15 @@ router.post('/admin/create-manual', authenticateToken, isAdmin, async (req, res)
             plan: planId,
             planLabel: plan.label,
             amount: isFree ? 0 : plan.price,
-            quotesAllowed: plan.quotesAllowed,
+            quotesAllowed: plan.quotesAllowed || null,
             quotesUsed: 0,
             aiEstimationRate: plan.aiEstimationRate || null,
             aiAnalysisRate: plan.aiAnalysisRate || null,
+            aiAnalysisQuota: plan.aiAnalysisQuota || null,
+            aiAnalysesUsed: 0,
+            storageAllowedMB: plan.storageAllowedMB || null,
+            storageUsedMB: 0,
+            billingCycle: plan.billingCycle || null,
             status: isFree ? 'free_override' : 'active',
             startDate: now,
             endDate,

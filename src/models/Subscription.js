@@ -28,7 +28,11 @@ const subscriptionSchema = new mongoose.Schema({
             'designer_5',
             'designer_10',
             'designer_15',
-            'contractor_pro'
+            'contractor_pro',
+            'ai_analysis_daily_weekly',
+            'ai_analysis_monthly',
+            'ai_analysis_premium',
+            'ai_analysis_pro'
         ],
         trim: true,
     },
@@ -59,6 +63,28 @@ const subscriptionSchema = new mongoose.Schema({
     },
     aiAnalysisRate: {
         type: Number,
+        default: null,
+    },
+    // AI Analysis plan fields
+    aiAnalysisQuota: {
+        type: Number,
+        default: null, // number of free analyses per period (null = not applicable)
+    },
+    aiAnalysesUsed: {
+        type: Number,
+        default: 0,
+    },
+    storageAllowedMB: {
+        type: Number,
+        default: null, // storage cap in MB (null = no cap)
+    },
+    storageUsedMB: {
+        type: Number,
+        default: 0,
+    },
+    billingCycle: {
+        type: String,
+        enum: ['daily', 'weekly', 'monthly', null],
         default: null,
     },
     status: {

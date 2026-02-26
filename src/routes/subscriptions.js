@@ -107,9 +107,9 @@ const PLAN_DEFINITIONS = {
         billingCycle: 'monthly',
         aiAnalysisQuota: 1,
         storageAllowedMB: 100 * 1024, // 100 GB in MB
-        description: '$49/month — 100GB estimation + 1 free analysis',
+        description: '$49/month — 100GB max AI estimation + 1 free analysis',
         features: [
-            'Up to 100 GB estimation storage',
+            'Up to 100 GB max AI estimation',
             '1 free AI analysis per week/month',
             'Advanced predictive analytics',
             'Priority processing',
@@ -124,9 +124,9 @@ const PLAN_DEFINITIONS = {
         billingCycle: 'monthly',
         aiAnalysisQuota: 3,
         storageAllowedMB: 500 * 1024, // 500 GB in MB
-        description: '$99/month — 500GB estimation + 3 free analyses',
+        description: '$99/month — 500GB max AI estimation + 3 free analyses',
         features: [
-            'Up to 500 GB estimation storage',
+            'Up to 500 GB max AI estimation',
             '3 free AI analyses per week/month',
             'Full predictive analytics suite',
             'Priority processing & bulk support',

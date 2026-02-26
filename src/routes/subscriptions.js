@@ -68,15 +68,43 @@ const PLAN_DEFINITIONS = {
         type: 'contractor',
         price: 49,
         quotesAllowed: null,
-        aiEstimationRate: 0.40,
-        aiAnalysisRate: 0.08,
-        description: '$49/month - Lower AI rates',
+        description: '$49/month - Priority processing & dedicated support',
         features: [
-            '$0.40 per MB estimation (discounted)',
-            '$0.08 per MB analysis (discounted)',
             'Priority AI processing',
             'Bulk estimation support',
             'Dedicated support',
+            'Advanced project management',
+        ],
+    },
+    // ── CONTRACTOR PAY-PER-USE AI OPTIONS (separate from Pro subscription) ──
+    contractor_ai_estimation: {
+        id: 'contractor_ai_estimation',
+        label: 'AI Estimation — Pay Per Use',
+        type: 'contractor',
+        price: 0, // pay-per-use, no monthly fee
+        billingCycle: 'monthly',
+        aiEstimationRate: 0.40,
+        description: '$0.40 per MB — AI Estimation',
+        features: [
+            '$0.40 per MB AI estimation',
+            'Upload PDF drawings for instant cost estimates',
+            'Detailed trade-by-trade breakdown',
+            'Material BOQ generation',
+        ],
+    },
+    contractor_ai_analysis: {
+        id: 'contractor_ai_analysis',
+        label: 'AI Analysis — Pay Per Use',
+        type: 'contractor',
+        price: 0, // pay-per-use, no monthly fee
+        billingCycle: 'monthly',
+        aiAnalysisRate: 0.08,
+        description: '$0.08 per MB — AI Analysis',
+        features: [
+            '$0.08 per MB AI analysis',
+            'Spreadsheet & data analysis',
+            'Predictive analytics & insights',
+            'Downloadable PDF reports',
         ],
     },
     // ── AI ANALYSIS PRICING TIERS ──
@@ -577,6 +605,8 @@ router.get('/admin/stats', authenticateToken, isAdmin, async (req, res) => {
                 designer_15: allSubs.filter(s => s.plan === 'designer_15' && s.status === 'active').length,
                 designer_30: allSubs.filter(s => s.plan === 'designer_30' && s.status === 'active').length,
                 contractor_pro: allSubs.filter(s => s.plan === 'contractor_pro' && s.status === 'active').length,
+                contractor_ai_estimation: allSubs.filter(s => s.plan === 'contractor_ai_estimation' && s.status === 'active').length,
+                contractor_ai_analysis: allSubs.filter(s => s.plan === 'contractor_ai_analysis' && s.status === 'active').length,
                 ai_analysis_daily_weekly: allSubs.filter(s => s.plan === 'ai_analysis_daily_weekly' && s.status === 'active').length,
                 ai_analysis_monthly: allSubs.filter(s => s.plan === 'ai_analysis_monthly' && s.status === 'active').length,
                 ai_analysis_premium: allSubs.filter(s => s.plan === 'ai_analysis_premium' && s.status === 'active').length,

@@ -5,6 +5,8 @@ import helmet from 'helmet';
 import compression from 'compression';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
+import { createServer } from 'http';
+import { Server as SocketIOServer } from 'socket.io';
 
 // Import bcrypt for admin seeding
 import bcrypt from 'bcryptjs';
@@ -71,6 +73,16 @@ try {
 
 // NEW: Import analysis routes
 import analysisRoutes from './src/routes/analysis.js';
+
+// NEW: Import voice call routes
+let voiceCallRoutes;
+try {
+    const voiceCallModule = await import('./src/routes/voiceCalls.js');
+    voiceCallRoutes = voiceCallModule.default;
+    console.log('✅ Voice call routes imported successfully');
+} catch (error) {
+    console.warn('⚠️ Voice call routes not available:', error.message);
+}
 
 // NEW: Import announcements routes
 let announcementsRoutes;
@@ -586,6 +598,17 @@ if (subscriptionRoutes) {
     console.log('   • Admin subscription controls');
 } else {
     console.warn('⚠️ Subscription routes unavailable - subscription management disabled');
+}
+
+// Voice call routes
+if (voiceCallRoutes) {
+    app.use('/api/voice-calls', voiceCallRoutes);
+    console.log('✅ Voice call routes registered at /api/voice-calls');
+    console.log('📞 Voice Calls: ENABLED');
+    console.log('   • Call history and logs');
+    console.log('   • WebRTC signaling via Socket.IO');
+} else {
+    console.warn('⚠️ Voice call routes unavailable');
 }
 
 console.log('📦 Route registration completed');
@@ -1245,8 +1268,243 @@ process.on('unhandledRejection', (reason, promise) => {
     gracefulShutdown('UNHANDLED_REJECTION');
 });
 
+// --- Socket.IO Voice Call Signaling Server ---
+const httpServer = createServer(app);
+const io = new SocketIOServer(httpServer, {
+    cors: {
+        origin: (origin, callback) => {
+            if (!origin) return callback(null, true);
+            if (allowedOrigins.includes(origin) ||
+                origin.endsWith('.vercel.app') ||
+                origin.endsWith('.netlify.app') ||
+                origin.includes('localhost') ||
+                origin.includes('127.0.0.1')) {
+                callback(null, true);
+            } else if (process.env.NODE_ENV !== 'production') {
+                callback(null, true);
+            } else {
+                callback(new Error('Not allowed by CORS'));
+            }
+        },
+        methods: ['GET', 'POST'],
+        credentials: true
+    },
+    transports: ['websocket', 'polling']
+});
+
+// Track online users and active calls
+const onlineUsers = new Map(); // userId -> socketId
+const activeCalls = new Map(); // callId -> { callerId, calleeId, startedAt, status }
+
+io.on('connection', (socket) => {
+    console.log(`[SOCKET] Client connected: ${socket.id}`);
+
+    // User registers their identity after connecting
+    socket.on('register', (userId) => {
+        if (!userId) return;
+        onlineUsers.set(userId, socket.id);
+        socket.userId = userId;
+        console.log(`[SOCKET] User registered: ${userId} -> ${socket.id}`);
+        io.emit('user-online', { userId });
+    });
+
+    // Voice call: Initiate a call
+    socket.on('call-initiate', async (data) => {
+        const { callerId, callerName, calleeId, conversationId, callType } = data;
+        const calleeSocketId = onlineUsers.get(calleeId);
+        const callId = `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+        console.log(`[VOICE-CALL] ${callerName} (${callerId}) calling ${calleeId} | callId: ${callId}`);
+
+        // Store active call
+        activeCalls.set(callId, {
+            callerId, callerName, calleeId, conversationId,
+            callType: callType || 'voice',
+            startedAt: new Date().toISOString(),
+            status: 'ringing'
+        });
+
+        if (calleeSocketId) {
+            io.to(calleeSocketId).emit('incoming-call', {
+                callId, callerId, callerName, conversationId,
+                callType: callType || 'voice'
+            });
+            socket.emit('call-ringing', { callId, calleeId });
+        } else {
+            socket.emit('call-unavailable', { callId, calleeId, reason: 'User is offline' });
+            activeCalls.delete(callId);
+
+            // Log missed call to Firestore
+            try {
+                await adminDb.collection('call_logs').add({
+                    callId, callerId, callerName, calleeId, conversationId,
+                    callType: callType || 'voice',
+                    status: 'missed',
+                    reason: 'offline',
+                    startedAt: new Date().toISOString(),
+                    endedAt: new Date().toISOString(),
+                    duration: 0
+                });
+            } catch (err) {
+                console.error('[VOICE-CALL] Failed to log missed call:', err.message);
+            }
+        }
+    });
+
+    // Voice call: Accept
+    socket.on('call-accept', (data) => {
+        const { callId, calleeId } = data;
+        const call = activeCalls.get(callId);
+        if (!call) return;
+
+        call.status = 'connected';
+        call.connectedAt = new Date().toISOString();
+        const callerSocketId = onlineUsers.get(call.callerId);
+
+        console.log(`[VOICE-CALL] Call accepted: ${callId}`);
+        if (callerSocketId) {
+            io.to(callerSocketId).emit('call-accepted', { callId, calleeId });
+        }
+    });
+
+    // Voice call: Reject
+    socket.on('call-reject', async (data) => {
+        const { callId, calleeId, reason } = data;
+        const call = activeCalls.get(callId);
+        if (!call) return;
+
+        const callerSocketId = onlineUsers.get(call.callerId);
+        console.log(`[VOICE-CALL] Call rejected: ${callId} | reason: ${reason || 'declined'}`);
+
+        if (callerSocketId) {
+            io.to(callerSocketId).emit('call-rejected', { callId, calleeId, reason: reason || 'declined' });
+        }
+
+        // Log rejected call
+        try {
+            await adminDb.collection('call_logs').add({
+                callId, callerId: call.callerId, callerName: call.callerName,
+                calleeId: call.calleeId, conversationId: call.conversationId,
+                callType: call.callType, status: 'rejected', reason: reason || 'declined',
+                startedAt: call.startedAt, endedAt: new Date().toISOString(), duration: 0
+            });
+        } catch (err) {
+            console.error('[VOICE-CALL] Failed to log rejected call:', err.message);
+        }
+
+        activeCalls.delete(callId);
+    });
+
+    // Voice call: End
+    socket.on('call-end', async (data) => {
+        const { callId } = data;
+        const call = activeCalls.get(callId);
+        if (!call) return;
+
+        const endedAt = new Date().toISOString();
+        const duration = call.connectedAt
+            ? Math.floor((new Date(endedAt) - new Date(call.connectedAt)) / 1000)
+            : 0;
+
+        console.log(`[VOICE-CALL] Call ended: ${callId} | duration: ${duration}s`);
+
+        // Notify the other party
+        const otherUserId = socket.userId === call.callerId ? call.calleeId : call.callerId;
+        const otherSocketId = onlineUsers.get(otherUserId);
+        if (otherSocketId) {
+            io.to(otherSocketId).emit('call-ended', { callId, endedBy: socket.userId });
+        }
+
+        // Log completed call
+        try {
+            await adminDb.collection('call_logs').add({
+                callId, callerId: call.callerId, callerName: call.callerName,
+                calleeId: call.calleeId, conversationId: call.conversationId,
+                callType: call.callType, status: duration > 0 ? 'completed' : 'cancelled',
+                startedAt: call.startedAt, connectedAt: call.connectedAt || null,
+                endedAt, duration
+            });
+        } catch (err) {
+            console.error('[VOICE-CALL] Failed to log call:', err.message);
+        }
+
+        activeCalls.delete(callId);
+    });
+
+    // WebRTC signaling: Offer
+    socket.on('webrtc-offer', (data) => {
+        const { callId, targetUserId, offer } = data;
+        const targetSocketId = onlineUsers.get(targetUserId);
+        if (targetSocketId) {
+            io.to(targetSocketId).emit('webrtc-offer', { callId, offer, fromUserId: socket.userId });
+        }
+    });
+
+    // WebRTC signaling: Answer
+    socket.on('webrtc-answer', (data) => {
+        const { callId, targetUserId, answer } = data;
+        const targetSocketId = onlineUsers.get(targetUserId);
+        if (targetSocketId) {
+            io.to(targetSocketId).emit('webrtc-answer', { callId, answer, fromUserId: socket.userId });
+        }
+    });
+
+    // WebRTC signaling: ICE Candidate
+    socket.on('webrtc-ice-candidate', (data) => {
+        const { callId, targetUserId, candidate } = data;
+        const targetSocketId = onlineUsers.get(targetUserId);
+        if (targetSocketId) {
+            io.to(targetSocketId).emit('webrtc-ice-candidate', { callId, candidate, fromUserId: socket.userId });
+        }
+    });
+
+    // Check if user is online
+    socket.on('check-online', (data) => {
+        const { userId } = data;
+        const isOnline = onlineUsers.has(userId);
+        socket.emit('user-online-status', { userId, isOnline });
+    });
+
+    // Disconnect
+    socket.on('disconnect', async () => {
+        console.log(`[SOCKET] Client disconnected: ${socket.id}`);
+        if (socket.userId) {
+            onlineUsers.delete(socket.userId);
+            io.emit('user-offline', { userId: socket.userId });
+
+            // End any active calls for this user
+            for (const [callId, call] of activeCalls.entries()) {
+                if (call.callerId === socket.userId || call.calleeId === socket.userId) {
+                    const otherUserId = socket.userId === call.callerId ? call.calleeId : call.callerId;
+                    const otherSocketId = onlineUsers.get(otherUserId);
+                    if (otherSocketId) {
+                        io.to(otherSocketId).emit('call-ended', { callId, endedBy: socket.userId, reason: 'disconnected' });
+                    }
+
+                    try {
+                        const endedAt = new Date().toISOString();
+                        const duration = call.connectedAt
+                            ? Math.floor((new Date(endedAt) - new Date(call.connectedAt)) / 1000)
+                            : 0;
+                        await adminDb.collection('call_logs').add({
+                            callId, callerId: call.callerId, callerName: call.callerName,
+                            calleeId: call.calleeId, conversationId: call.conversationId,
+                            callType: call.callType, status: 'disconnected',
+                            startedAt: call.startedAt, connectedAt: call.connectedAt || null,
+                            endedAt, duration
+                        });
+                    } catch (err) {
+                        console.error('[VOICE-CALL] Failed to log disconnected call:', err.message);
+                    }
+                    activeCalls.delete(callId);
+                }
+            }
+        }
+    });
+});
+
 // --- Start Server ---
-const server = app.listen(PORT, '0.0.0.0', () => {
+const server = httpServer.listen(PORT, '0.0.0.0', () => {
     console.log('🎉 SteelConnect Backend v2.1 Started Successfully');
     console.log(`🔗 Server running on port ${PORT}`);
     console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
@@ -1287,6 +1545,10 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     }
 
     console.log(`   Analysis: http://localhost:${PORT}/api/analysis/*`);
+    if (voiceCallRoutes) {
+        console.log(`   Voice Calls: http://localhost:${PORT}/api/voice-calls/*`);
+    }
+    console.log(`   Socket.IO: ws://localhost:${PORT} (WebRTC signaling)`);
 
     console.log('\n🚀 SteelConnect Backend v2.1 is ready!');
     console.log('📋 Profile Management System: ACTIVE');
@@ -1313,6 +1575,11 @@ const server = app.listen(PORT, '0.0.0.0', () => {
         console.log('📧 Login Email Notifications: ❌ DISABLED (missing RESEND_API_KEY)');
     }
     
+    console.log('📞 Voice Call System: ✅ ACTIVE');
+    console.log('   • WebRTC signaling via Socket.IO');
+    console.log('   • Call history and logging');
+    console.log('   • Online presence tracking');
+
     console.log('🔍 Check logs above for any missing features or configurations');
     console.log('');
 });

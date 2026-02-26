@@ -1289,12 +1289,23 @@ const io = new SocketIOServer(httpServer, {
         methods: ['GET', 'POST'],
         credentials: true
     },
-    transports: ['websocket', 'polling']
+    transports: ['websocket', 'polling'],
+    pingInterval: 25000,
+    pingTimeout: 20000
 });
 
 // Track online users and active calls
 const onlineUsers = new Map(); // userId -> socketId
 const activeCalls = new Map(); // callId -> { callerId, calleeId, startedAt, status }
+
+// Active calls count endpoint for admin monitoring
+app.get('/api/voice-calls/active-count', (req, res) => {
+    res.json({
+        success: true,
+        activeCalls: activeCalls.size,
+        onlineUsers: onlineUsers.size
+    });
+});
 
 io.on('connection', (socket) => {
     console.log(`[SOCKET] Client connected: ${socket.id}`);
@@ -1330,6 +1341,23 @@ io.on('connection', (socket) => {
                 callType: callType || 'voice'
             });
             socket.emit('call-ringing', { callId, calleeId });
+
+            // Auto-timeout unanswered calls after 30 seconds
+            setTimeout(() => {
+                const call = activeCalls.get(callId);
+                if (call && call.status === 'ringing') {
+                    const callerSid = onlineUsers.get(call.callerId);
+                    const calleeSid = onlineUsers.get(call.calleeId);
+                    if (callerSid) io.to(callerSid).emit('call-timeout', { callId });
+                    if (calleeSid) io.to(calleeSid).emit('call-timeout', { callId });
+                    activeCalls.delete(callId);
+                    adminDb.collection('call_logs').add({
+                        callId, callerId, callerName, calleeId, conversationId,
+                        callType: callType || 'voice', status: 'missed', reason: 'no_answer',
+                        startedAt: new Date().toISOString(), endedAt: new Date().toISOString(), duration: 0
+                    }).catch(err => console.error('[VOICE-CALL] Failed to log timeout:', err.message));
+                }
+            }, 30000);
         } else {
             socket.emit('call-unavailable', { callId, calleeId, reason: 'User is offline' });
             activeCalls.delete(callId);

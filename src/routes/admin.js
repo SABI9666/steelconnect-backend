@@ -284,6 +284,18 @@ router.post('/users/:userId/send-reminder', async (req, res) => {
             `
         });
 
+        // Create in-app notification so the reminder appears in the user's inbox
+        await NotificationService.createNotification(
+            userId,
+            'Complete Your Profile',
+            'Your profile is incomplete. Complete it now to unlock full access to all SteelConnect features.',
+            'profile',
+            {
+                action: 'profile_reminder',
+                userType
+            }
+        );
+
         // Update user doc with reminder sent timestamp
         await adminDb.collection('users').doc(userId).update({
             lastReminderSent: new Date().toISOString(),

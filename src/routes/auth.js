@@ -1046,7 +1046,7 @@ router.post('/google', async (req, res) => {
                 });
             }
 
-            // Update last login and Google profile picture if not set
+            // Update last login and Google profile picture (fire-and-forget — don't block login response)
             const updateData = {
                 lastLogin: new Date().toISOString(),
                 lastLoginIP: clientIP,
@@ -1055,7 +1055,9 @@ router.post('/google', async (req, res) => {
             if (googleUser.picture && !userData.profilePicture) {
                 updateData.profilePicture = googleUser.picture;
             }
-            await adminDb.collection('users').doc(userId).update(updateData);
+            adminDb.collection('users').doc(userId).update(updateData).catch(err => {
+                console.error('Failed to update last login for Google user:', err.message);
+            });
 
             console.log(`Google login successful for existing user: ${googleUser.email}`);
         } else {
@@ -1104,31 +1106,29 @@ router.post('/google', async (req, res) => {
 
             console.log(`New ${type} registered via Google: ${googleUser.email} (ID: ${userId})`);
 
-            // Send notification email to admin about new Google sign-up
+            // Send notification email to admin about new Google sign-up (fire-and-forget to avoid blocking response)
             const ADMIN_EMAIL = 'sabincn676@gmail.com';
-            try {
-                await sendGenericEmail({
-                    to: ADMIN_EMAIL,
-                    subject: `New Google Sign-Up: ${googleUser.email} (${type.charAt(0).toUpperCase() + type.slice(1)})`,
-                    html: `
-                        <h2 style="font-size:20px; font-weight:700; color:#0f172a; margin:0 0 16px 0;">New Google Sign-Up Registration</h2>
-                        <p style="font-size:15px; color:#334155; margin:0 0 14px 0; line-height:1.7;">A new user has registered on SteelConnect via Google Sign-In.</p>
-                        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; margin:16px 0;">
-                            <tr><td style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9; width:40%;">Name</td><td style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;">${googleUser.name}</td></tr>
-                            <tr><td style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9; width:40%;">Email</td><td style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;">${googleUser.email}</td></tr>
-                            <tr><td style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9; width:40%;">Role</td><td style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;">${type.charAt(0).toUpperCase() + type.slice(1)}</td></tr>
-                            <tr><td style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9; width:40%;">Auth Method</td><td style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;">Google Sign-In</td></tr>
-                            <tr><td style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9; width:40%;">Registered At</td><td style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;">${new Date().toLocaleString()}</td></tr>
-                        </table>
-                        <p style="font-size:15px; color:#334155; margin:0 0 14px 0; line-height:1.7;">The user will be directed to complete their profile. You will receive another notification when they submit their profile for review.</p>
-                        <p style="margin:20px 0;"><a href="https://steelconnectapp.com/admin" style="display:inline-block; background:#2563eb; color:#ffffff; padding:12px 28px; border-radius:6px; text-decoration:none; font-weight:600; font-size:14px;">View in Admin Panel</a></p>
-                    `
-                });
+            sendGenericEmail({
+                to: ADMIN_EMAIL,
+                subject: `New Google Sign-Up: ${googleUser.email} (${type.charAt(0).toUpperCase() + type.slice(1)})`,
+                html: `
+                    <h2 style="font-size:20px; font-weight:700; color:#0f172a; margin:0 0 16px 0;">New Google Sign-Up Registration</h2>
+                    <p style="font-size:15px; color:#334155; margin:0 0 14px 0; line-height:1.7;">A new user has registered on SteelConnect via Google Sign-In.</p>
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; margin:16px 0;">
+                        <tr><td style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9; width:40%;">Name</td><td style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;">${googleUser.name}</td></tr>
+                        <tr><td style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9; width:40%;">Email</td><td style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;">${googleUser.email}</td></tr>
+                        <tr><td style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9; width:40%;">Role</td><td style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;">${type.charAt(0).toUpperCase() + type.slice(1)}</td></tr>
+                        <tr><td style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9; width:40%;">Auth Method</td><td style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;">Google Sign-In</td></tr>
+                        <tr><td style="padding:10px 14px; font-size:14px; color:#64748b; font-weight:500; border-bottom:1px solid #f1f5f9; width:40%;">Registered At</td><td style="padding:10px 14px; font-size:14px; color:#1e293b; border-bottom:1px solid #f1f5f9;">${new Date().toLocaleString()}</td></tr>
+                    </table>
+                    <p style="font-size:15px; color:#334155; margin:0 0 14px 0; line-height:1.7;">The user will be directed to complete their profile. You will receive another notification when they submit their profile for review.</p>
+                    <p style="margin:20px 0;"><a href="https://steelconnectapp.com/admin" style="display:inline-block; background:#2563eb; color:#ffffff; padding:12px 28px; border-radius:6px; text-decoration:none; font-weight:600; font-size:14px;">View in Admin Panel</a></p>
+                `
+            }).then(() => {
                 console.log(`Admin notification sent for new Google user: ${googleUser.email}`);
-            } catch (emailError) {
+            }).catch((emailError) => {
                 console.error('Failed to send admin notification for Google signup:', emailError.message);
-                // Don't block registration if email fails
-            }
+            });
         }
 
         // Generate JWT token (skip OTP for Google sign-in since Google already verified identity)

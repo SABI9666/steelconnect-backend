@@ -14,15 +14,15 @@ router.get('/history', async (req, res) => {
         const limit = parseInt(req.query.limit) || 50;
 
         // Fetch calls where user was either caller or callee
+        // Note: Avoid combining .where() + .orderBy() on different fields
+        // as it requires Firestore composite indexes. Sort in JS instead.
         const [callerSnap, calleeSnap] = await Promise.all([
             adminDb.collection('call_logs')
                 .where('callerId', '==', userId)
-                .orderBy('startedAt', 'desc')
                 .limit(limit)
                 .get(),
             adminDb.collection('call_logs')
                 .where('calleeId', '==', userId)
-                .orderBy('startedAt', 'desc')
                 .limit(limit)
                 .get()
         ]);
@@ -53,7 +53,6 @@ router.get('/conversation/:conversationId', async (req, res) => {
 
         const snapshot = await adminDb.collection('call_logs')
             .where('conversationId', '==', conversationId)
-            .orderBy('startedAt', 'desc')
             .limit(20)
             .get();
 
@@ -64,6 +63,9 @@ router.get('/conversation/:conversationId', async (req, res) => {
                 calls.push({ id: doc.id, ...data });
             }
         });
+
+        // Sort by startedAt descending in JS to avoid needing composite index
+        calls.sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt));
 
         res.json({ success: true, data: calls });
     } catch (error) {

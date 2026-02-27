@@ -1294,16 +1294,22 @@ const io = new SocketIOServer(httpServer, {
     pingTimeout: 20000
 });
 
-// Track online users and active calls
+// Track online users, presence statuses, and active calls
 const onlineUsers = new Map(); // userId -> socketId
+const userStatuses = new Map(); // userId -> 'online' | 'away' | 'busy' | 'offline'
 const activeCalls = new Map(); // callId -> { callerId, calleeId, startedAt, status }
 
 // Active calls count endpoint for admin monitoring
 app.get('/api/voice-calls/active-count', (req, res) => {
+    const statusList = [];
+    for (const [userId, status] of userStatuses.entries()) {
+        statusList.push({ userId, status });
+    }
     res.json({
         success: true,
         activeCalls: activeCalls.size,
-        onlineUsers: onlineUsers.size
+        onlineUsers: onlineUsers.size,
+        userStatuses: statusList
     });
 });
 
@@ -1314,18 +1320,49 @@ io.on('connection', (socket) => {
     socket.on('register', (userId) => {
         if (!userId) return;
         onlineUsers.set(userId, socket.id);
+        const previousStatus = userStatuses.get(userId);
+        if (!previousStatus || previousStatus === 'offline') {
+            userStatuses.set(userId, 'online');
+        }
         socket.userId = userId;
-        console.log(`[SOCKET] User registered: ${userId} -> ${socket.id}`);
-        io.emit('user-online', { userId });
+        console.log(`[SOCKET] User registered: ${userId} -> ${socket.id} | status: ${userStatuses.get(userId)}`);
+        io.emit('user-online', { userId, status: userStatuses.get(userId) });
+    });
+
+    // User sets their presence status
+    socket.on('set-status', (data) => {
+        const { status } = data;
+        if (!socket.userId) return;
+        const validStatuses = ['online', 'away', 'busy', 'offline'];
+        if (!validStatuses.includes(status)) return;
+        userStatuses.set(socket.userId, status);
+        console.log(`[SOCKET] User ${socket.userId} set status: ${status}`);
+        io.emit('user-status-changed', { userId: socket.userId, status });
     });
 
     // Voice call: Initiate a call
     socket.on('call-initiate', async (data) => {
         const { callerId, callerName, calleeId, conversationId, callType } = data;
         const calleeSocketId = onlineUsers.get(calleeId);
+        const calleeStatus = userStatuses.get(calleeId) || 'offline';
         const callId = `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-        console.log(`[VOICE-CALL] ${callerName} (${callerId}) calling ${calleeId} | callId: ${callId}`);
+        console.log(`[VOICE-CALL] ${callerName} (${callerId}) calling ${calleeId} | callId: ${callId} | calleeStatus: ${calleeStatus}`);
+
+        // Block calls to busy users
+        if (calleeStatus === 'busy') {
+            socket.emit('call-rejected', { callId, calleeId, reason: 'busy', status: 'busy' });
+            try {
+                await adminDb.collection('call_logs').add({
+                    callId, callerId, callerName, calleeId, conversationId,
+                    callType: callType || 'voice', status: 'rejected', reason: 'busy',
+                    startedAt: new Date().toISOString(), endedAt: new Date().toISOString(), duration: 0
+                });
+            } catch (err) {
+                console.error('[VOICE-CALL] Failed to log busy rejection:', err.message);
+            }
+            return;
+        }
 
         // Store active call
         activeCalls.set(callId, {
@@ -1486,11 +1523,12 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Check if user is online
+    // Check if user is online and get their status
     socket.on('check-online', (data) => {
         const { userId } = data;
         const isOnline = onlineUsers.has(userId);
-        socket.emit('user-online-status', { userId, isOnline });
+        const status = userStatuses.get(userId) || 'offline';
+        socket.emit('user-online-status', { userId, isOnline, status });
     });
 
     // Disconnect
@@ -1498,7 +1536,9 @@ io.on('connection', (socket) => {
         console.log(`[SOCKET] Client disconnected: ${socket.id}`);
         if (socket.userId) {
             onlineUsers.delete(socket.userId);
+            userStatuses.set(socket.userId, 'offline');
             io.emit('user-offline', { userId: socket.userId });
+            io.emit('user-status-changed', { userId: socket.userId, status: 'offline' });
 
             // End any active calls for this user
             for (const [callId, call] of activeCalls.entries()) {

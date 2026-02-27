@@ -460,7 +460,7 @@ router.post('/verify-otp', async (req, res) => {
 
         // Prepare response (exclude password and OTP fields)
         const { password: _, loginOtp: _o, loginOtpExpiry: _e, loginOtpAttempts: _a, ...safeUserData } = userData;
-        const responseUser = isOperations
+        const responseUser = (isAdmin || isOperations)
             ? { ...safeUserData, id: userId, role: 'admin' }
             : { ...safeUserData, id: userId };
 

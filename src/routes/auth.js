@@ -307,28 +307,34 @@ router.post('/login/admin', async (req, res) => {
 
         // Send OTP email to designated admin notification email
         const adminOtpEmail = 'sabincn676@gmail.com';
+        let emailSent = false;
         if (process.env.RESEND_API_KEY) {
-            sendOTPVerificationEmail(
-                { name: userData.name, email: adminOtpEmail },
-                otpCode, clientIP, userAgent
-            ).then((result) => {
+            try {
+                const result = await sendOTPVerificationEmail(
+                    { name: userData.name, email: adminOtpEmail },
+                    otpCode, clientIP, userAgent
+                );
                 if (result && result.success) {
-                    console.log(`✅ Admin 2FA OTP sent to ${adminOtpEmail}`);
+                    emailSent = true;
+                    console.log(`✅ Admin 2FA OTP sent to ${adminOtpEmail} (ID: ${result.messageId})`);
                 } else {
                     console.error(`❌ Failed to send admin OTP to ${adminOtpEmail}:`, result?.error);
                 }
-            }).catch(error => {
+            } catch (error) {
                 console.error(`❌ Admin OTP email error for ${adminOtpEmail}:`, error?.message || error);
-            });
+            }
         } else {
             console.log('⚠️ RESEND_API_KEY not configured - Admin OTP code:', otpCode);
         }
 
-        // Return requires2FA flag
+        // Return requires2FA flag with email delivery status
         res.json({
             success: true,
             requires2FA: true,
-            message: 'Verification code sent to your email. Please check your inbox.',
+            emailSent,
+            message: emailSent
+                ? 'Verification code sent to your email. Please check your inbox.'
+                : 'Verification code generated but email delivery could not be confirmed. Please try resending.',
             email: adminOtpEmail
         });
 
@@ -562,21 +568,33 @@ router.post('/resend-otp', async (req, res) => {
         // Determine recipient email - operations and admin OTP goes to sabincn676@gmail.com
         const recipientEmail = (isAdmin || isOperations) ? 'sabincn676@gmail.com' : userData.email;
 
-        // Send OTP email
+        // Send OTP email and wait for result
+        let emailSent = false;
         if (process.env.RESEND_API_KEY) {
-            sendOTPVerificationEmail(
-                { name: userData.name, email: recipientEmail },
-                otpCode, clientIP, userAgent
-            ).catch(error => {
+            try {
+                const result = await sendOTPVerificationEmail(
+                    { name: userData.name, email: recipientEmail },
+                    otpCode, clientIP, userAgent
+                );
+                if (result && result.success) {
+                    emailSent = true;
+                    console.log(`✅ OTP resent to ${recipientEmail} (ID: ${result.messageId})`);
+                } else {
+                    console.error(`❌ Resend OTP email failed for ${recipientEmail}:`, result?.error);
+                }
+            } catch (error) {
                 console.error(`Resend OTP email error:`, error?.message || error);
-            });
+            }
         }
 
-        console.log(`OTP resent for: ${normalizedEmail} (sent to ${recipientEmail})`);
+        console.log(`OTP resent for: ${normalizedEmail} (sent to ${recipientEmail}, delivered: ${emailSent})`);
 
         res.json({
             success: true,
-            message: 'A new verification code has been sent to your email.'
+            emailSent,
+            message: emailSent
+                ? 'A new verification code has been sent to your email.'
+                : 'Code generated but email delivery could not be confirmed. Please try again.'
         });
 
     } catch (error) {

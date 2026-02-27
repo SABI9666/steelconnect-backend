@@ -228,6 +228,31 @@ router.patch('/users/:userId/status', async (req, res) => {
     }
 });
 
+// Require profile update — admin forces user to re-complete their profile
+router.post('/users/:userId/require-profile-update', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const { reason } = req.body;
+        const userDoc = await adminDb.collection('users').doc(userId).get();
+        if (!userDoc.exists) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+        const userData = userDoc.data();
+        await adminDb.collection('users').doc(userId).update({
+            profileStatus: 'incomplete',
+            profileCompleted: false,
+            adminComments: reason || 'Admin requested profile update.',
+            hasAdminComments: true,
+            updatedAt: new Date().toISOString()
+        });
+        console.log(`Admin required profile update for user ${userData.email} (ID: ${userId}). Reason: ${reason || 'N/A'}`);
+        res.json({ success: true, message: `Profile update required for ${userData.name || userData.email}. They will be prompted to complete their profile on next login.` });
+    } catch (error) {
+        console.error("Require Profile Update Error:", error);
+        res.status(500).json({ success: false, message: 'Error updating user profile status' });
+    }
+});
+
 // Send profile completion reminder email
 router.post('/users/:userId/send-reminder', async (req, res) => {
     try {

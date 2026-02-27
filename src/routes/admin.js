@@ -148,6 +148,8 @@ router.get('/users', async (req, res) => {
                 isBlocked: data.isBlocked || false,
                 canSendMessages: data.canSendMessages !== false,
                 profileStatus: data.profileStatus || 'incomplete',
+                authProvider: data.authProvider || 'email',
+                profilePicture: data.profilePicture || null,
                 createdAt: data.createdAt
             };
         });
@@ -184,7 +186,8 @@ router.get('/incomplete-users', async (req, res) => {
                 isBlocked: data.isBlocked || false,
                 canAccess: data.canAccess !== false,
                 loginCount: data.loginCount || 0,
-                registrationMethod: data.registrationMethod || 'email',
+                authProvider: data.authProvider || 'email',
+                profilePicture: data.profilePicture || null,
                 pendingLoginAgent: data.pendingLoginAgent || null,
             });
         });

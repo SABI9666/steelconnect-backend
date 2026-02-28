@@ -1291,7 +1291,11 @@ const io = new SocketIOServer(httpServer, {
     },
     transports: ['websocket', 'polling'],
     pingInterval: 25000,
-    pingTimeout: 20000
+    pingTimeout: 30000,
+    // Improved settings for global cross-region connectivity
+    connectTimeout: 20000,
+    maxHttpBufferSize: 1e6,
+    allowUpgrades: true
 });
 
 // Track online users, presence statuses, and active calls
@@ -1310,6 +1314,58 @@ app.get('/api/voice-calls/active-count', (req, res) => {
         activeCalls: activeCalls.size,
         onlineUsers: onlineUsers.size,
         userStatuses: statusList
+    });
+});
+
+// TURN credentials endpoint for global call connectivity
+// Returns ICE server configuration with globally distributed STUN/TURN servers
+// Supports cross-region calls: India, UK, US, Europe, Asia, Middle East, etc.
+app.get('/api/voice-calls/turn-credentials', (req, res) => {
+    // Use environment-configured TURN credentials if available, otherwise use defaults
+    const turnUsername = process.env.TURN_USERNAME || 'e8dd65b92f4f1be4b7de7118';
+    const turnCredential = process.env.TURN_CREDENTIAL || '4F0VEYoAbOCLpmhH';
+
+    const iceServers = [
+        // Globally distributed STUN servers for NAT discovery
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' },
+        { urls: 'stun:stun.relay.metered.ca:80' },
+        { urls: 'stun:stun.stunprotocol.org:3478' },
+        // Metered.ca global TURN relay servers (covers US, Europe, Asia, India, Australia)
+        // UDP on port 80 - works through most firewalls
+        {
+            urls: 'turn:global.relay.metered.ca:80',
+            username: turnUsername,
+            credential: turnCredential
+        },
+        // TCP on port 80 - fallback for UDP-blocked networks
+        {
+            urls: 'turn:global.relay.metered.ca:80?transport=tcp',
+            username: turnUsername,
+            credential: turnCredential
+        },
+        // TLS on port 443 - works through strict corporate firewalls
+        {
+            urls: 'turn:global.relay.metered.ca:443',
+            username: turnUsername,
+            credential: turnCredential
+        },
+        // TURNS (TURN over TLS) on port 443 - maximum compatibility
+        // Essential for India/Asia where ISPs often block non-standard ports
+        {
+            urls: 'turns:global.relay.metered.ca:443?transport=tcp',
+            username: turnUsername,
+            credential: turnCredential
+        }
+    ];
+
+    res.json({
+        success: true,
+        iceServers,
+        ttl: 86400 // Credentials valid for 24 hours
     });
 });
 
@@ -1496,12 +1552,18 @@ io.on('connection', (socket) => {
         activeCalls.delete(callId);
     });
 
-    // WebRTC signaling: Offer
+    // WebRTC signaling: Offer (supports ICE restart for cross-region recovery)
     socket.on('webrtc-offer', (data) => {
-        const { callId, targetUserId, offer } = data;
+        const { callId, targetUserId, offer, iceRestart } = data;
         const targetSocketId = onlineUsers.get(targetUserId);
         if (targetSocketId) {
-            io.to(targetSocketId).emit('webrtc-offer', { callId, offer, fromUserId: socket.userId });
+            io.to(targetSocketId).emit('webrtc-offer', {
+                callId, offer, fromUserId: socket.userId,
+                iceRestart: iceRestart || false
+            });
+            if (iceRestart) {
+                console.log(`[VOICE-CALL] ICE restart offer forwarded: ${callId}`);
+            }
         }
     });
 
@@ -1584,6 +1646,7 @@ const server = httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`   JWT Secret: ${process.env.JWT_SECRET ? '✅ Configured' : '❌ Missing'}`);
     console.log(`   CORS Origins: ${process.env.CORS_ORIGIN ? '✅ Configured' : '⚠️ Using defaults'}`);
     console.log(`   Resend API: ${process.env.RESEND_API_KEY ? '✅ Configured' : '⚠️ Missing'}`);
+    console.log(`   TURN Server: ${process.env.TURN_USERNAME ? '✅ Custom TURN configured' : '⚠️ Using default TURN (Metered.ca free tier)'}`);
     
     const emailDomain = process.env.EMAIL_FROM_DOMAIN || 'noreply@steelconnectapp.com';
     const isVerifiedDomain = emailDomain.includes('steelconnectapp.com');

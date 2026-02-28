@@ -23,6 +23,7 @@ import { runMultiPassEstimation } from '../services/multiPassEstimationEngine.js
 import { extractMeasurementsFromPDFs } from '../services/pdfMeasurementExtractor.js';
 import { generateCacheKey, getCachedEstimate, setCachedEstimate, getCacheStats } from '../services/estimationCache.js';
 import { generateQuickEstimate } from '../services/quickEstimationEngine.js';
+import { NotificationService } from '../services/NotificationService.js';
 
 const router = express.Router();
 
@@ -218,6 +219,23 @@ async function generateAIEstimateBackground(estimationId, projectInfo, fileNames
 
     await adminDb.collection('estimations').doc(estimationId).update(updateData);
     console.log(`[BACKGROUND] AI estimate saved for estimation ${estimationId}`);
+
+    // Send in-app notification to contractor that AI estimate is ready
+    try {
+      const estDoc = await adminDb.collection('estimations').doc(estimationId).get();
+      if (estDoc.exists) {
+        const estData = estDoc.data();
+        await NotificationService.notifyEstimationCompleted({
+          id: estimationId,
+          contractorId: estData.contractorId,
+          projectTitle: estData.projectTitle || projectInfo.projectTitle,
+          estimatedAmount: updateData.estimatedAmount,
+          resultFile: estData.resultFile || null
+        });
+      }
+    } catch (notifErr) {
+      console.error(`[BACKGROUND] Failed to send AI completion notification: ${notifErr.message}`);
+    }
   } catch (error) {
     console.error(`[BACKGROUND] AI estimate generation failed for ${estimationId}:`, error.message);
     // Update status so frontend knows AI generation failed
@@ -2189,6 +2207,20 @@ router.post('/ai/generate', authenticateToken, async (req, res) => {
             }
         } catch (saveErr) {
             console.error('[AI-ESTIMATION] Could not save estimation:', saveErr.message);
+        }
+
+        // Send in-app notification to contractor that AI estimate is ready
+        try {
+            const estimatedAmount = estimate?.summary?.grandTotal || estimate?.summary?.totalEstimate || 0;
+            await NotificationService.notifyEstimationCompleted({
+                id: savedEstimationId,
+                contractorId: req.user.userId,
+                projectTitle,
+                estimatedAmount,
+                resultFile: null
+            });
+        } catch (notifErr) {
+            console.error('[AI-ESTIMATION] Failed to send notification:', notifErr.message);
         }
 
         const responseData = {

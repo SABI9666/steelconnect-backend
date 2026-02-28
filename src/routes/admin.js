@@ -80,6 +80,20 @@ router.get('/dashboard', async (req, res) => {
             }
         });
 
+        // Estimation stats
+        let estimationStats = { total: 0, pending: 0, completed: 0 };
+        try {
+            const estimationSnapshot = await adminDb.collection('estimations').get();
+            estimationSnapshot.forEach(doc => {
+                const data = doc.data();
+                estimationStats.total++;
+                if (data.status === 'pending') estimationStats.pending++;
+                else if (data.status === 'completed') estimationStats.completed++;
+            });
+        } catch (e) {
+            console.warn('Estimation stats query failed:', e.message);
+        }
+
         // Community Posts stats
         let communityStats = { total: 0, pending: 0, approved: 0, rejected: 0 };
         try {
@@ -121,6 +135,9 @@ router.get('/dashboard', async (req, res) => {
                 totalBusinessAnalyticsRequests: analysisStats.total,
                 pendingBusinessAnalyticsRequests: analysisStats.pending,
                 completedBusinessAnalyticsRequests: analysisStats.completed,
+                totalEstimations: estimationStats.total,
+                pendingEstimations: estimationStats.pending,
+                completedEstimations: estimationStats.completed,
                 pendingCommunityPosts: communityStats.pending,
                 totalCommunityPosts: communityStats.total,
                 approvedCommunityPosts: communityStats.approved,

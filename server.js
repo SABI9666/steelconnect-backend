@@ -1319,54 +1319,101 @@ app.get('/api/voice-calls/active-count', (req, res) => {
 
 // TURN credentials endpoint for global call connectivity
 // Returns ICE server configuration with globally distributed STUN/TURN servers
-// Supports cross-region calls: India, UK, US, Europe, Asia, Middle East, etc.
-app.get('/api/voice-calls/turn-credentials', (req, res) => {
-    // Use environment-configured TURN credentials if available, otherwise use defaults
-    const turnUsername = process.env.TURN_USERNAME || 'e8dd65b92f4f1be4b7de7118';
-    const turnCredential = process.env.TURN_CREDENTIAL || '4F0VEYoAbOCLpmhH';
-
-    const iceServers = [
-        // Globally distributed STUN servers for NAT discovery
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun3.l.google.com:19302' },
-        { urls: 'stun:stun4.l.google.com:19302' },
-        { urls: 'stun:stun.relay.metered.ca:80' },
-        { urls: 'stun:stun.stunprotocol.org:3478' },
-        // Metered.ca global TURN relay servers (covers US, Europe, Asia, India, Australia)
-        // UDP on port 80 - works through most firewalls
-        {
-            urls: 'turn:global.relay.metered.ca:80',
-            username: turnUsername,
-            credential: turnCredential
-        },
-        // TCP on port 80 - fallback for UDP-blocked networks
-        {
-            urls: 'turn:global.relay.metered.ca:80?transport=tcp',
-            username: turnUsername,
-            credential: turnCredential
-        },
-        // TLS on port 443 - works through strict corporate firewalls
-        {
-            urls: 'turn:global.relay.metered.ca:443',
-            username: turnUsername,
-            credential: turnCredential
-        },
-        // TURNS (TURN over TLS) on port 443 - maximum compatibility
-        // Essential for India/Asia where ISPs often block non-standard ports
-        {
-            urls: 'turns:global.relay.metered.ca:443?transport=tcp',
-            username: turnUsername,
-            credential: turnCredential
+// Supports cross-region calls: India <-> UK, US <-> Asia, Europe <-> Middle East, etc.
+//
+// Configuration priority:
+// 1. METERED_API_KEY env var -> fetches fresh credentials from Metered.ca API
+// 2. TURN_USERNAME + TURN_CREDENTIAL env vars -> uses custom TURN server
+// 3. Built-in defaults
+app.get('/api/voice-calls/turn-credentials', async (req, res) => {
+    try {
+        // Option 1: Use Metered.ca API for dynamic TURN credentials (most reliable)
+        if (process.env.METERED_API_KEY) {
+            try {
+                const meteredResponse = await fetch(
+                    `https://steelconnect.metered.live/api/v1/turn/credentials?apiKey=${process.env.METERED_API_KEY}`
+                );
+                if (meteredResponse.ok) {
+                    const meteredServers = await meteredResponse.json();
+                    console.log('[TURN] Fetched fresh credentials from Metered.ca API');
+                    return res.json({
+                        success: true,
+                        iceServers: [
+                            { urls: 'stun:stun.l.google.com:19302' },
+                            { urls: 'stun:stun1.l.google.com:19302' },
+                            ...meteredServers
+                        ],
+                        ttl: 86400,
+                        source: 'metered-api'
+                    });
+                }
+            } catch (meteredErr) {
+                console.warn('[TURN] Metered API fetch failed, using fallback:', meteredErr.message);
+            }
         }
-    ];
 
-    res.json({
-        success: true,
-        iceServers,
-        ttl: 86400 // Credentials valid for 24 hours
-    });
+        // Option 2: Use environment-configured TURN credentials
+        const turnUsername = process.env.TURN_USERNAME || 'e8dd65b92f4f1be4b7de7118';
+        const turnCredential = process.env.TURN_CREDENTIAL || '4F0VEYoAbOCLpmhH';
+        const turnServer = process.env.TURN_SERVER || 'global.relay.metered.ca';
+
+        const iceServers = [
+            // Globally distributed STUN servers for NAT discovery
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+            { urls: 'stun:stun3.l.google.com:19302' },
+            { urls: 'stun:stun4.l.google.com:19302' },
+            // TURN relay servers - all transport variations for maximum compatibility
+            // UDP on port 80 - standard path, works on most networks
+            {
+                urls: `turn:${turnServer}:80`,
+                username: turnUsername,
+                credential: turnCredential
+            },
+            // TCP on port 80 - for networks that block UDP
+            {
+                urls: `turn:${turnServer}:80?transport=tcp`,
+                username: turnUsername,
+                credential: turnCredential
+            },
+            // UDP on port 443 - passes through HTTPS-only firewalls
+            {
+                urls: `turn:${turnServer}:443`,
+                username: turnUsername,
+                credential: turnCredential
+            },
+            // TURNS (TURN over TLS) on port 443/TCP - maximum firewall compatibility
+            // Essential for India (Jio, Airtel, BSNL), Middle East, China
+            {
+                urls: `turns:${turnServer}:443?transport=tcp`,
+                username: turnUsername,
+                credential: turnCredential
+            }
+        ];
+
+        res.json({
+            success: true,
+            iceServers,
+            ttl: 86400,
+            source: process.env.TURN_USERNAME ? 'custom' : 'default'
+        });
+    } catch (error) {
+        console.error('[TURN] Error generating credentials:', error.message);
+        // Return minimal STUN-only config as last resort
+        res.json({
+            success: true,
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' },
+                { urls: 'stun:stun3.l.google.com:19302' },
+                { urls: 'stun:stun4.l.google.com:19302' }
+            ],
+            ttl: 86400,
+            source: 'stun-only-fallback'
+        });
+    }
 });
 
 io.on('connection', (socket) => {
@@ -1646,7 +1693,7 @@ const server = httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`   JWT Secret: ${process.env.JWT_SECRET ? '✅ Configured' : '❌ Missing'}`);
     console.log(`   CORS Origins: ${process.env.CORS_ORIGIN ? '✅ Configured' : '⚠️ Using defaults'}`);
     console.log(`   Resend API: ${process.env.RESEND_API_KEY ? '✅ Configured' : '⚠️ Missing'}`);
-    console.log(`   TURN Server: ${process.env.TURN_USERNAME ? '✅ Custom TURN configured' : '⚠️ Using default TURN (Metered.ca free tier)'}`);
+    console.log(`   TURN Server: ${process.env.METERED_API_KEY ? '✅ Metered.ca API configured' : process.env.TURN_USERNAME ? '✅ Custom TURN configured' : '⚠️ Using default TURN credentials'}`);
     
     const emailDomain = process.env.EMAIL_FROM_DOMAIN || 'noreply@steelconnectapp.com';
     const isVerifiedDomain = emailDomain.includes('steelconnectapp.com');

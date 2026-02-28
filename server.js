@@ -1630,7 +1630,14 @@ io.on('connection', (socket) => {
         const calleeStatus = userStatuses.get(calleeId) || 'offline';
         const callId = `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-        console.log(`[VOICE-CALL] ${callerName} (${callerId}) calling ${calleeId} | callId: ${callId} | calleeStatus: ${calleeStatus}`);
+        // Ensure caller is registered in onlineUsers (safety net for race conditions)
+        if (callerId && (!onlineUsers.has(callerId) || onlineUsers.get(callerId) !== socket.id)) {
+            console.log(`[VOICE-CALL] Fixing caller registration: ${callerId} -> ${socket.id}`);
+            onlineUsers.set(callerId, socket.id);
+            socket.userId = callerId;
+        }
+
+        console.log(`[VOICE-CALL] ${callerName} (${callerId}) calling ${calleeId} | callId: ${callId} | calleeStatus: ${calleeStatus} | callerSocketId: ${socket.id}`);
 
         // Block calls to busy users
         if (calleeStatus === 'busy') {
@@ -1647,9 +1654,10 @@ io.on('connection', (socket) => {
             return;
         }
 
-        // Store active call
+        // Store active call with caller's socket ID for reliable event delivery
         activeCalls.set(callId, {
             callerId, callerName, calleeId, conversationId,
+            callerSocketId: socket.id,
             callType: callType || 'voice',
             startedAt: new Date().toISOString(),
             status: 'ringing'
@@ -1742,15 +1750,21 @@ io.on('connection', (socket) => {
     socket.on('call-accept', (data) => {
         const { callId, calleeId } = data;
         const call = activeCalls.get(callId);
-        if (!call) return;
+        if (!call) {
+            console.warn(`[VOICE-CALL] Call accept failed: call ${callId} not found in activeCalls`);
+            return;
+        }
 
         call.status = 'connected';
         call.connectedAt = new Date().toISOString();
-        const callerSocketId = onlineUsers.get(call.callerId);
+        // Use onlineUsers lookup first, fall back to stored socket ID from call-initiate
+        const callerSocketId = onlineUsers.get(call.callerId) || call.callerSocketId;
 
-        console.log(`[VOICE-CALL] Call accepted: ${callId}`);
+        console.log(`[VOICE-CALL] Call accepted: ${callId} | callerId: ${call.callerId} | callerSocketId: ${callerSocketId || 'NOT FOUND'}`);
         if (callerSocketId) {
             io.to(callerSocketId).emit('call-accepted', { callId, calleeId });
+        } else {
+            console.error(`[VOICE-CALL] Cannot notify caller ${call.callerId} - socket not found`);
         }
     });
 
@@ -1758,13 +1772,19 @@ io.on('connection', (socket) => {
     socket.on('call-reject', async (data) => {
         const { callId, calleeId, reason } = data;
         const call = activeCalls.get(callId);
-        if (!call) return;
+        if (!call) {
+            console.warn(`[VOICE-CALL] Call reject failed: call ${callId} not found in activeCalls`);
+            return;
+        }
 
-        const callerSocketId = onlineUsers.get(call.callerId);
-        console.log(`[VOICE-CALL] Call rejected: ${callId} | reason: ${reason || 'declined'}`);
+        // Use onlineUsers lookup first, fall back to stored socket ID from call-initiate
+        const callerSocketId = onlineUsers.get(call.callerId) || call.callerSocketId;
+        console.log(`[VOICE-CALL] Call rejected: ${callId} | reason: ${reason || 'declined'} | callerId: ${call.callerId} | callerSocketId: ${callerSocketId || 'NOT FOUND'}`);
 
         if (callerSocketId) {
             io.to(callerSocketId).emit('call-rejected', { callId, calleeId, reason: reason || 'declined' });
+        } else {
+            console.error(`[VOICE-CALL] Cannot notify caller ${call.callerId} of rejection - socket not found`);
         }
 
         // Log rejected call
@@ -1795,9 +1815,10 @@ io.on('connection', (socket) => {
 
         console.log(`[VOICE-CALL] Call ended: ${callId} | duration: ${duration}s`);
 
-        // Notify the other party
+        // Notify the other party - use stored socket ID as fallback
         const otherUserId = socket.userId === call.callerId ? call.calleeId : call.callerId;
-        const otherSocketId = onlineUsers.get(otherUserId);
+        const otherSocketId = onlineUsers.get(otherUserId) ||
+            (socket.userId === call.callerId ? null : call.callerSocketId);
         if (otherSocketId) {
             io.to(otherSocketId).emit('call-ended', { callId, endedBy: socket.userId });
         }

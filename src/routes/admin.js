@@ -1837,11 +1837,25 @@ router.post('/estimations/:estimationId/send-ai-report', async (req, res) => {
                     type: 'ai-report'
                 };
                 sendEstimationResultNotification(contractor, estimationInfo, resultFileData)
-                    .then(() => console.log(`[ADMIN] AI report notification sent to ${estData.contractorEmail}`))
-                    .catch(err => console.error(`[ADMIN] Failed to send notification:`, err.message));
+                    .then(() => console.log(`[ADMIN] AI report email sent to ${estData.contractorEmail}`))
+                    .catch(err => console.error(`[ADMIN] Failed to send email notification:`, err.message));
             } catch (emailErr) {
                 console.error('[ADMIN] Email notification error:', emailErr.message);
             }
+        }
+
+        // Send in-app bell notification to contractor
+        try {
+            await NotificationService.notifyEstimationCompleted({
+                id: req.params.estimationId,
+                contractorId: estData.contractorId,
+                projectTitle: estData.projectTitle || estData.projectName,
+                estimatedAmount: estData.aiEstimate?.summary?.grandTotal || estData.aiEstimate?.summary?.totalEstimate || estData.estimatedAmount || 0,
+                resultFile: estData.resultFile || null
+            });
+            console.log(`[ADMIN] In-app notification sent for estimation ${req.params.estimationId}`);
+        } catch (notifErr) {
+            console.error('[ADMIN] In-app notification error:', notifErr.message);
         }
 
         res.json({
@@ -1942,15 +1956,29 @@ router.post('/estimations/:estimationId/retry-ai', async (req, res) => {
             }
         })()
             .then(async (aiEstimate) => {
+                const estimatedAmount = aiEstimate?.summary?.grandTotal || aiEstimate?.summary?.totalEstimate || 0;
                 await adminDb.collection('estimations').doc(estimationId).update({
                     aiEstimate,
                     aiGeneratedAt: new Date().toISOString(),
                     aiStatus: 'completed',
                     aiError: null,
-                    estimatedAmount: aiEstimate?.summary?.grandTotal || aiEstimate?.summary?.totalEstimate || 0,
+                    estimatedAmount,
                     updatedAt: new Date().toISOString()
                 });
                 console.log(`[ADMIN] Multi-pass AI estimate generated successfully for estimation ${estimationId}`);
+
+                // Send in-app notification to contractor
+                try {
+                    await NotificationService.notifyEstimationCompleted({
+                        id: estimationId,
+                        contractorId: estData.contractorId,
+                        projectTitle: estData.projectTitle || estData.projectName,
+                        estimatedAmount,
+                        resultFile: estData.resultFile || null
+                    });
+                } catch (notifErr) {
+                    console.error(`[ADMIN] Notification error: ${notifErr.message}`);
+                }
             })
             .catch(async (error) => {
                 console.error('[ADMIN] Background AI estimate failed:', error.message);

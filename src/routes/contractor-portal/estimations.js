@@ -3,6 +3,7 @@ import multer from 'multer';
 import { adminDb, storage, uploadToFirebaseStorage, FILE_UPLOAD_CONFIG } from '../../config/firebase.js';
 import { authenticateToken } from '../../middleware/authMiddleware.js';
 import { generateAIEstimate } from '../../services/aiEstimationService.js';
+import { NotificationService } from '../../services/NotificationService.js';
 
 const router = express.Router();
 
@@ -185,6 +186,19 @@ router.post('/submit', authenticateToken, upload.array('files', 20), handleMulte
                     updatedAt: new Date().toISOString()
                 });
                 console.log(`[CONTRACTOR-PORTAL] AI estimate saved for ${estimationRef.id}`);
+
+                // Send in-app notification to contractor
+                try {
+                    await NotificationService.notifyEstimationCompleted({
+                        id: estimationRef.id,
+                        contractorId: userId,
+                        projectTitle: projectTitle.trim(),
+                        estimatedAmount: aiEstimate?.summary?.grandTotal || aiEstimate?.summary?.totalEstimate || 0,
+                        resultFile: null
+                    });
+                } catch (notifErr) {
+                    console.error(`[CONTRACTOR-PORTAL] Notification error: ${notifErr.message}`);
+                }
             } catch (aiError) {
                 console.error(`[CONTRACTOR-PORTAL] AI generation failed for ${estimationRef.id}:`, aiError.message);
                 try {

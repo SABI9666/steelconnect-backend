@@ -1762,6 +1762,41 @@ router.post('/estimations/:estimationId/result', upload.single('resultFile'), as
     }
 });
 
+// Download estimation result file (generates signed URL on-demand)
+router.get('/estimations/:estimationId/result/download', async (req, res) => {
+    try {
+        const estDoc = await adminDb.collection('estimations').doc(req.params.estimationId).get();
+        if (!estDoc.exists) return res.status(404).json({ success: false, message: 'Estimation not found' });
+
+        const data = estDoc.data();
+
+        if (!data.resultFile || !data.resultFile.path) {
+            return res.status(404).json({ success: false, message: 'Result file not available yet' });
+        }
+
+        try {
+            const signedUrl = await generateSignedUrl(data.resultFile.path, 15, 'inline');
+
+            res.json({
+                success: true,
+                file: {
+                    url: signedUrl,
+                    name: data.resultFile.name || data.resultFile.originalname || 'estimation_result',
+                    downloadUrl: signedUrl,
+                    size: data.resultFile.size,
+                    mimetype: data.resultFile.mimetype
+                }
+            });
+        } catch (error) {
+            console.error("Error generating signed URL for result file:", error);
+            res.status(500).json({ success: false, message: 'Could not generate file link' });
+        }
+    } catch (error) {
+        console.error("Download Estimation Result Error:", error);
+        res.status(500).json({ success: false, message: 'Error creating result download link' });
+    }
+});
+
 // Send AI-generated report to contractor (marks as completed)
 router.post('/estimations/:estimationId/send-ai-report', async (req, res) => {
     try {

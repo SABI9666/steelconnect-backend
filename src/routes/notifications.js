@@ -283,6 +283,163 @@ router.get('/counts', async (req, res) => {
     }
 });
 
+// Get unread notification counts grouped by menu section (for sidebar badges)
+router.get('/menu-badges', async (req, res) => {
+    try {
+        const userId = req.user.userId;
+
+        const snapshot = await adminDb.collection('notifications')
+            .where('userId', '==', userId)
+            .where('deleted', '!=', true)
+            .where('isRead', '==', false)
+            .get();
+
+        // Group unread notifications by type and action to map to menu sections
+        const sectionCounts = {};
+
+        snapshot.docs.forEach(doc => {
+            const data = doc.data();
+            const type = data.type || 'info';
+            const action = (data.metadata && data.metadata.action) || '';
+
+            // Map notification type+action to sidebar menu sections
+            let section = null;
+
+            if (type === 'quote') {
+                if (action === 'quote_submitted' || action === 'quote_submitted_confirmation') {
+                    section = 'my-quotes';
+                } else if (action === 'quote_approved' || action === 'quote_approved_confirmation') {
+                    section = 'approved-jobs';
+                } else {
+                    section = 'my-quotes';
+                }
+            } else if (type === 'job') {
+                if (action === 'job_created') {
+                    section = 'jobs'; // new projects for designers
+                } else if (action === 'job_completed') {
+                    section = 'project-tracking';
+                } else {
+                    section = 'jobs';
+                }
+            } else if (type === 'estimation') {
+                if (action === 'estimation_completed') {
+                    section = 'my-estimations';
+                } else {
+                    section = 'my-estimations';
+                }
+            } else if (type === 'message') {
+                section = 'messages';
+            } else if (type === 'profile') {
+                section = 'profile-completion';
+            } else if (type === 'support') {
+                section = 'support';
+            } else if (type === 'community') {
+                section = 'community-feed';
+            } else if (type === 'analysis' || type === 'analytics') {
+                section = 'quote-analysis';
+            }
+
+            if (section) {
+                sectionCounts[section] = (sectionCounts[section] || 0) + 1;
+            }
+        });
+
+        res.json({
+            success: true,
+            sectionCounts,
+            totalUnread: snapshot.size
+        });
+
+    } catch (error) {
+        console.error('Error getting menu badge counts:', error);
+        res.json({
+            success: true,
+            sectionCounts: {},
+            totalUnread: 0
+        });
+    }
+});
+
+// Mark notifications as read by section/type (when user opens a menu section)
+router.post('/mark-section-read', async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        const { section } = req.body;
+
+        if (!section) {
+            return res.status(400).json({ success: false, message: 'section is required' });
+        }
+
+        // Map section back to notification type+action filters
+        const sectionTypeMap = {
+            'my-quotes': { type: 'quote' },
+            'approved-jobs': { type: 'quote', actions: ['quote_approved', 'quote_approved_confirmation'] },
+            'jobs': { type: 'job' },
+            'project-tracking': { type: 'job', actions: ['job_completed'] },
+            'my-estimations': { type: 'estimation' },
+            'estimation-tool': { type: 'estimation' },
+            'messages': { type: 'message' },
+            'profile-completion': { type: 'profile' },
+            'support': { type: 'support' },
+            'community-feed': { type: 'community' },
+            'quote-analysis': { type: 'analysis' },
+            'ai-analytics': { type: 'analytics' }
+        };
+
+        const mapping = sectionTypeMap[section];
+        if (!mapping) {
+            return res.json({ success: true, updated: 0, message: 'No mapping for section' });
+        }
+
+        // Query unread notifications of this type for this user
+        let query = adminDb.collection('notifications')
+            .where('userId', '==', userId)
+            .where('deleted', '!=', true)
+            .where('isRead', '==', false)
+            .where('type', '==', mapping.type);
+
+        const snapshot = await query.get();
+
+        if (snapshot.empty) {
+            return res.json({ success: true, updated: 0 });
+        }
+
+        const batch = adminDb.batch();
+        const timestamp = new Date().toISOString();
+        let updateCount = 0;
+
+        snapshot.docs.forEach(doc => {
+            const data = doc.data();
+            // If specific actions are required, filter further
+            if (mapping.actions && mapping.actions.length > 0) {
+                const notifAction = (data.metadata && data.metadata.action) || '';
+                if (!mapping.actions.includes(notifAction)) return;
+            }
+            batch.update(doc.ref, {
+                isRead: true,
+                read: true,
+                readAt: timestamp,
+                updatedAt: timestamp
+            });
+            updateCount++;
+        });
+
+        if (updateCount > 0) {
+            await batch.commit();
+        }
+
+        res.json({
+            success: true,
+            updated: updateCount,
+            message: `${updateCount} notifications marked as read for section ${section}`
+        });
+
+    } catch (error) {
+        console.error('Error marking section as read:', error);
+        res.status(500).json({ success: false, message: 'Error updating notifications' });
+    }
+});
+
 // Get unread count only (lightweight endpoint for frequent polling)
 router.get('/unread-count', async (req, res) => {
     try {

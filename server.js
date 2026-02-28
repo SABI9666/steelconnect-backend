@@ -10,7 +10,7 @@ import { Server as SocketIOServer } from 'socket.io';
 
 // Import bcrypt for admin seeding
 import bcrypt from 'bcryptjs';
-import { adminDb } from './src/config/firebase.js';
+import { adminDb, admin } from './src/config/firebase.js';
 
 // Import existing routes
 import authRoutes from './src/routes/auth.js';
@@ -1302,6 +1302,147 @@ const io = new SocketIOServer(httpServer, {
 const onlineUsers = new Map(); // userId -> socketId
 const userStatuses = new Map(); // userId -> 'online' | 'away' | 'busy' | 'offline'
 const activeCalls = new Map(); // callId -> { callerId, calleeId, startedAt, status }
+const pendingCalls = new Map(); // calleeId -> { callId, callerId, callerName, conversationId, callType, startedAt }
+
+// Send FCM push notification for incoming call
+async function sendCallPushNotification(calleeId, callData) {
+    try {
+        // Look up FCM tokens for this user
+        const tokensSnapshot = await adminDb.collection('user_fcm_tokens')
+            .where('userId', '==', calleeId)
+            .get();
+
+        if (tokensSnapshot.empty) {
+            console.log(`[FCM] No FCM tokens found for user ${calleeId}`);
+            return false;
+        }
+
+        const tokens = tokensSnapshot.docs.map(doc => doc.data().token);
+        console.log(`[FCM] Sending call notification to ${tokens.length} device(s) for user ${calleeId}`);
+
+        const message = {
+            notification: {
+                title: 'Incoming Call',
+                body: `${callData.callerName} is calling you on SteelConnect`,
+            },
+            data: {
+                type: 'incoming_call',
+                callId: callData.callId,
+                callerId: callData.callerId,
+                callerName: callData.callerName,
+                conversationId: callData.conversationId || '',
+                callType: callData.callType || 'voice',
+            },
+            webpush: {
+                notification: {
+                    title: 'Incoming Call',
+                    body: `${callData.callerName} is calling you`,
+                    icon: '/icon-192.png',
+                    badge: '/icon-192.png',
+                    tag: `call-${callData.callId}`,
+                    requireInteraction: true,
+                    actions: [
+                        { action: 'answer', title: 'Answer' },
+                        { action: 'decline', title: 'Decline' }
+                    ],
+                    vibrate: [300, 100, 300, 100, 300],
+                },
+                fcmOptions: {
+                    link: '/?callId=' + callData.callId,
+                }
+            },
+        };
+
+        let sentCount = 0;
+        const invalidTokens = [];
+
+        for (const token of tokens) {
+            try {
+                await admin.messaging().send({ ...message, token });
+                sentCount++;
+            } catch (err) {
+                if (err.code === 'messaging/invalid-registration-token' ||
+                    err.code === 'messaging/registration-token-not-registered') {
+                    invalidTokens.push(token);
+                }
+                console.warn(`[FCM] Failed to send to token: ${err.message}`);
+            }
+        }
+
+        // Clean up invalid tokens
+        for (const invalidToken of invalidTokens) {
+            const tokenDoc = tokensSnapshot.docs.find(d => d.data().token === invalidToken);
+            if (tokenDoc) {
+                await tokenDoc.ref.delete();
+                console.log(`[FCM] Removed invalid token for user ${calleeId}`);
+            }
+        }
+
+        console.log(`[FCM] Sent call notification to ${sentCount}/${tokens.length} devices`);
+        return sentCount > 0;
+    } catch (err) {
+        console.error('[FCM] Error sending push notification:', err.message);
+        return false;
+    }
+}
+
+// FCM token registration endpoint
+app.post('/api/users/fcm-token', async (req, res) => {
+    try {
+        const { userId, token } = req.body;
+        if (!userId || !token) {
+            return res.status(400).json({ success: false, message: 'userId and token are required' });
+        }
+
+        // Upsert token for this user + device
+        const existingToken = await adminDb.collection('user_fcm_tokens')
+            .where('userId', '==', userId)
+            .where('token', '==', token)
+            .get();
+
+        if (existingToken.empty) {
+            await adminDb.collection('user_fcm_tokens').add({
+                userId,
+                token,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+            });
+            console.log(`[FCM] Registered new token for user ${userId}`);
+        } else {
+            // Update timestamp
+            await existingToken.docs[0].ref.update({ updatedAt: new Date().toISOString() });
+        }
+
+        res.json({ success: true, message: 'FCM token registered' });
+    } catch (error) {
+        console.error('[FCM] Token registration error:', error.message);
+        res.status(500).json({ success: false, message: 'Failed to register token' });
+    }
+});
+
+// FCM token removal endpoint
+app.delete('/api/users/fcm-token', async (req, res) => {
+    try {
+        const { userId, token } = req.body;
+        if (!userId || !token) {
+            return res.status(400).json({ success: false, message: 'userId and token are required' });
+        }
+
+        const snapshot = await adminDb.collection('user_fcm_tokens')
+            .where('userId', '==', userId)
+            .where('token', '==', token)
+            .get();
+
+        for (const doc of snapshot.docs) {
+            await doc.ref.delete();
+        }
+
+        res.json({ success: true, message: 'FCM token removed' });
+    } catch (error) {
+        console.error('[FCM] Token removal error:', error.message);
+        res.status(500).json({ success: false, message: 'Failed to remove token' });
+    }
+});
 
 // Active calls count endpoint for admin monitoring
 app.get('/api/voice-calls/active-count', (req, res) => {
@@ -1430,6 +1571,45 @@ io.on('connection', (socket) => {
         socket.userId = userId;
         console.log(`[SOCKET] User registered: ${userId} -> ${socket.id} | status: ${userStatuses.get(userId)}`);
         io.emit('user-online', { userId, status: userStatuses.get(userId) });
+
+        // Deliver any pending calls for this user (they may have received a push notification)
+        const pending = pendingCalls.get(userId);
+        if (pending) {
+            const call = activeCalls.get(pending.callId);
+            if (call && call.status === 'ringing') {
+                console.log(`[VOICE-CALL] Delivering pending call ${pending.callId} to user ${userId} who just came online`);
+                socket.emit('incoming-call', {
+                    callId: pending.callId,
+                    callerId: pending.callerId,
+                    callerName: pending.callerName,
+                    conversationId: pending.conversationId,
+                    callType: pending.callType || 'voice'
+                });
+            }
+            pendingCalls.delete(userId);
+        }
+    });
+
+    // Register FCM token via socket (for push notifications when offline)
+    socket.on('register-fcm-token', async (data) => {
+        const { userId, token } = data;
+        if (!userId || !token) return;
+        try {
+            const existing = await adminDb.collection('user_fcm_tokens')
+                .where('userId', '==', userId)
+                .where('token', '==', token)
+                .get();
+            if (existing.empty) {
+                await adminDb.collection('user_fcm_tokens').add({
+                    userId, token,
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString(),
+                });
+                console.log(`[FCM] Token registered via socket for user ${userId}`);
+            }
+        } catch (err) {
+            console.error('[FCM] Socket token registration error:', err.message);
+        }
     });
 
     // User sets their presence status
@@ -1476,6 +1656,7 @@ io.on('connection', (socket) => {
         });
 
         if (calleeSocketId) {
+            // Callee is online with active socket - deliver call directly
             io.to(calleeSocketId).emit('incoming-call', {
                 callId, callerId, callerName, conversationId,
                 callType: callType || 'voice'
@@ -1491,6 +1672,7 @@ io.on('connection', (socket) => {
                     if (callerSid) io.to(callerSid).emit('call-timeout', { callId });
                     if (calleeSid) io.to(calleeSid).emit('call-timeout', { callId });
                     activeCalls.delete(callId);
+                    pendingCalls.delete(calleeId);
                     adminDb.collection('call_logs').add({
                         callId, callerId, callerName, calleeId, conversationId,
                         callType: callType || 'voice', status: 'missed', reason: 'no_answer',
@@ -1499,23 +1681,60 @@ io.on('connection', (socket) => {
                 }
             }, 30000);
         } else {
-            socket.emit('call-unavailable', { callId, calleeId, reason: 'User is offline' });
-            activeCalls.delete(callId);
+            // Callee is offline - send push notification and wait for them to come online
+            console.log(`[VOICE-CALL] Callee ${calleeId} is offline, sending push notification`);
 
-            // Log missed call to Firestore
+            const callData = { callId, callerId, callerName, conversationId, callType: callType || 'voice' };
+            const pushSent = await sendCallPushNotification(calleeId, callData);
+
+            // Store as pending call so it can be delivered when callee comes online
+            pendingCalls.set(calleeId, {
+                callId, callerId, callerName, conversationId,
+                callType: callType || 'voice',
+                startedAt: new Date().toISOString()
+            });
+
+            // Tell caller we're notifying the user (not "unavailable")
+            socket.emit('call-ringing', { callId, calleeId, pushNotified: true });
+
+            // Log notification attempt
             try {
-                await adminDb.collection('call_logs').add({
-                    callId, callerId, callerName, calleeId, conversationId,
-                    callType: callType || 'voice',
-                    status: 'missed',
-                    reason: 'offline',
-                    startedAt: new Date().toISOString(),
-                    endedAt: new Date().toISOString(),
-                    duration: 0
+                await adminDb.collection('notifications').add({
+                    userId: calleeId,
+                    title: 'Missed Call',
+                    message: `${callerName} tried to call you`,
+                    type: 'voice_call',
+                    metadata: { callId, callerId, callerName, conversationId },
+                    read: false,
+                    createdAt: new Date().toISOString(),
                 });
             } catch (err) {
-                console.error('[VOICE-CALL] Failed to log missed call:', err.message);
+                console.error('[VOICE-CALL] Failed to create notification:', err.message);
             }
+
+            // Extended timeout for push-notified calls (45 seconds to allow app to open)
+            setTimeout(async () => {
+                const call = activeCalls.get(callId);
+                if (call && call.status === 'ringing') {
+                    const callerSid = onlineUsers.get(call.callerId);
+                    const calleeSid = onlineUsers.get(call.calleeId);
+                    if (callerSid) io.to(callerSid).emit('call-timeout', { callId });
+                    if (calleeSid) io.to(calleeSid).emit('call-timeout', { callId });
+                    activeCalls.delete(callId);
+                    pendingCalls.delete(calleeId);
+
+                    try {
+                        await adminDb.collection('call_logs').add({
+                            callId, callerId, callerName, calleeId, conversationId,
+                            callType: callType || 'voice', status: 'missed',
+                            reason: pushSent ? 'no_answer_push' : 'offline_no_push',
+                            startedAt: new Date().toISOString(), endedAt: new Date().toISOString(), duration: 0
+                        });
+                    } catch (err) {
+                        console.error('[VOICE-CALL] Failed to log timeout:', err.message);
+                    }
+                }
+            }, 45000);
         }
     });
 

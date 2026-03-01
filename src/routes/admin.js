@@ -7768,4 +7768,22 @@ router.delete('/visitors/clear', async (req, res) => {
     }
 });
 
+// --- MEETINGS MANAGEMENT (Admin) ---
+// GET /api/admin/meetings - All meetings across all users
+router.get('/meetings', async (req, res) => {
+    try {
+        const meetingsSnapshot = await adminDb.collection('meetings').get();
+        const meetings = [];
+        meetingsSnapshot.docs.forEach(doc => {
+            meetings.push({ id: doc.id, ...doc.data() });
+        });
+        // Sort by meeting date descending
+        meetings.sort((a, b) => new Date(b.meetingDateTime || 0) - new Date(a.meetingDateTime || 0));
+        res.json({ success: true, data: meetings });
+    } catch (error) {
+        console.error('[ADMIN] Meetings fetch error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
 export default router;

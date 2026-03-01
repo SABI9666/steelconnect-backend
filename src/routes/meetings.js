@@ -206,6 +206,56 @@ router.get('/', authenticateToken, async (req, res) => {
     }
 });
 
+// GET upcoming meetings for reminder pop-ups (within next 60 minutes)
+router.get('/upcoming/reminders', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        const now = new Date();
+        const windowMinutes = parseInt(req.query.window) || 60;
+        const futureLimit = new Date(now.getTime() + windowMinutes * 60000);
+
+        // Get meetings where user is organizer
+        const organizerSnapshot = await adminDb.collection('meetings')
+            .where('organizerId', '==', userId)
+            .where('status', '==', 'scheduled')
+            .get();
+
+        // Get all scheduled meetings to check attendee
+        const allMeetingsSnapshot = await adminDb.collection('meetings')
+            .where('status', '==', 'scheduled')
+            .get();
+
+        const meetingsMap = new Map();
+
+        organizerSnapshot.docs.forEach(doc => {
+            meetingsMap.set(doc.id, { id: doc.id, ...doc.data() });
+        });
+
+        allMeetingsSnapshot.docs.forEach(doc => {
+            const data = doc.data();
+            const attendee = (data.attendees || []).find(a => a.id === userId);
+            // Include if user is an attendee who accepted (or is pending)
+            if (attendee && attendee.status !== 'declined') {
+                meetingsMap.set(doc.id, { id: doc.id, ...data });
+            }
+        });
+
+        // Filter to meetings starting within the time window
+        const upcoming = Array.from(meetingsMap.values()).filter(m => {
+            const meetingTime = new Date(m.meetingDateTime);
+            return meetingTime >= now && meetingTime <= futureLimit;
+        });
+
+        // Sort by soonest first
+        upcoming.sort((a, b) => new Date(a.meetingDateTime) - new Date(b.meetingDateTime));
+
+        res.json({ success: true, data: upcoming });
+    } catch (error) {
+        console.error('Error fetching upcoming meetings:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch upcoming meetings.' });
+    }
+});
+
 // GET single meeting
 router.get('/:meetingId', authenticateToken, async (req, res) => {
     try {

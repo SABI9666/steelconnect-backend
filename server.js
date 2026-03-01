@@ -1313,11 +1313,17 @@ const io = new SocketIOServer(httpServer, {
     },
     transports: ['websocket', 'polling'],
     pingInterval: 25000,
-    pingTimeout: 30000,
-    // Improved settings for global cross-region connectivity
-    connectTimeout: 20000,
+    pingTimeout: 35000,
+    // Improved settings for global cross-region connectivity (India, UK, Middle East)
+    connectTimeout: 30000,
     maxHttpBufferSize: 1e6,
-    allowUpgrades: true
+    allowUpgrades: true,
+    // Allow longer upgrade timeouts for high-latency international connections
+    upgradeTimeout: 15000,
+    // Compress data for faster transfer on slow international links
+    perMessageDeflate: {
+        threshold: 1024
+    }
 });
 
 // --- WEB PUSH (VAPID) SETUP ---
@@ -1661,20 +1667,36 @@ app.get('/api/voice-calls/active-count', (req, res) => {
 // 3. Built-in defaults
 app.get('/api/voice-calls/turn-credentials', async (req, res) => {
     try {
+        // Multi-provider STUN servers (Google + Twilio + Cloudflare for redundancy)
+        const stunServers = [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+            { urls: 'stun:stun3.l.google.com:19302' },
+            { urls: 'stun:stun4.l.google.com:19302' },
+            // Twilio STUN (good connectivity from India & UK)
+            { urls: 'stun:global.stun.twilio.com:3478' },
+            // Cloudflare STUN (edge nodes in India & UK)
+            { urls: 'stun:stun.cloudflare.com:3478' }
+        ];
+
         // Option 1: Use Metered.ca API for dynamic TURN credentials (most reliable)
         if (process.env.METERED_API_KEY) {
             try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 5000);
                 const meteredResponse = await fetch(
-                    `https://steelconnect.metered.live/api/v1/turn/credentials?apiKey=${process.env.METERED_API_KEY}`
+                    `https://steelconnect.metered.live/api/v1/turn/credentials?apiKey=${process.env.METERED_API_KEY}`,
+                    { signal: controller.signal }
                 );
+                clearTimeout(timeoutId);
                 if (meteredResponse.ok) {
                     const meteredServers = await meteredResponse.json();
                     console.log('[TURN] Fetched fresh credentials from Metered.ca API');
                     return res.json({
                         success: true,
                         iceServers: [
-                            { urls: 'stun:stun.l.google.com:19302' },
-                            { urls: 'stun:stun1.l.google.com:19302' },
+                            ...stunServers,
                             ...meteredServers
                         ],
                         ttl: 86400,
@@ -1692,13 +1714,8 @@ app.get('/api/voice-calls/turn-credentials', async (req, res) => {
         const turnServer = process.env.TURN_SERVER || 'global.relay.metered.ca';
 
         const iceServers = [
-            // Globally distributed STUN servers for NAT discovery
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun2.l.google.com:19302' },
-            { urls: 'stun:stun3.l.google.com:19302' },
-            { urls: 'stun:stun4.l.google.com:19302' },
-            // TURN relay servers - all transport variations for maximum compatibility
+            ...stunServers,
+            // --- Primary TURN relay (Metered.ca) ---
             // UDP on port 80 - standard path, works on most networks
             {
                 urls: `turn:${turnServer}:80`,
@@ -1718,11 +1735,33 @@ app.get('/api/voice-calls/turn-credentials', async (req, res) => {
                 credential: turnCredential
             },
             // TURNS (TURN over TLS) on port 443/TCP - maximum firewall compatibility
-            // Essential for India (Jio, Airtel, BSNL), Middle East, China
+            // Essential for India (Jio, Airtel, BSNL), UK corporate, Middle East, China
             {
                 urls: `turns:${turnServer}:443?transport=tcp`,
                 username: turnUsername,
                 credential: turnCredential
+            },
+            // --- Fallback TURN relay (OpenRelay - free public TURN) ---
+            // Provides redundancy if primary Metered credentials expire
+            {
+                urls: 'turn:openrelay.metered.ca:80',
+                username: 'openrelayproject',
+                credential: 'openrelayproject'
+            },
+            {
+                urls: 'turn:openrelay.metered.ca:443',
+                username: 'openrelayproject',
+                credential: 'openrelayproject'
+            },
+            {
+                urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+                username: 'openrelayproject',
+                credential: 'openrelayproject'
+            },
+            {
+                urls: 'turns:openrelay.metered.ca:443?transport=tcp',
+                username: 'openrelayproject',
+                credential: 'openrelayproject'
             }
         ];
 
@@ -1734,18 +1773,34 @@ app.get('/api/voice-calls/turn-credentials', async (req, res) => {
         });
     } catch (error) {
         console.error('[TURN] Error generating credentials:', error.message);
-        // Return minimal STUN-only config as last resort
+        // Return STUN + public TURN as last resort (never STUN-only, as it breaks cross-region)
         res.json({
             success: true,
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
                 { urls: 'stun:stun1.l.google.com:19302' },
                 { urls: 'stun:stun2.l.google.com:19302' },
-                { urls: 'stun:stun3.l.google.com:19302' },
-                { urls: 'stun:stun4.l.google.com:19302' }
+                { urls: 'stun:global.stun.twilio.com:3478' },
+                { urls: 'stun:stun.cloudflare.com:3478' },
+                // Include public TURN even in fallback - STUN-only cannot connect India <-> UK
+                {
+                    urls: 'turn:openrelay.metered.ca:443',
+                    username: 'openrelayproject',
+                    credential: 'openrelayproject'
+                },
+                {
+                    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+                    username: 'openrelayproject',
+                    credential: 'openrelayproject'
+                },
+                {
+                    urls: 'turns:openrelay.metered.ca:443?transport=tcp',
+                    username: 'openrelayproject',
+                    credential: 'openrelayproject'
+                }
             ],
             ttl: 86400,
-            source: 'stun-only-fallback'
+            source: 'fallback-with-public-turn'
         });
     }
 });
@@ -1946,7 +2001,8 @@ io.on('connection', (socket) => {
             console.error(`[VOICE-CALL] FCM push error for ${callId}:`, err.message);
         });
 
-        // 60-second timeout for all calls (allows time for push notification + login)
+        // 90-second timeout for all calls (allows time for push notification delivery
+        // across international networks + user login from notification)
         setTimeout(async () => {
             const call = activeCalls.get(callId);
             if (call && call.status === 'ringing') {
@@ -1977,7 +2033,7 @@ io.on('connection', (socket) => {
                     console.error('[VOICE-CALL] Failed to log timeout:', err.message);
                 }
             }
-        }, 60000);
+        }, 90000);
     });
 
     // Voice call: Accept
@@ -2117,8 +2173,10 @@ io.on('connection', (socket) => {
                 iceRestart: iceRestart || false
             });
             if (iceRestart) {
-                console.log(`[VOICE-CALL] ICE restart offer forwarded: ${callId}`);
+                console.log(`[VOICE-CALL] ICE restart offer forwarded: ${callId} | from: ${socket.userId} -> ${targetUserId}`);
             }
+        } else {
+            console.warn(`[VOICE-CALL] Cannot forward WebRTC offer: target socket not found for ${targetUserId} | callId: ${callId}`);
         }
     });
 
@@ -2132,6 +2190,8 @@ io.on('connection', (socket) => {
         const finalTarget = targetSocketId || getUserSocket(targetUserId);
         if (finalTarget) {
             io.to(finalTarget).emit('webrtc-answer', { callId, answer, fromUserId: socket.userId });
+        } else {
+            console.warn(`[VOICE-CALL] Cannot forward WebRTC answer: target socket not found for ${targetUserId} | callId: ${callId}`);
         }
     });
 
@@ -2146,6 +2206,7 @@ io.on('connection', (socket) => {
         if (finalTarget) {
             io.to(finalTarget).emit('webrtc-ice-candidate', { callId, candidate, fromUserId: socket.userId });
         }
+        // Note: Don't warn for ICE candidates - it's normal for some to arrive after disconnect
     });
 
     // Check if user is online and get their status
@@ -2224,7 +2285,8 @@ const server = httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`   JWT Secret: ${process.env.JWT_SECRET ? '✅ Configured' : '❌ Missing'}`);
     console.log(`   CORS Origins: ${process.env.CORS_ORIGIN ? '✅ Configured' : '⚠️ Using defaults'}`);
     console.log(`   Resend API: ${process.env.RESEND_API_KEY ? '✅ Configured' : '⚠️ Missing'}`);
-    console.log(`   TURN Server: ${process.env.METERED_API_KEY ? '✅ Metered.ca API configured' : process.env.TURN_USERNAME ? '✅ Custom TURN configured' : '⚠️ Using default TURN credentials'}`);
+    console.log(`   TURN Server: ${process.env.METERED_API_KEY ? '✅ Metered.ca API configured' : process.env.TURN_USERNAME ? '✅ Custom TURN configured' : '⚠️ Using default TURN + OpenRelay fallback'}`);
+    console.log(`   STUN Providers: ✅ Google + Twilio + Cloudflare (multi-provider redundancy)`);
     
     const emailDomain = process.env.EMAIL_FROM_DOMAIN || 'noreply@steelconnectapp.com';
     const isVerifiedDomain = emailDomain.includes('steelconnectapp.com');

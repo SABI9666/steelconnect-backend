@@ -1299,10 +1299,48 @@ const io = new SocketIOServer(httpServer, {
 });
 
 // Track online users, presence statuses, and active calls
-const onlineUsers = new Map(); // userId -> socketId
+const onlineUsers = new Map(); // userId -> Set<socketId> (multiple devices per user)
 const userStatuses = new Map(); // userId -> 'online' | 'away' | 'busy' | 'offline'
-const activeCalls = new Map(); // callId -> { callerId, calleeId, startedAt, status }
+const activeCalls = new Map(); // callId -> { callerId, calleeId, startedAt, status, calleeSocketId }
 const pendingCalls = new Map(); // calleeId -> { callId, callerId, callerName, conversationId, callType, startedAt }
+
+// Helper: add a socket for a user (multi-device support)
+function addUserSocket(userId, socketId) {
+    if (!onlineUsers.has(userId)) {
+        onlineUsers.set(userId, new Set());
+    }
+    onlineUsers.get(userId).add(socketId);
+}
+
+// Helper: remove a socket for a user
+function removeUserSocket(userId, socketId) {
+    const sockets = onlineUsers.get(userId);
+    if (sockets) {
+        sockets.delete(socketId);
+        if (sockets.size === 0) onlineUsers.delete(userId);
+    }
+}
+
+// Helper: get all socket IDs for a user
+function getUserSockets(userId) {
+    return onlineUsers.get(userId) || new Set();
+}
+
+// Helper: get any one socket ID for a user (for backwards-compat)
+function getUserSocket(userId) {
+    const sockets = onlineUsers.get(userId);
+    if (!sockets || sockets.size === 0) return null;
+    return sockets.values().next().value;
+}
+
+// Helper: emit to ALL sockets of a user (rings on all devices)
+function emitToUser(userId, event, data) {
+    const sockets = getUserSockets(userId);
+    for (const sid of sockets) {
+        io.to(sid).emit(event, data);
+    }
+    return sockets.size;
+}
 
 // Send FCM push notification for incoming call
 async function sendCallPushNotification(calleeId, callData) {
@@ -1565,14 +1603,21 @@ app.post('/api/voice-calls/decline', (req, res) => {
     const call = activeCalls.get(callId);
     if (!call) return res.json({ success: true, message: 'Call already ended' });
 
-    const callerSocketId = onlineUsers.get(call.callerId) || call.callerSocketId;
     console.log(`[VOICE-CALL] Call declined via push notification: ${callId} | reason: ${reason || 'declined'}`);
 
-    if (callerSocketId) {
-        io.to(callerSocketId).emit('call-rejected', {
+    // Notify caller on all their devices
+    emitToUser(call.callerId, 'call-rejected', {
+        callId, calleeId: call.calleeId, reason: reason || 'declined'
+    });
+    // Fallback to stored caller socket
+    if (call.callerSocketId) {
+        io.to(call.callerSocketId).emit('call-rejected', {
             callId, calleeId: call.calleeId, reason: reason || 'declined'
         });
     }
+
+    // Dismiss on all callee devices
+    emitToUser(call.calleeId, 'call-dismissed', { callId, reason: 'declined' });
 
     // Clean up
     pendingCalls.delete(call.calleeId);
@@ -1595,7 +1640,7 @@ io.on('connection', (socket) => {
     // User registers their identity after connecting
     socket.on('register', (userId) => {
         if (!userId) return;
-        onlineUsers.set(userId, socket.id);
+        addUserSocket(userId, socket.id);
         const previousStatus = userStatuses.get(userId);
         if (!previousStatus || previousStatus === 'offline') {
             userStatuses.set(userId, 'online');
@@ -1658,18 +1703,17 @@ io.on('connection', (socket) => {
     // Voice call: Initiate a call
     socket.on('call-initiate', async (data) => {
         const { callerId, callerName, calleeId, conversationId, callType } = data;
-        const calleeSocketId = onlineUsers.get(calleeId);
+        const calleeSockets = getUserSockets(calleeId);
         const calleeStatus = userStatuses.get(calleeId) || 'offline';
         const callId = `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
         // Ensure caller is registered in onlineUsers (safety net for race conditions)
-        if (callerId && (!onlineUsers.has(callerId) || onlineUsers.get(callerId) !== socket.id)) {
-            console.log(`[VOICE-CALL] Fixing caller registration: ${callerId} -> ${socket.id}`);
-            onlineUsers.set(callerId, socket.id);
+        if (callerId) {
+            addUserSocket(callerId, socket.id);
             socket.userId = callerId;
         }
 
-        console.log(`[VOICE-CALL] ${callerName} (${callerId}) calling ${calleeId} | callId: ${callId} | calleeStatus: ${calleeStatus} | callerSocketId: ${socket.id}`);
+        console.log(`[VOICE-CALL] ${callerName} (${callerId}) calling ${calleeId} | callId: ${callId} | calleeStatus: ${calleeStatus} | calleeSockets: ${calleeSockets.size} | callerSocketId: ${socket.id}`);
 
         // Block calls to busy users
         if (calleeStatus === 'busy') {
@@ -1690,92 +1734,74 @@ io.on('connection', (socket) => {
         activeCalls.set(callId, {
             callerId, callerName, calleeId, conversationId,
             callerSocketId: socket.id,
+            calleeSocketId: null, // set when callee accepts on a specific device
             callType: callType || 'voice',
             startedAt: new Date().toISOString(),
             status: 'ringing'
         });
 
-        if (calleeSocketId) {
-            // Callee is online with active socket - deliver call directly
-            io.to(calleeSocketId).emit('incoming-call', {
-                callId, callerId, callerName, conversationId,
-                callType: callType || 'voice'
-            });
-            socket.emit('call-ringing', { callId, calleeId });
+        const callPayload = {
+            callId, callerId, callerName, conversationId,
+            callType: callType || 'voice'
+        };
 
-            // Auto-timeout unanswered calls after 30 seconds
-            setTimeout(() => {
-                const call = activeCalls.get(callId);
-                if (call && call.status === 'ringing') {
-                    const callerSid = onlineUsers.get(call.callerId);
-                    const calleeSid = onlineUsers.get(call.calleeId);
-                    if (callerSid) io.to(callerSid).emit('call-timeout', { callId });
-                    if (calleeSid) io.to(calleeSid).emit('call-timeout', { callId });
-                    activeCalls.delete(callId);
-                    pendingCalls.delete(calleeId);
-                    adminDb.collection('call_logs').add({
+        // Deliver incoming call to ALL connected devices (laptop, phone, etc.)
+        const deliveredCount = emitToUser(calleeId, 'incoming-call', callPayload);
+
+        // ALWAYS send push notification too — catches devices where browser tab is
+        // closed or phone screen is off (they won't have an active socket)
+        const pushCallData = { callId, callerId, callerName, conversationId, callType: callType || 'voice' };
+        const pushSent = await sendCallPushNotification(calleeId, pushCallData);
+
+        // Store as pending so new devices connecting can also get the call
+        pendingCalls.set(calleeId, {
+            callId, callerId, callerName, conversationId,
+            callType: callType || 'voice',
+            startedAt: new Date().toISOString()
+        });
+
+        if (deliveredCount > 0) {
+            socket.emit('call-ringing', { callId, calleeId, pushNotified: pushSent });
+            console.log(`[VOICE-CALL] Call delivered to ${deliveredCount} device(s) + push: ${pushSent}`);
+        } else {
+            socket.emit('call-ringing', { callId, calleeId, pushNotified: true });
+            console.log(`[VOICE-CALL] Callee ${calleeId} has no active sockets, push: ${pushSent}`);
+        }
+
+        // Log notification for missed call history
+        try {
+            await adminDb.collection('notifications').add({
+                userId: calleeId,
+                title: 'Missed Call',
+                message: `${callerName} tried to call you`,
+                type: 'voice_call',
+                metadata: { callId, callerId, callerName, conversationId },
+                read: false,
+                createdAt: new Date().toISOString(),
+            });
+        } catch (err) {
+            console.error('[VOICE-CALL] Failed to create notification:', err.message);
+        }
+
+        // 60-second timeout for all calls (allows time for push notification + login)
+        setTimeout(async () => {
+            const call = activeCalls.get(callId);
+            if (call && call.status === 'ringing') {
+                emitToUser(call.callerId, 'call-timeout', { callId });
+                emitToUser(call.calleeId, 'call-timeout', { callId });
+                activeCalls.delete(callId);
+                pendingCalls.delete(calleeId);
+                try {
+                    await adminDb.collection('call_logs').add({
                         callId, callerId, callerName, calleeId, conversationId,
                         callType: callType || 'voice', status: 'missed', reason: 'no_answer',
                         startedAt: new Date().toISOString(), endedAt: new Date().toISOString(), duration: 0
-                    }).catch(err => console.error('[VOICE-CALL] Failed to log timeout:', err.message));
+                    });
+                } catch (err) {
+                    console.error('[VOICE-CALL] Failed to log timeout:', err.message);
                 }
-            }, 30000);
-        } else {
-            // Callee is offline - send push notification and wait for them to come online
-            console.log(`[VOICE-CALL] Callee ${calleeId} is offline, sending push notification`);
-
-            const callData = { callId, callerId, callerName, conversationId, callType: callType || 'voice' };
-            const pushSent = await sendCallPushNotification(calleeId, callData);
-
-            // Store as pending call so it can be delivered when callee comes online
-            pendingCalls.set(calleeId, {
-                callId, callerId, callerName, conversationId,
-                callType: callType || 'voice',
-                startedAt: new Date().toISOString()
-            });
-
-            // Tell caller we're notifying the user (not "unavailable")
-            socket.emit('call-ringing', { callId, calleeId, pushNotified: true });
-
-            // Log notification attempt
-            try {
-                await adminDb.collection('notifications').add({
-                    userId: calleeId,
-                    title: 'Missed Call',
-                    message: `${callerName} tried to call you`,
-                    type: 'voice_call',
-                    metadata: { callId, callerId, callerName, conversationId },
-                    read: false,
-                    createdAt: new Date().toISOString(),
-                });
-            } catch (err) {
-                console.error('[VOICE-CALL] Failed to create notification:', err.message);
             }
-
-            // Extended timeout for push-notified calls (60 seconds to allow app open + login)
-            setTimeout(async () => {
-                const call = activeCalls.get(callId);
-                if (call && call.status === 'ringing') {
-                    const callerSid = onlineUsers.get(call.callerId);
-                    const calleeSid = onlineUsers.get(call.calleeId);
-                    if (callerSid) io.to(callerSid).emit('call-timeout', { callId });
-                    if (calleeSid) io.to(calleeSid).emit('call-timeout', { callId });
-                    activeCalls.delete(callId);
-                    pendingCalls.delete(calleeId);
-
-                    try {
-                        await adminDb.collection('call_logs').add({
-                            callId, callerId, callerName, calleeId, conversationId,
-                            callType: callType || 'voice', status: 'missed',
-                            reason: pushSent ? 'no_answer_push' : 'offline_no_push',
-                            startedAt: new Date().toISOString(), endedAt: new Date().toISOString(), duration: 0
-                        });
-                    } catch (err) {
-                        console.error('[VOICE-CALL] Failed to log timeout:', err.message);
-                    }
-                }
-            }, 60000);
-        }
+        }, 60000);
     });
 
     // Voice call: Accept
@@ -1787,16 +1813,34 @@ io.on('connection', (socket) => {
             return;
         }
 
+        // Only the first device to accept wins
+        if (call.status === 'connected') {
+            console.log(`[VOICE-CALL] Call ${callId} already accepted, ignoring duplicate accept from ${socket.id}`);
+            socket.emit('call-dismissed', { callId, reason: 'answered_elsewhere' });
+            return;
+        }
+
         call.status = 'connected';
         call.connectedAt = new Date().toISOString();
-        // Use onlineUsers lookup first, fall back to stored socket ID from call-initiate
-        const callerSocketId = onlineUsers.get(call.callerId) || call.callerSocketId;
+        // Track which specific socket accepted — WebRTC goes to THIS socket only
+        call.calleeSocketId = socket.id;
+        pendingCalls.delete(calleeId);
 
-        console.log(`[VOICE-CALL] Call accepted: ${callId} | callerId: ${call.callerId} | callerSocketId: ${callerSocketId || 'NOT FOUND'}`);
+        // Notify caller
+        const callerSocketId = getUserSocket(call.callerId) || call.callerSocketId;
+        console.log(`[VOICE-CALL] Call accepted: ${callId} | device: ${socket.id} | callerId: ${call.callerId} | callerSocketId: ${callerSocketId || 'NOT FOUND'}`);
         if (callerSocketId) {
             io.to(callerSocketId).emit('call-accepted', { callId, calleeId });
         } else {
             console.error(`[VOICE-CALL] Cannot notify caller ${call.callerId} - socket not found`);
+        }
+
+        // Dismiss the call on ALL OTHER devices of the callee
+        const calleeSockets = getUserSockets(calleeId);
+        for (const sid of calleeSockets) {
+            if (sid !== socket.id) {
+                io.to(sid).emit('call-dismissed', { callId, reason: 'answered_elsewhere' });
+            }
         }
     });
 
@@ -1809,8 +1853,8 @@ io.on('connection', (socket) => {
             return;
         }
 
-        // Use onlineUsers lookup first, fall back to stored socket ID from call-initiate
-        const callerSocketId = onlineUsers.get(call.callerId) || call.callerSocketId;
+        // Notify caller
+        const callerSocketId = getUserSocket(call.callerId) || call.callerSocketId;
         console.log(`[VOICE-CALL] Call rejected: ${callId} | reason: ${reason || 'declined'} | callerId: ${call.callerId} | callerSocketId: ${callerSocketId || 'NOT FOUND'}`);
 
         if (callerSocketId) {
@@ -1818,6 +1862,15 @@ io.on('connection', (socket) => {
         } else {
             console.error(`[VOICE-CALL] Cannot notify caller ${call.callerId} of rejection - socket not found`);
         }
+
+        // Dismiss on all other callee devices
+        const calleeSockets = getUserSockets(call.calleeId);
+        for (const sid of calleeSockets) {
+            if (sid !== socket.id) {
+                io.to(sid).emit('call-dismissed', { callId, reason: 'declined_elsewhere' });
+            }
+        }
+        pendingCalls.delete(call.calleeId);
 
         // Log rejected call
         try {
@@ -1847,12 +1900,12 @@ io.on('connection', (socket) => {
 
         console.log(`[VOICE-CALL] Call ended: ${callId} | duration: ${duration}s`);
 
-        // Notify the other party - use stored socket ID as fallback
+        // Notify the other party on all their devices
         const otherUserId = socket.userId === call.callerId ? call.calleeId : call.callerId;
-        const otherSocketId = onlineUsers.get(otherUserId) ||
-            (socket.userId === call.callerId ? null : call.callerSocketId);
-        if (otherSocketId) {
-            io.to(otherSocketId).emit('call-ended', { callId, endedBy: socket.userId });
+        emitToUser(otherUserId, 'call-ended', { callId, endedBy: socket.userId });
+        // Fallback: also try stored caller socket ID
+        if (socket.userId !== call.callerId && call.callerSocketId) {
+            io.to(call.callerSocketId).emit('call-ended', { callId, endedBy: socket.userId });
         }
 
         // Log completed call
@@ -1872,11 +1925,17 @@ io.on('connection', (socket) => {
     });
 
     // WebRTC signaling: Offer (supports ICE restart for cross-region recovery)
+    // Routes to the SPECIFIC socket that accepted the call (not all devices)
     socket.on('webrtc-offer', (data) => {
         const { callId, targetUserId, offer, iceRestart } = data;
-        const targetSocketId = onlineUsers.get(targetUserId);
-        if (targetSocketId) {
-            io.to(targetSocketId).emit('webrtc-offer', {
+        const call = activeCalls.get(callId);
+        // Use the specific callee/caller socket from the call, fall back to any socket
+        const targetSocketId = call
+            ? (targetUserId === call.calleeId ? call.calleeSocketId : call.callerSocketId)
+            : null;
+        const finalTarget = targetSocketId || getUserSocket(targetUserId);
+        if (finalTarget) {
+            io.to(finalTarget).emit('webrtc-offer', {
                 callId, offer, fromUserId: socket.userId,
                 iceRestart: iceRestart || false
             });
@@ -1889,18 +1948,26 @@ io.on('connection', (socket) => {
     // WebRTC signaling: Answer
     socket.on('webrtc-answer', (data) => {
         const { callId, targetUserId, answer } = data;
-        const targetSocketId = onlineUsers.get(targetUserId);
-        if (targetSocketId) {
-            io.to(targetSocketId).emit('webrtc-answer', { callId, answer, fromUserId: socket.userId });
+        const call = activeCalls.get(callId);
+        const targetSocketId = call
+            ? (targetUserId === call.calleeId ? call.calleeSocketId : call.callerSocketId)
+            : null;
+        const finalTarget = targetSocketId || getUserSocket(targetUserId);
+        if (finalTarget) {
+            io.to(finalTarget).emit('webrtc-answer', { callId, answer, fromUserId: socket.userId });
         }
     });
 
     // WebRTC signaling: ICE Candidate
     socket.on('webrtc-ice-candidate', (data) => {
         const { callId, targetUserId, candidate } = data;
-        const targetSocketId = onlineUsers.get(targetUserId);
-        if (targetSocketId) {
-            io.to(targetSocketId).emit('webrtc-ice-candidate', { callId, candidate, fromUserId: socket.userId });
+        const call = activeCalls.get(callId);
+        const targetSocketId = call
+            ? (targetUserId === call.calleeId ? call.calleeSocketId : call.callerSocketId)
+            : null;
+        const finalTarget = targetSocketId || getUserSocket(targetUserId);
+        if (finalTarget) {
+            io.to(finalTarget).emit('webrtc-ice-candidate', { callId, candidate, fromUserId: socket.userId });
         }
     });
 
@@ -1916,19 +1983,33 @@ io.on('connection', (socket) => {
     socket.on('disconnect', async () => {
         console.log(`[SOCKET] Client disconnected: ${socket.id}`);
         if (socket.userId) {
-            onlineUsers.delete(socket.userId);
-            userStatuses.set(socket.userId, 'offline');
-            io.emit('user-offline', { userId: socket.userId });
-            io.emit('user-status-changed', { userId: socket.userId, status: 'offline' });
+            // Remove this specific socket from the user's set
+            removeUserSocket(socket.userId, socket.id);
+            const remainingSockets = getUserSockets(socket.userId);
 
-            // End any active calls for this user
+            // Only mark user as offline if ALL their devices are disconnected
+            if (remainingSockets.size === 0) {
+                userStatuses.set(socket.userId, 'offline');
+                io.emit('user-offline', { userId: socket.userId });
+                io.emit('user-status-changed', { userId: socket.userId, status: 'offline' });
+            } else {
+                console.log(`[SOCKET] User ${socket.userId} still has ${remainingSockets.size} other device(s) connected`);
+            }
+
+            // End active calls ONLY if this was the specific socket in the call
             for (const [callId, call] of activeCalls.entries()) {
-                if (call.callerId === socket.userId || call.calleeId === socket.userId) {
+                const isCallerSocket = call.callerId === socket.userId && call.callerSocketId === socket.id;
+                const isCalleeSocket = call.calleeId === socket.userId && call.calleeSocketId === socket.id;
+
+                // For ringing calls: if callee's socket disconnects but they have other devices, don't end
+                if (call.status === 'ringing' && call.calleeId === socket.userId && remainingSockets.size > 0) {
+                    continue; // Other devices are still ringing
+                }
+
+                if (isCallerSocket || isCalleeSocket ||
+                    (call.status === 'ringing' && (call.callerId === socket.userId || call.calleeId === socket.userId) && remainingSockets.size === 0)) {
                     const otherUserId = socket.userId === call.callerId ? call.calleeId : call.callerId;
-                    const otherSocketId = onlineUsers.get(otherUserId);
-                    if (otherSocketId) {
-                        io.to(otherSocketId).emit('call-ended', { callId, endedBy: socket.userId, reason: 'disconnected' });
-                    }
+                    emitToUser(otherUserId, 'call-ended', { callId, endedBy: socket.userId, reason: 'disconnected' });
 
                     try {
                         const endedAt = new Date().toISOString();

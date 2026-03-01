@@ -10,6 +10,7 @@ import { Server as SocketIOServer } from 'socket.io';
 
 // Import bcrypt for admin seeding
 import bcrypt from 'bcryptjs';
+import webpush from 'web-push';
 import { adminDb, admin } from './src/config/firebase.js';
 
 // Import existing routes
@@ -1319,6 +1320,139 @@ const io = new SocketIOServer(httpServer, {
     allowUpgrades: true
 });
 
+// --- WEB PUSH (VAPID) SETUP ---
+// Auto-generate VAPID keys if not provided via environment variables.
+// These keys enable push notifications without requiring Firebase client SDK.
+// In production, set WEB_PUSH_VAPID_PUBLIC_KEY and WEB_PUSH_VAPID_PRIVATE_KEY env vars.
+let VAPID_PUBLIC_KEY = process.env.WEB_PUSH_VAPID_PUBLIC_KEY || '';
+let VAPID_PRIVATE_KEY = process.env.WEB_PUSH_VAPID_PRIVATE_KEY || '';
+
+if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
+    const generated = webpush.generateVAPIDKeys();
+    VAPID_PUBLIC_KEY = generated.publicKey;
+    VAPID_PRIVATE_KEY = generated.privateKey;
+    console.log('[WEB-PUSH] Auto-generated VAPID keys (set WEB_PUSH_VAPID_PUBLIC_KEY and WEB_PUSH_VAPID_PRIVATE_KEY env vars for persistence)');
+    console.log('[WEB-PUSH] Public Key:', VAPID_PUBLIC_KEY);
+}
+
+webpush.setVapidDetails(
+    'mailto:support@steelconnect.com',
+    VAPID_PUBLIC_KEY,
+    VAPID_PRIVATE_KEY
+);
+
+// Endpoint: Get VAPID public key (frontend needs this to subscribe)
+app.get('/api/push/vapid-key', (req, res) => {
+    res.json({ success: true, publicKey: VAPID_PUBLIC_KEY });
+});
+
+// Endpoint: Save Web Push subscription for a user
+app.post('/api/push/subscribe', async (req, res) => {
+    try {
+        const { userId, subscription } = req.body;
+        if (!userId || !subscription || !subscription.endpoint) {
+            return res.status(400).json({ success: false, message: 'userId and subscription are required' });
+        }
+
+        // Upsert: check if this exact endpoint already exists for this user
+        const existing = await adminDb.collection('web_push_subscriptions')
+            .where('userId', '==', userId)
+            .where('endpoint', '==', subscription.endpoint)
+            .get();
+
+        if (existing.empty) {
+            await adminDb.collection('web_push_subscriptions').add({
+                userId,
+                endpoint: subscription.endpoint,
+                subscription: JSON.stringify(subscription),
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+            });
+            console.log(`[WEB-PUSH] New subscription saved for user ${userId}`);
+        } else {
+            // Update existing subscription (keys may have changed)
+            await existing.docs[0].ref.update({
+                subscription: JSON.stringify(subscription),
+                updatedAt: new Date().toISOString(),
+            });
+            console.log(`[WEB-PUSH] Subscription updated for user ${userId}`);
+        }
+
+        res.json({ success: true, message: 'Push subscription saved' });
+    } catch (error) {
+        console.error('[WEB-PUSH] Subscription save error:', error.message);
+        res.status(500).json({ success: false, message: 'Failed to save subscription' });
+    }
+});
+
+// Endpoint: Remove Web Push subscription
+app.post('/api/push/unsubscribe', async (req, res) => {
+    try {
+        const { userId, endpoint } = req.body;
+        if (!userId || !endpoint) {
+            return res.status(400).json({ success: false, message: 'userId and endpoint are required' });
+        }
+
+        const snapshot = await adminDb.collection('web_push_subscriptions')
+            .where('userId', '==', userId)
+            .where('endpoint', '==', endpoint)
+            .get();
+
+        for (const doc of snapshot.docs) {
+            await doc.ref.delete();
+        }
+
+        console.log(`[WEB-PUSH] Subscription removed for user ${userId}`);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('[WEB-PUSH] Unsubscribe error:', error.message);
+        res.status(500).json({ success: false, message: 'Failed to remove subscription' });
+    }
+});
+
+// Send Web Push notification to all subscriptions for a user
+async function sendWebPushNotification(userId, payload) {
+    try {
+        const snapshot = await adminDb.collection('web_push_subscriptions')
+            .where('userId', '==', userId)
+            .get();
+
+        if (snapshot.empty) {
+            console.log(`[WEB-PUSH] No subscriptions found for user ${userId}`);
+            return 0;
+        }
+
+        let sentCount = 0;
+        const invalidDocs = [];
+
+        for (const doc of snapshot.docs) {
+            try {
+                const subscription = JSON.parse(doc.data().subscription);
+                await webpush.sendNotification(subscription, JSON.stringify(payload));
+                sentCount++;
+            } catch (err) {
+                if (err.statusCode === 410 || err.statusCode === 404) {
+                    // Subscription expired or invalid - mark for cleanup
+                    invalidDocs.push(doc);
+                }
+                console.warn(`[WEB-PUSH] Failed to send to subscription: ${err.message}`);
+            }
+        }
+
+        // Clean up expired subscriptions
+        for (const doc of invalidDocs) {
+            await doc.ref.delete();
+            console.log(`[WEB-PUSH] Removed expired subscription for user ${userId}`);
+        }
+
+        console.log(`[WEB-PUSH] Sent to ${sentCount}/${snapshot.size} subscriptions for user ${userId}`);
+        return sentCount;
+    } catch (err) {
+        console.error('[WEB-PUSH] Error sending push:', err.message);
+        return 0;
+    }
+}
+
 // Track online users, presence statuses, and active calls
 const onlineUsers = new Map(); // userId -> Set<socketId> (multiple devices per user)
 const userStatuses = new Map(); // userId -> 'online' | 'away' | 'busy' | 'offline'
@@ -1787,13 +1921,29 @@ io.on('connection', (socket) => {
             console.log(`[VOICE-CALL] Callee ${calleeId} has no active sockets, will rely on push`);
         }
 
-        // Send push notification in background — catches devices without an active tab
-        // (e.g., phone screen off, browser closed on another device)
+        // Send push notifications in background — catches devices without an active tab
+        // (e.g., phone screen off, browser closed, user in another app)
         const pushCallData = { callId, callerId, callerName, conversationId, callType: callType || 'voice' };
-        sendCallPushNotification(calleeId, pushCallData).then(pushSent => {
-            console.log(`[VOICE-CALL] Push notification for ${callId}: ${pushSent}`);
+
+        // Web Push (VAPID) — works even when browser is closed, no Firebase needed on client
+        const webPushPayload = {
+            type: 'incoming_call',
+            callId, callerId, callerName,
+            conversationId: conversationId || '',
+            callType: callType || 'voice',
+            timestamp: new Date().toISOString()
+        };
+        sendWebPushNotification(calleeId, webPushPayload).then(count => {
+            console.log(`[VOICE-CALL] Web Push sent to ${count} subscription(s) for ${callId}`);
         }).catch(err => {
-            console.error(`[VOICE-CALL] Push notification error for ${callId}:`, err.message);
+            console.error(`[VOICE-CALL] Web Push error for ${callId}:`, err.message);
+        });
+
+        // FCM push (fallback for devices with Firebase configured)
+        sendCallPushNotification(calleeId, pushCallData).then(pushSent => {
+            console.log(`[VOICE-CALL] FCM push for ${callId}: ${pushSent}`);
+        }).catch(err => {
+            console.error(`[VOICE-CALL] FCM push error for ${callId}:`, err.message);
         });
 
         // 60-second timeout for all calls (allows time for push notification + login)
@@ -2070,6 +2220,7 @@ const server = httpServer.listen(PORT, '0.0.0.0', () => {
     console.log('\n📋 Environment Check:');
     console.log(`   MongoDB: ${process.env.MONGODB_URI ? '✅ Configured' : '❌ Missing'}`);
     console.log(`   Firebase: ${process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 ? '✅ Configured' : '❌ Missing'}`);
+    console.log(`   Web Push VAPID: ${process.env.WEB_PUSH_VAPID_PUBLIC_KEY ? '✅ Persistent keys' : '⚠️ Auto-generated (set WEB_PUSH_VAPID_PUBLIC_KEY & WEB_PUSH_VAPID_PRIVATE_KEY for persistence)'}`);
     console.log(`   JWT Secret: ${process.env.JWT_SECRET ? '✅ Configured' : '❌ Missing'}`);
     console.log(`   CORS Origins: ${process.env.CORS_ORIGIN ? '✅ Configured' : '⚠️ Using defaults'}`);
     console.log(`   Resend API: ${process.env.RESEND_API_KEY ? '✅ Configured' : '⚠️ Missing'}`);

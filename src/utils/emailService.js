@@ -451,6 +451,144 @@ ${htmlBody}
     }
 }
 
+// ============================================================
+// MEETING INVITATION EMAIL (Outlook-style professional invitation)
+// ============================================================
+export async function sendMeetingInvitationEmail(attendee, meeting, organizer) {
+    try {
+        const meetingDate = new Date(meeting.meetingDateTime);
+        const endDate = new Date(meeting.endDateTime);
+        const formattedDate = meetingDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+        const formattedTime = meetingDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+        const formattedEndTime = endDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+        const attendeeList = (meeting.attendees || []).map(a => a.name).join(', ');
+
+        const htmlContent = `
+<div style="border-left:4px solid #2563eb; padding-left:16px; margin-bottom:20px;">
+<p style="font-size:12px; color:#64748b; text-transform:uppercase; letter-spacing:1px; margin:0 0 4px 0;">Meeting Invitation</p>
+<h2 ${S.h2}>${meeting.title}</h2>
+</div>
+
+<p ${S.p}>Hi ${attendee.name},</p>
+<p ${S.p}>${organizer.name} has invited you to a meeting. Please review the details below.</p>
+
+<table ${S.table}>
+<tr><td ${S.tdLabel}><strong>When</strong></td><td ${S.tdValue}>${formattedDate}<br>${formattedTime} - ${formattedEndTime}</td></tr>
+<tr><td ${S.tdLabel}><strong>Duration</strong></td><td ${S.tdValue}>${meeting.duration} minutes</td></tr>
+<tr><td ${S.tdLabel}><strong>Location</strong></td><td ${S.tdValue}>${meeting.location || 'Online'}</td></tr>
+<tr><td ${S.tdLabel}><strong>Organizer</strong></td><td ${S.tdValue}>${organizer.name} (${organizer.email || meeting.organizerEmail})</td></tr>
+${meeting.jobTitle ? `<tr><td ${S.tdLabel}><strong>Project</strong></td><td ${S.tdValue}>${meeting.jobTitle}</td></tr>` : ''}
+${attendeeList ? `<tr><td ${S.tdLabel}><strong>Attendees</strong></td><td ${S.tdValue}>${attendeeList}</td></tr>` : ''}
+</table>
+
+${meeting.agenda ? `
+<div style="margin:18px 0;">
+<p style="font-size:14px; font-weight:600; color:#0f172a; margin:0 0 8px 0;">Agenda</p>
+<div style="padding:12px 16px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; font-size:14px; color:#334155; line-height:1.7;">${meeting.agenda}</div>
+</div>` : ''}
+
+${meeting.description ? `<p ${S.p}><strong>Notes:</strong> ${meeting.description}</p>` : ''}
+
+<p style="margin:24px 0;">
+<a href="https://steelconnectapp.com/dashboard" ${S.btn}>View in Dashboard</a>
+</p>
+
+<p ${S.muted}>This invitation was sent via SteelConnect. Log in to your dashboard to accept or decline.</p>`;
+
+        return await sendEmail({
+            to: attendee.email,
+            subject: `Meeting: ${meeting.title} — ${formattedDate}, ${formattedTime}`,
+            htmlContent,
+        });
+    } catch (error) {
+        console.error('Error sending meeting invitation email:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+// ============================================================
+// MEETING UPDATE / RESCHEDULE EMAIL
+// ============================================================
+export async function sendMeetingUpdateEmail(attendee, meeting, organizer, isRescheduled = false) {
+    try {
+        const meetingDate = new Date(meeting.meetingDateTime);
+        const formattedDate = meetingDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+        const formattedTime = meetingDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+        const htmlContent = `
+<div style="border-left:4px solid ${isRescheduled ? '#f59e0b' : '#3b82f6'}; padding-left:16px; margin-bottom:20px;">
+<p style="font-size:12px; color:#64748b; text-transform:uppercase; letter-spacing:1px; margin:0 0 4px 0;">${isRescheduled ? 'Meeting Rescheduled' : 'Meeting Updated'}</p>
+<h2 ${S.h2}>${meeting.title}</h2>
+</div>
+
+<p ${S.p}>Hi ${attendee.name},</p>
+<p ${S.p}>${organizer.name} has ${isRescheduled ? 'rescheduled' : 'updated'} the following meeting:</p>
+
+${isRescheduled ? `<div ${S.notice}><strong>New Date & Time:</strong> ${formattedDate} at ${formattedTime}</div>` : ''}
+
+<table ${S.table}>
+<tr><td ${S.tdLabel}><strong>Meeting</strong></td><td ${S.tdValue}>${meeting.title}</td></tr>
+<tr><td ${S.tdLabel}><strong>When</strong></td><td ${S.tdValue}>${formattedDate} at ${formattedTime}</td></tr>
+<tr><td ${S.tdLabel}><strong>Duration</strong></td><td ${S.tdValue}>${meeting.duration} minutes</td></tr>
+<tr><td ${S.tdLabel}><strong>Location</strong></td><td ${S.tdValue}>${meeting.location || 'Online'}</td></tr>
+</table>
+
+<p style="margin:24px 0;">
+<a href="https://steelconnectapp.com/dashboard" ${S.btn}>View Details</a>
+</p>`;
+
+        return await sendEmail({
+            to: attendee.email,
+            subject: `${isRescheduled ? 'Rescheduled' : 'Updated'}: ${meeting.title} — ${formattedDate}`,
+            htmlContent,
+        });
+    } catch (error) {
+        console.error('Error sending meeting update email:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+// ============================================================
+// MEETING CANCELLATION EMAIL
+// ============================================================
+export async function sendMeetingCancellationEmail(attendee, meeting, organizer) {
+    try {
+        const meetingDate = new Date(meeting.meetingDateTime);
+        const formattedDate = meetingDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+        const formattedTime = meetingDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+        const htmlContent = `
+<div style="border-left:4px solid #ef4444; padding-left:16px; margin-bottom:20px;">
+<p style="font-size:12px; color:#64748b; text-transform:uppercase; letter-spacing:1px; margin:0 0 4px 0;">Meeting Cancelled</p>
+<h2 ${S.h2}>${meeting.title}</h2>
+</div>
+
+<p ${S.p}>Hi ${attendee.name},</p>
+<p ${S.p}>${organizer.name} has cancelled the following meeting:</p>
+
+<table ${S.table}>
+<tr><td ${S.tdLabel}><strong>Meeting</strong></td><td ${S.tdValue}><s>${meeting.title}</s></td></tr>
+<tr><td ${S.tdLabel}><strong>Was Scheduled</strong></td><td ${S.tdValue}><s>${formattedDate} at ${formattedTime}</s></td></tr>
+<tr><td ${S.tdLabel}><strong>Status</strong></td><td ${S.tdValue}><span style="color:#ef4444;font-weight:600;">Cancelled</span></td></tr>
+</table>
+
+<p ${S.p}>This meeting has been removed from your schedule. No further action is required.</p>
+
+<p style="margin:24px 0;">
+<a href="https://steelconnectapp.com/dashboard" ${S.btn}>Go to Dashboard</a>
+</p>`;
+
+        return await sendEmail({
+            to: attendee.email,
+            subject: `Cancelled: ${meeting.title} — ${formattedDate}`,
+            htmlContent,
+        });
+    } catch (error) {
+        console.error('Error sending meeting cancellation email:', error);
+        return { success: false, error: error.message };
+    }
+}
+
 export default {
     sendLoginNotification,
     sendEstimationResultNotification,
@@ -460,4 +598,7 @@ export default {
     sendProfileApprovalRequestToAdmin,
     sendMarketingEmail,
     sendGenericEmail,
+    sendMeetingInvitationEmail,
+    sendMeetingUpdateEmail,
+    sendMeetingCancellationEmail,
 };

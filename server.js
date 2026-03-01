@@ -611,6 +611,27 @@ if (voiceCallRoutes) {
     console.warn('⚠️ Voice call routes unavailable');
 }
 
+// Meeting scheduling routes
+let meetingRoutes;
+try {
+    const meetingModule = await import('./src/routes/meetings.js');
+    meetingRoutes = meetingModule.default;
+    console.log('✅ Meeting routes imported successfully');
+} catch (error) {
+    console.warn('⚠️ Meeting routes not available:', error.message);
+}
+if (meetingRoutes) {
+    app.use('/api/meetings', meetingRoutes);
+    console.log('✅ Meeting routes registered at /api/meetings');
+    console.log('📅 Meeting Scheduling: ENABLED');
+    console.log('   • Schedule project meetings');
+    console.log('   • Professional email invitations');
+    console.log('   • Accept/decline meeting responses');
+    console.log('   • Meeting reschedule & cancellation');
+} else {
+    console.warn('⚠️ Meeting routes unavailable - meeting scheduling disabled');
+}
+
 console.log('📦 Route registration completed');
 
 // --- PUBLIC: Prospect Email Capture (no auth required) ---

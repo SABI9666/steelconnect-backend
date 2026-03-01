@@ -139,7 +139,9 @@ router.post('/', authenticateToken, async (req, res) => {
                 meetingTitle: title,
                 meetingDate,
                 meetingTime,
-                attendeeCount: attendees.length
+                attendeeCount: attendees.length,
+                jobId: jobId || null,
+                jobTitle: jobData?.title || null
             }
         );
 
@@ -334,7 +336,9 @@ router.put('/:meetingId', authenticateToken, async (req, res) => {
                         organizerName: existingMeeting.organizerName,
                         meetingTitle: updateData.title || existingMeeting.title,
                         meetingDate: newDate,
-                        meetingTime: newTime
+                        meetingTime: newTime,
+                        jobId: existingMeeting.jobId || null,
+                        jobTitle: existingMeeting.jobTitle || null
                     }
                 );
 
@@ -390,7 +394,9 @@ router.delete('/:meetingId', authenticateToken, async (req, res) => {
                         action: 'meeting_cancelled',
                         meetingId,
                         organizerName: meeting.organizerName,
-                        meetingTitle: meeting.title
+                        meetingTitle: meeting.title,
+                        jobId: meeting.jobId || null,
+                        jobTitle: meeting.jobTitle || null
                     }
                 );
 
@@ -451,7 +457,9 @@ router.patch('/:meetingId/respond', authenticateToken, async (req, res) => {
                 meetingId,
                 respondentId: userId,
                 respondentName: respondent.name,
-                meetingTitle: meeting.title
+                meetingTitle: meeting.title,
+                jobId: meeting.jobId || null,
+                jobTitle: meeting.jobTitle || null
             }
         );
 

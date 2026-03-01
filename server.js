@@ -1557,6 +1557,38 @@ app.get('/api/voice-calls/turn-credentials', async (req, res) => {
     }
 });
 
+// REST endpoint for declining calls from push notification (when user has no socket)
+app.post('/api/voice-calls/decline', (req, res) => {
+    const { callId, reason } = req.body;
+    if (!callId) return res.status(400).json({ error: 'callId required' });
+
+    const call = activeCalls.get(callId);
+    if (!call) return res.json({ success: true, message: 'Call already ended' });
+
+    const callerSocketId = onlineUsers.get(call.callerId) || call.callerSocketId;
+    console.log(`[VOICE-CALL] Call declined via push notification: ${callId} | reason: ${reason || 'declined'}`);
+
+    if (callerSocketId) {
+        io.to(callerSocketId).emit('call-rejected', {
+            callId, calleeId: call.calleeId, reason: reason || 'declined'
+        });
+    }
+
+    // Clean up
+    pendingCalls.delete(call.calleeId);
+    activeCalls.delete(callId);
+
+    // Log the declined call
+    adminDb.collection('call_logs').add({
+        callId, callerId: call.callerId, callerName: call.callerName,
+        calleeId: call.calleeId, conversationId: call.conversationId,
+        callType: call.callType, status: 'rejected', reason: reason || 'declined',
+        startedAt: call.startedAt, endedAt: new Date().toISOString(), duration: 0
+    }).catch(err => console.error('[VOICE-CALL] Failed to log push-declined call:', err.message));
+
+    res.json({ success: true });
+});
+
 io.on('connection', (socket) => {
     console.log(`[SOCKET] Client connected: ${socket.id}`);
 
@@ -1720,7 +1752,7 @@ io.on('connection', (socket) => {
                 console.error('[VOICE-CALL] Failed to create notification:', err.message);
             }
 
-            // Extended timeout for push-notified calls (45 seconds to allow app to open)
+            // Extended timeout for push-notified calls (60 seconds to allow app open + login)
             setTimeout(async () => {
                 const call = activeCalls.get(callId);
                 if (call && call.status === 'ringing') {
@@ -1742,7 +1774,7 @@ io.on('connection', (socket) => {
                         console.error('[VOICE-CALL] Failed to log timeout:', err.message);
                     }
                 }
-            }, 45000);
+            }, 60000);
         }
     });
 

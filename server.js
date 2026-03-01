@@ -1734,7 +1734,9 @@ io.on('connection', (socket) => {
             socket.userId = callerId;
         }
 
-        console.log(`[VOICE-CALL] ${callerName} (${callerId}) calling ${calleeId} | callId: ${callId} | calleeStatus: ${calleeStatus} | calleeSockets: ${calleeSockets.size} | callerSocketId: ${socket.id}`);
+        // Log all registered users for debugging call delivery issues
+        const registeredUserIds = Array.from(onlineUsers.keys());
+        console.log(`[VOICE-CALL] ${callerName} (${callerId}) calling ${calleeId} | callId: ${callId} | calleeStatus: ${calleeStatus} | calleeSockets: ${calleeSockets.size} | callerSocketId: ${socket.id} | onlineUsers: [${registeredUserIds.join(', ')}]`);
 
         // Block calls to busy users
         if (calleeStatus === 'busy') {

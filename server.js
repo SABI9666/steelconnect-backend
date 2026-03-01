@@ -1794,21 +1794,6 @@ io.on('connection', (socket) => {
             console.error(`[VOICE-CALL] Push notification error for ${callId}:`, err.message);
         });
 
-        // Log notification for missed call history
-        try {
-            await adminDb.collection('notifications').add({
-                userId: calleeId,
-                title: 'Missed Call',
-                message: `${callerName} tried to call you`,
-                type: 'voice_call',
-                metadata: { callId, callerId, callerName, conversationId },
-                read: false,
-                createdAt: new Date().toISOString(),
-            });
-        } catch (err) {
-            console.error('[VOICE-CALL] Failed to create notification:', err.message);
-        }
-
         // 60-second timeout for all calls (allows time for push notification + login)
         setTimeout(async () => {
             const call = activeCalls.get(callId);
@@ -1822,6 +1807,19 @@ io.on('connection', (socket) => {
                         callId, callerId, callerName, calleeId, conversationId,
                         callType: callType || 'voice', status: 'missed', reason: 'no_answer',
                         startedAt: new Date().toISOString(), endedAt: new Date().toISOString(), duration: 0
+                    });
+                    // Create missed call notification only when the call actually times out
+                    await adminDb.collection('notifications').add({
+                        userId: calleeId,
+                        title: 'Missed Call',
+                        message: `${callerName} tried to call you`,
+                        type: 'voice_call',
+                        metadata: { callId, callerId, callerName, conversationId },
+                        isRead: false,
+                        seen: false,
+                        deleted: false,
+                        createdAt: new Date().toISOString(),
+                        updatedAt: new Date().toISOString(),
                     });
                 } catch (err) {
                     console.error('[VOICE-CALL] Failed to log timeout:', err.message);

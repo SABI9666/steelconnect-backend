@@ -1769,11 +1769,6 @@ io.on('connection', (socket) => {
         // Deliver incoming call to ALL connected devices (laptop, phone, etc.)
         const deliveredCount = emitToUser(calleeId, 'incoming-call', callPayload);
 
-        // ALWAYS send push notification too — catches devices where browser tab is
-        // closed or phone screen is off (they won't have an active socket)
-        const pushCallData = { callId, callerId, callerName, conversationId, callType: callType || 'voice' };
-        const pushSent = await sendCallPushNotification(calleeId, pushCallData);
-
         // Store as pending so new devices connecting can also get the call
         pendingCalls.set(calleeId, {
             callId, callerId, callerName, conversationId,
@@ -1781,13 +1776,23 @@ io.on('connection', (socket) => {
             startedAt: new Date().toISOString()
         });
 
+        // Emit call-ringing IMMEDIATELY so caller gets the callId right away
+        // (before the potentially slow push notification)
+        socket.emit('call-ringing', { callId, calleeId });
         if (deliveredCount > 0) {
-            socket.emit('call-ringing', { callId, calleeId, pushNotified: pushSent });
-            console.log(`[VOICE-CALL] Call delivered to ${deliveredCount} device(s) + push: ${pushSent}`);
+            console.log(`[VOICE-CALL] Call delivered to ${deliveredCount} device(s) for ${calleeId}`);
         } else {
-            socket.emit('call-ringing', { callId, calleeId, pushNotified: true });
-            console.log(`[VOICE-CALL] Callee ${calleeId} has no active sockets, push: ${pushSent}`);
+            console.log(`[VOICE-CALL] Callee ${calleeId} has no active sockets, will rely on push`);
         }
+
+        // Send push notification in background — catches devices without an active tab
+        // (e.g., phone screen off, browser closed on another device)
+        const pushCallData = { callId, callerId, callerName, conversationId, callType: callType || 'voice' };
+        sendCallPushNotification(calleeId, pushCallData).then(pushSent => {
+            console.log(`[VOICE-CALL] Push notification for ${callId}: ${pushSent}`);
+        }).catch(err => {
+            console.error(`[VOICE-CALL] Push notification error for ${callId}:`, err.message);
+        });
 
         // Log notification for missed call history
         try {
@@ -1847,8 +1852,9 @@ io.on('connection', (socket) => {
         call.calleeSocketId = socket.id;
         pendingCalls.delete(calleeId);
 
-        // Notify caller
-        const callerSocketId = getUserSocket(call.callerId) || call.callerSocketId;
+        // Notify caller — use the STORED socket first (the one that made the call),
+        // fall back to any online socket
+        const callerSocketId = call.callerSocketId || getUserSocket(call.callerId);
         console.log(`[VOICE-CALL] Call accepted: ${callId} | device: ${socket.id} | callerId: ${call.callerId} | callerSocketId: ${callerSocketId || 'NOT FOUND'}`);
         if (callerSocketId) {
             io.to(callerSocketId).emit('call-accepted', { callId, calleeId });
@@ -1874,8 +1880,8 @@ io.on('connection', (socket) => {
             return;
         }
 
-        // Notify caller
-        const callerSocketId = getUserSocket(call.callerId) || call.callerSocketId;
+        // Notify caller — use STORED socket first (the one that made the call)
+        const callerSocketId = call.callerSocketId || getUserSocket(call.callerId);
         console.log(`[VOICE-CALL] Call rejected: ${callId} | reason: ${reason || 'declined'} | callerId: ${call.callerId} | callerSocketId: ${callerSocketId || 'NOT FOUND'}`);
 
         if (callerSocketId) {

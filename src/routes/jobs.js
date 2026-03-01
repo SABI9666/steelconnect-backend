@@ -8,7 +8,7 @@ import {
   getJobsByUserId,
   updateJob
 } from '../controllers/jobController.js';
-import { authenticateToken, isContractor } from '../middleware/auth.js';
+import { authenticateToken, isContractor, isDesigner } from '../middleware/auth.js';
 import { 
   upload, 
   handleUploadError, 
@@ -293,6 +293,185 @@ router.put(
     }
   }
 );
+
+// Designer submits/updates completion percentage with details
+router.put('/:id/completion', authenticateToken, isDesigner, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { percentage, details } = req.body;
+        const designerId = req.user.userId;
+
+        if (percentage === undefined || percentage === null) {
+            return res.status(400).json({ success: false, message: 'Percentage is required.' });
+        }
+        const pct = parseInt(percentage);
+        if (isNaN(pct) || pct < 0 || pct > 100) {
+            return res.status(400).json({ success: false, message: 'Percentage must be between 0 and 100.' });
+        }
+        if (!details || !details.trim()) {
+            return res.status(400).json({ success: false, message: 'Details about the progress are required.' });
+        }
+
+        const jobDoc = await adminDb.collection('jobs').doc(id).get();
+        if (!jobDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Project not found.' });
+        }
+
+        const jobData = jobDoc.data();
+        if (jobData.assignedTo !== designerId) {
+            return res.status(403).json({ success: false, message: 'You are not assigned to this project.' });
+        }
+        if (jobData.status !== 'assigned') {
+            return res.status(400).json({ success: false, message: 'Completion updates can only be submitted for in-progress projects.' });
+        }
+
+        const completionUpdate = {
+            percentage: pct,
+            details: details.trim(),
+            submittedBy: designerId,
+            submittedByName: req.user.name || 'Designer',
+            submittedAt: new Date().toISOString(),
+            status: 'pending' // pending, accepted, rejected
+        };
+
+        // Keep history of all updates
+        const existingHistory = jobData.completionHistory || [];
+        existingHistory.push(completionUpdate);
+
+        await adminDb.collection('jobs').doc(id).update({
+            completionUpdate: completionUpdate,
+            completionHistory: existingHistory,
+            updatedAt: new Date().toISOString()
+        });
+
+        // Notify contractor about the completion update
+        try {
+            const notification = {
+                userId: jobData.posterId,
+                title: 'Project Progress Update',
+                message: `Designer ${req.user.name || 'Designer'} has submitted a ${pct}% completion update for "${jobData.title}"`,
+                type: 'job',
+                metadata: {
+                    action: 'completion_update_submitted',
+                    jobId: id,
+                    jobTitle: jobData.title,
+                    designerId: designerId,
+                    designerName: req.user.name,
+                    percentage: pct
+                },
+                isRead: false,
+                seen: false,
+                deleted: false,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+            await adminDb.collection('notifications').add(notification);
+        } catch (notifError) {
+            console.error('Failed to send completion update notification:', notifError);
+        }
+
+        res.status(200).json({
+            success: true,
+            message: 'Completion update submitted successfully.',
+            data: completionUpdate
+        });
+    } catch (error) {
+        console.error('Error submitting completion update:', error);
+        res.status(500).json({ success: false, message: 'Failed to submit completion update.' });
+    }
+});
+
+// Contractor accepts or rejects a completion update
+router.put('/:id/completion/respond', authenticateToken, isContractor, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { action, rejectionReason } = req.body;
+        const contractorId = req.user.userId;
+
+        if (!action || !['accept', 'reject'].includes(action)) {
+            return res.status(400).json({ success: false, message: 'Action must be "accept" or "reject".' });
+        }
+
+        const jobDoc = await adminDb.collection('jobs').doc(id).get();
+        if (!jobDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Project not found.' });
+        }
+
+        const jobData = jobDoc.data();
+        if (jobData.posterId !== contractorId) {
+            return res.status(403).json({ success: false, message: 'You are not the owner of this project.' });
+        }
+        if (!jobData.completionUpdate || jobData.completionUpdate.status !== 'pending') {
+            return res.status(400).json({ success: false, message: 'No pending completion update to respond to.' });
+        }
+
+        const updatedCompletion = { ...jobData.completionUpdate };
+        updatedCompletion.status = action === 'accept' ? 'accepted' : 'rejected';
+        updatedCompletion.respondedAt = new Date().toISOString();
+        updatedCompletion.respondedBy = contractorId;
+        updatedCompletion.respondedByName = req.user.name || 'Contractor';
+        if (action === 'reject' && rejectionReason) {
+            updatedCompletion.rejectionReason = rejectionReason.trim();
+        }
+
+        const updateData = {
+            completionUpdate: updatedCompletion,
+            updatedAt: new Date().toISOString()
+        };
+
+        // If accepted, update the confirmed completion percentage
+        if (action === 'accept') {
+            updateData.completionPercentage = updatedCompletion.percentage;
+            updateData.completionDetails = updatedCompletion.details;
+            updateData.completionAcceptedAt = new Date().toISOString();
+        }
+
+        // Update history with the response
+        const history = jobData.completionHistory || [];
+        if (history.length > 0) {
+            history[history.length - 1] = updatedCompletion;
+        }
+        updateData.completionHistory = history;
+
+        await adminDb.collection('jobs').doc(id).update(updateData);
+
+        // Notify designer about the response
+        try {
+            const notification = {
+                userId: jobData.assignedTo,
+                title: action === 'accept' ? 'Completion Update Accepted' : 'Completion Update Rejected',
+                message: action === 'accept'
+                    ? `Your ${updatedCompletion.percentage}% completion update for "${jobData.title}" has been accepted by the contractor.`
+                    : `Your completion update for "${jobData.title}" was rejected.${rejectionReason ? ' Reason: ' + rejectionReason : ''}`,
+                type: 'job',
+                metadata: {
+                    action: action === 'accept' ? 'completion_accepted' : 'completion_rejected',
+                    jobId: id,
+                    jobTitle: jobData.title,
+                    contractorId: contractorId,
+                    percentage: updatedCompletion.percentage
+                },
+                isRead: false,
+                seen: false,
+                deleted: false,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+            await adminDb.collection('notifications').add(notification);
+        } catch (notifError) {
+            console.error('Failed to send completion response notification:', notifError);
+        }
+
+        res.status(200).json({
+            success: true,
+            message: `Completion update ${action === 'accept' ? 'accepted' : 'rejected'} successfully.`,
+            data: updatedCompletion
+        });
+    } catch (error) {
+        console.error('Error responding to completion update:', error);
+        res.status(500).json({ success: false, message: 'Failed to respond to completion update.' });
+    }
+});
 
 router.delete('/:id', authenticateToken, isContractor, deleteJob);
 

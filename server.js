@@ -1390,6 +1390,10 @@ app.post('/api/push/subscribe', async (req, res) => {
         if (!userId || !subscription || !subscription.endpoint) {
             return res.status(400).json({ success: false, message: 'userId and subscription are required' });
         }
+        // Validate subscription has all required Web Push fields
+        if (!subscription.keys || !subscription.keys.p256dh || !subscription.keys.auth) {
+            return res.status(400).json({ success: false, message: 'Invalid subscription: missing keys (p256dh, auth)' });
+        }
 
         // Upsert: check if this exact endpoint already exists for this user
         const existing = await adminDb.collection('web_push_subscriptions')
@@ -1450,6 +1454,12 @@ app.post('/api/push/unsubscribe', async (req, res) => {
 // Send Web Push notification to all subscriptions for a user
 async function sendWebPushNotification(userId, payload) {
     try {
+        // Ensure VAPID keys are loaded before sending (critical on server startup)
+        if (!vapidReady) {
+            console.log('[WEB-PUSH] Waiting for VAPID keys to initialize...');
+            await vapidInitPromise;
+        }
+
         const snapshot = await adminDb.collection('web_push_subscriptions')
             .where('userId', '==', userId)
             .get();
@@ -1944,6 +1954,7 @@ io.on('connection', (socket) => {
         io.emit('user-online', { userId, status: userStatuses.get(userId) });
 
         // Deliver any pending calls for this user (they may have received a push notification)
+        let callDelivered = false;
         const pending = pendingCalls.get(userId);
         if (pending) {
             const call = activeCalls.get(pending.callId);
@@ -1956,10 +1967,44 @@ io.on('connection', (socket) => {
                     callerName: pending.callerName,
                     conversationId: pending.conversationId,
                     callType: pending.callType || 'voice',
-                    autoAccept: wasAcceptedViaPush // Frontend should auto-accept if user already tapped Answer
+                    autoAccept: wasAcceptedViaPush
                 });
+                callDelivered = true;
             }
             pendingCalls.delete(userId);
+        }
+
+        // Also scan activeCalls for any calls in 'accepted_via_push' state for this user.
+        // This catches the case where REST /accept was called but pendingCalls was already
+        // cleaned up by timeout or wasn't populated (race condition).
+        if (!callDelivered) {
+            for (const [callId, call] of activeCalls.entries()) {
+                if (call.calleeId === userId && call.status === 'accepted_via_push') {
+                    console.log(`[VOICE-CALL] Found accepted_via_push call ${callId} for user ${userId} — delivering with autoAccept`);
+                    socket.emit('incoming-call', {
+                        callId,
+                        callerId: call.callerId,
+                        callerName: call.callerName,
+                        conversationId: call.conversationId,
+                        callType: call.callType || 'voice',
+                        autoAccept: true
+                    });
+                    break; // Only deliver one call
+                }
+                // Also deliver ringing calls that weren't in pendingCalls
+                if (call.calleeId === userId && call.status === 'ringing') {
+                    console.log(`[VOICE-CALL] Found ringing call ${callId} for user ${userId} — delivering`);
+                    socket.emit('incoming-call', {
+                        callId,
+                        callerId: call.callerId,
+                        callerName: call.callerName,
+                        conversationId: call.conversationId,
+                        callType: call.callType || 'voice',
+                        autoAccept: false
+                    });
+                    break;
+                }
+            }
         }
     });
 

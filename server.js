@@ -1836,7 +1836,8 @@ app.post('/api/voice-calls/decline', (req, res) => {
     // Log the declined call
     adminDb.collection('call_logs').add({
         callId, callerId: call.callerId, callerName: call.callerName,
-        calleeId: call.calleeId, conversationId: call.conversationId,
+        calleeId: call.calleeId, calleeName: call.calleeName || '',
+        conversationId: call.conversationId,
         callType: call.callType, status: 'rejected', reason: reason || 'declined',
         startedAt: call.startedAt, endedAt: new Date().toISOString(), duration: 0
     }).catch(err => console.error('[VOICE-CALL] Failed to log push-declined call:', err.message));
@@ -1912,7 +1913,7 @@ io.on('connection', (socket) => {
 
     // Voice call: Initiate a call
     socket.on('call-initiate', async (data) => {
-        const { callerId, callerName, calleeId, conversationId, callType } = data;
+        const { callerId, callerName, calleeId, calleeName, conversationId, callType } = data;
         const calleeSockets = getUserSockets(calleeId);
         const calleeStatus = userStatuses.get(calleeId) || 'offline';
         const callId = `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -1932,7 +1933,8 @@ io.on('connection', (socket) => {
             socket.emit('call-rejected', { callId, calleeId, reason: 'busy', status: 'busy' });
             try {
                 await adminDb.collection('call_logs').add({
-                    callId, callerId, callerName, calleeId, conversationId,
+                    callId, callerId, callerName, calleeId, calleeName: calleeName || '',
+                    conversationId,
                     callType: callType || 'voice', status: 'rejected', reason: 'busy',
                     startedAt: new Date().toISOString(), endedAt: new Date().toISOString(), duration: 0
                 });
@@ -1944,7 +1946,8 @@ io.on('connection', (socket) => {
 
         // Store active call with caller's socket ID for reliable event delivery
         activeCalls.set(callId, {
-            callerId, callerName, calleeId, conversationId,
+            callerId, callerName, calleeId, calleeName: calleeName || '',
+            conversationId,
             callerSocketId: socket.id,
             calleeSocketId: null, // set when callee accepts on a specific device
             callType: callType || 'voice',
@@ -2012,7 +2015,9 @@ io.on('connection', (socket) => {
                 pendingCalls.delete(calleeId);
                 try {
                     await adminDb.collection('call_logs').add({
-                        callId, callerId, callerName, calleeId, conversationId,
+                        callId, callerId, callerName, calleeId,
+                        calleeName: calleeName || '',
+                        conversationId,
                         callType: callType || 'voice', status: 'missed', reason: 'no_answer',
                         startedAt: new Date().toISOString(), endedAt: new Date().toISOString(), duration: 0
                     });
@@ -2109,7 +2114,8 @@ io.on('connection', (socket) => {
         try {
             await adminDb.collection('call_logs').add({
                 callId, callerId: call.callerId, callerName: call.callerName,
-                calleeId: call.calleeId, conversationId: call.conversationId,
+                calleeId: call.calleeId, calleeName: call.calleeName || '',
+                conversationId: call.conversationId,
                 callType: call.callType, status: 'rejected', reason: reason || 'declined',
                 startedAt: call.startedAt, endedAt: new Date().toISOString(), duration: 0
             });
@@ -2145,7 +2151,8 @@ io.on('connection', (socket) => {
         try {
             await adminDb.collection('call_logs').add({
                 callId, callerId: call.callerId, callerName: call.callerName,
-                calleeId: call.calleeId, conversationId: call.conversationId,
+                calleeId: call.calleeId, calleeName: call.calleeName || '',
+                conversationId: call.conversationId,
                 callType: call.callType, status: duration > 0 ? 'completed' : 'cancelled',
                 startedAt: call.startedAt, connectedAt: call.connectedAt || null,
                 endedAt, duration
@@ -2271,7 +2278,8 @@ io.on('connection', (socket) => {
                             : 0;
                         await adminDb.collection('call_logs').add({
                             callId, callerId: call.callerId, callerName: call.callerName,
-                            calleeId: call.calleeId, conversationId: call.conversationId,
+                            calleeId: call.calleeId, calleeName: call.calleeName || '',
+                            conversationId: call.conversationId,
                             callType: call.callType, status: 'disconnected',
                             startedAt: call.startedAt, connectedAt: call.connectedAt || null,
                             endedAt, duration

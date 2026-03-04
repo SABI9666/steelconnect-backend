@@ -1953,6 +1953,27 @@ io.on('connection', (socket) => {
         console.log(`[SOCKET] User registered: ${userId} -> ${socket.id} | status: ${userStatuses.get(userId)}`);
         io.emit('user-online', { userId, status: userStatuses.get(userId) });
 
+        // Update socket ID on any active CONNECTED calls (reconnection after brief disconnect).
+        // This ensures WebRTC signaling routes to the new socket after network recovery.
+        for (const [callId, call] of activeCalls.entries()) {
+            if (call.status === 'connected') {
+                if (call.callerId === userId && call.callerSocketId !== socket.id) {
+                    console.log(`[VOICE-CALL] Updating caller socket for call ${callId}: ${call.callerSocketId} -> ${socket.id}`);
+                    call.callerSocketId = socket.id;
+                    // Cancel grace timer if it was running
+                    if (call._graceTimer) { clearTimeout(call._graceTimer); call._graceTimer = null; }
+                    // Notify callee that caller reconnected
+                    emitToUser(call.calleeId, 'call-reconnected', { callId });
+                }
+                if (call.calleeId === userId && call.calleeSocketId !== socket.id) {
+                    console.log(`[VOICE-CALL] Updating callee socket for call ${callId}: ${call.calleeSocketId} -> ${socket.id}`);
+                    call.calleeSocketId = socket.id;
+                    if (call._graceTimer) { clearTimeout(call._graceTimer); call._graceTimer = null; }
+                    emitToUser(call.callerId, 'call-reconnected', { callId });
+                }
+            }
+        }
+
         // Deliver any pending calls for this user (they may have received a push notification)
         let callDelivered = false;
         const pending = pendingCalls.get(userId);
@@ -2398,22 +2419,81 @@ io.on('connection', (socket) => {
                     continue; // Other devices are still ringing
                 }
 
-                // IMPORTANT: For ringing calls where the CALLEE disconnects (logout/close),
+                // For ringing/accepted_via_push calls where CALLEE disconnects (logout/close),
                 // do NOT end the call — push notifications have been sent and the user may
-                // still answer via push (like WhatsApp/Teams). The 90-second timeout will
-                // handle cleanup if they don't answer.
-                if (call.status === 'ringing' && call.calleeId === socket.userId && remainingSockets.size === 0) {
-                    console.log(`[VOICE-CALL] Callee ${socket.userId} disconnected during ringing for call ${callId} — keeping call alive for push notification delivery`);
-                    // Re-store as pending so if they reconnect (login again), they get the call
+                // still answer via push. The 120-second timeout handles cleanup.
+                if ((call.status === 'ringing' || call.status === 'accepted_via_push') &&
+                    call.calleeId === socket.userId && remainingSockets.size === 0) {
+                    console.log(`[VOICE-CALL] Callee ${socket.userId} disconnected during ${call.status} for call ${callId} — keeping alive for push`);
                     pendingCalls.set(call.calleeId, {
                         callId, callerId: call.callerId, callerName: call.callerName,
                         conversationId: call.conversationId, callType: call.callType,
-                        startedAt: call.startedAt
+                        startedAt: call.startedAt,
+                        acceptedViaPush: call.status === 'accepted_via_push'
                     });
                     continue;
                 }
 
-                if (isCallerSocket || isCalleeSocket ||
+                // For CONNECTED calls: give a 20-second grace period before ending.
+                // Network glitches (mobile screen lock, tab switch, WiFi handoff) cause
+                // brief socket disconnects — the user often reconnects within seconds.
+                // Like WhatsApp/Teams: calls survive momentary connection drops.
+                if ((isCallerSocket || isCalleeSocket) && call.status === 'connected') {
+                    const disconnectedRole = isCallerSocket ? 'caller' : 'callee';
+                    const disconnectedUserId = socket.userId;
+                    console.log(`[VOICE-CALL] ${disconnectedRole} socket disconnected for connected call ${callId} — starting 20s grace period`);
+
+                    // Notify the other party that connection is unstable
+                    const otherUserId = disconnectedUserId === call.callerId ? call.calleeId : call.callerId;
+                    emitToUser(otherUserId, 'call-reconnecting', { callId, disconnectedUserId });
+
+                    // Clear any existing grace timer for this call
+                    if (call._graceTimer) clearTimeout(call._graceTimer);
+
+                    call._graceTimer = setTimeout(async () => {
+                        const currentCall = activeCalls.get(callId);
+                        if (!currentCall || currentCall.status !== 'connected') return;
+
+                        // Check if user reconnected on a new socket
+                        const newSockets = getUserSockets(disconnectedUserId);
+                        if (newSockets.size > 0) {
+                            // User reconnected! Update the socket ID and continue
+                            const newSocketId = newSockets.values().next().value;
+                            if (isCallerSocket) currentCall.callerSocketId = newSocketId;
+                            else currentCall.calleeSocketId = newSocketId;
+                            console.log(`[VOICE-CALL] ${disconnectedRole} reconnected for call ${callId} on socket ${newSocketId}`);
+                            emitToUser(otherUserId, 'call-reconnected', { callId });
+                            return;
+                        }
+
+                        // Still disconnected after grace period — end the call
+                        console.log(`[VOICE-CALL] ${disconnectedRole} did not reconnect within grace period for call ${callId} — ending call`);
+                        emitToUser(otherUserId, 'call-ended', { callId, endedBy: disconnectedUserId, reason: 'disconnected' });
+
+                        try {
+                            const endedAt = new Date().toISOString();
+                            const duration = currentCall.connectedAt
+                                ? Math.floor((new Date(endedAt) - new Date(currentCall.connectedAt)) / 1000)
+                                : 0;
+                            await adminDb.collection('call_logs').add({
+                                callId, callerId: currentCall.callerId, callerName: currentCall.callerName,
+                                calleeId: currentCall.calleeId, calleeName: currentCall.calleeName || '',
+                                conversationId: currentCall.conversationId,
+                                callType: currentCall.callType, status: 'disconnected',
+                                startedAt: currentCall.startedAt, connectedAt: currentCall.connectedAt || null,
+                                endedAt, duration
+                            });
+                        } catch (err) {
+                            console.error('[VOICE-CALL] Failed to log disconnected call:', err.message);
+                        }
+                        activeCalls.delete(callId);
+                    }, 20000); // 20 second grace period
+
+                    continue; // Don't end the call immediately
+                }
+
+                // For non-connected calls or if caller disconnects during ringing: end immediately
+                if (isCallerSocket ||
                     (call.status === 'ringing' && call.callerId === socket.userId && remainingSockets.size === 0)) {
                     const otherUserId = socket.userId === call.callerId ? call.calleeId : call.callerId;
                     emitToUser(otherUserId, 'call-ended', { callId, endedBy: socket.userId, reason: 'disconnected' });

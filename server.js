@@ -1327,28 +1327,59 @@ const io = new SocketIOServer(httpServer, {
 });
 
 // --- WEB PUSH (VAPID) SETUP ---
-// Auto-generate VAPID keys if not provided via environment variables.
-// These keys enable push notifications without requiring Firebase client SDK.
-// In production, set WEB_PUSH_VAPID_PUBLIC_KEY and WEB_PUSH_VAPID_PRIVATE_KEY env vars.
+// VAPID keys MUST persist across server restarts — if they change, ALL existing
+// push subscriptions become invalid and push notifications silently fail.
+// Priority: env vars > Firestore > auto-generate once and save to Firestore.
 let VAPID_PUBLIC_KEY = process.env.WEB_PUSH_VAPID_PUBLIC_KEY || '';
 let VAPID_PRIVATE_KEY = process.env.WEB_PUSH_VAPID_PRIVATE_KEY || '';
+let vapidReady = false;
 
-if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
-    const generated = webpush.generateVAPIDKeys();
-    VAPID_PUBLIC_KEY = generated.publicKey;
-    VAPID_PRIVATE_KEY = generated.privateKey;
-    console.log('[WEB-PUSH] Auto-generated VAPID keys (set WEB_PUSH_VAPID_PUBLIC_KEY and WEB_PUSH_VAPID_PRIVATE_KEY env vars for persistence)');
-    console.log('[WEB-PUSH] Public Key:', VAPID_PUBLIC_KEY);
+// Initialize VAPID keys (async — loads from Firestore if env vars not set)
+async function initVapidKeys() {
+    if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
+        console.log('[WEB-PUSH] Using VAPID keys from environment variables');
+    } else {
+        // Try loading persisted keys from Firestore first
+        try {
+            const vapidDoc = await adminDb.collection('app_config').doc('vapid_keys').get();
+            if (vapidDoc.exists) {
+                const stored = vapidDoc.data();
+                VAPID_PUBLIC_KEY = stored.publicKey;
+                VAPID_PRIVATE_KEY = stored.privateKey;
+                console.log('[WEB-PUSH] Loaded persisted VAPID keys from Firestore');
+            } else {
+                // Generate once and persist to Firestore so they survive restarts
+                const generated = webpush.generateVAPIDKeys();
+                VAPID_PUBLIC_KEY = generated.publicKey;
+                VAPID_PRIVATE_KEY = generated.privateKey;
+                await adminDb.collection('app_config').doc('vapid_keys').set({
+                    publicKey: VAPID_PUBLIC_KEY,
+                    privateKey: VAPID_PRIVATE_KEY,
+                    createdAt: new Date().toISOString()
+                });
+                console.log('[WEB-PUSH] Generated and persisted new VAPID keys to Firestore');
+            }
+        } catch (err) {
+            console.error('[WEB-PUSH] Failed to load/save VAPID keys from Firestore:', err.message);
+            if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
+                const generated = webpush.generateVAPIDKeys();
+                VAPID_PUBLIC_KEY = generated.publicKey;
+                VAPID_PRIVATE_KEY = generated.privateKey;
+                console.warn('[WEB-PUSH] Using ephemeral VAPID keys — push subscriptions will NOT survive restart');
+            }
+        }
+    }
+    webpush.setVapidDetails('mailto:support@steelconnect.com', VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+    vapidReady = true;
+    console.log('[WEB-PUSH] VAPID setup complete, public key:', VAPID_PUBLIC_KEY.substring(0, 20) + '...');
 }
 
-webpush.setVapidDetails(
-    'mailto:support@steelconnect.com',
-    VAPID_PUBLIC_KEY,
-    VAPID_PRIVATE_KEY
-);
+// Start VAPID initialization immediately (runs before server starts listening)
+const vapidInitPromise = initVapidKeys();
 
 // Endpoint: Get VAPID public key (frontend needs this to subscribe)
-app.get('/api/push/vapid-key', (req, res) => {
+app.get('/api/push/vapid-key', async (req, res) => {
+    if (!vapidReady) await vapidInitPromise; // Ensure keys are loaded
     res.json({ success: true, publicKey: VAPID_PUBLIC_KEY });
 });
 
@@ -1437,18 +1468,23 @@ async function sendWebPushNotification(userId, payload) {
                 await webpush.sendNotification(subscription, JSON.stringify(payload));
                 sentCount++;
             } catch (err) {
-                if (err.statusCode === 410 || err.statusCode === 404) {
-                    // Subscription expired or invalid - mark for cleanup
+                // 410 Gone / 404 Not Found = subscription expired
+                // 401 Unauthorized / 403 Forbidden = VAPID key mismatch (subscription was
+                // created with different keys, e.g. after server restart with new keys)
+                if (err.statusCode === 410 || err.statusCode === 404 ||
+                    err.statusCode === 401 || err.statusCode === 403) {
                     invalidDocs.push(doc);
+                    console.warn(`[WEB-PUSH] Subscription invalid (${err.statusCode}) for user ${userId} — will remove`);
+                } else {
+                    console.warn(`[WEB-PUSH] Failed to send to subscription: ${err.statusCode || ''} ${err.message}`);
                 }
-                console.warn(`[WEB-PUSH] Failed to send to subscription: ${err.message}`);
             }
         }
 
-        // Clean up expired subscriptions
+        // Clean up expired/invalid subscriptions so they don't silently fail forever
         for (const doc of invalidDocs) {
             await doc.ref.delete();
-            console.log(`[WEB-PUSH] Removed expired subscription for user ${userId}`);
+            console.log(`[WEB-PUSH] Removed invalid subscription for user ${userId}`);
         }
 
         console.log(`[WEB-PUSH] Sent to ${sentCount}/${snapshot.size} subscriptions for user ${userId}`);
@@ -1845,6 +1881,53 @@ app.post('/api/voice-calls/decline', (req, res) => {
     res.json({ success: true });
 });
 
+// REST endpoint for accepting calls from push notification (when user has no socket yet).
+// This bridges the gap between receiving a push notification and establishing a socket.
+// The user can accept via REST, then establish socket for the actual WebRTC connection.
+app.post('/api/voice-calls/accept', (req, res) => {
+    const { callId, calleeId } = req.body;
+    if (!callId || !calleeId) return res.status(400).json({ error: 'callId and calleeId required' });
+
+    const call = activeCalls.get(callId);
+    if (!call) {
+        // Check if call was already cleaned up but might still be recoverable
+        return res.json({ success: false, message: 'Call no longer available', expired: true });
+    }
+
+    if (call.calleeId !== calleeId) {
+        return res.status(403).json({ error: 'Not the intended callee for this call' });
+    }
+
+    if (call.status !== 'ringing') {
+        return res.json({ success: false, message: `Call is ${call.status}`, status: call.status });
+    }
+
+    console.log(`[VOICE-CALL] Call accepted via REST: ${callId} | callee: ${calleeId}`);
+
+    // Mark call as accepted — the WebRTC setup will happen via socket once the user connects
+    call.status = 'accepted_via_push';
+
+    // Notify caller that callee is answering (on all their devices)
+    emitToUser(call.callerId, 'call-accepted-pending', {
+        callId, calleeId, message: 'Callee is connecting...'
+    });
+
+    // Keep the call in pendingCalls so when callee's socket connects, it delivers
+    pendingCalls.set(calleeId, {
+        callId, callerId: call.callerId, callerName: call.callerName,
+        conversationId: call.conversationId, callType: call.callType,
+        acceptedViaPush: true
+    });
+
+    res.json({
+        success: true,
+        callerId: call.callerId,
+        callerName: call.callerName,
+        conversationId: call.conversationId,
+        callType: call.callType
+    });
+});
+
 io.on('connection', (socket) => {
     console.log(`[SOCKET] Client connected: ${socket.id}`);
 
@@ -1864,14 +1947,16 @@ io.on('connection', (socket) => {
         const pending = pendingCalls.get(userId);
         if (pending) {
             const call = activeCalls.get(pending.callId);
-            if (call && call.status === 'ringing') {
-                console.log(`[VOICE-CALL] Delivering pending call ${pending.callId} to user ${userId} who just came online`);
+            if (call && (call.status === 'ringing' || call.status === 'accepted_via_push')) {
+                const wasAcceptedViaPush = pending.acceptedViaPush || call.status === 'accepted_via_push';
+                console.log(`[VOICE-CALL] Delivering pending call ${pending.callId} to user ${userId} who just came online (acceptedViaPush: ${wasAcceptedViaPush})`);
                 socket.emit('incoming-call', {
                     callId: pending.callId,
                     callerId: pending.callerId,
                     callerName: pending.callerName,
                     conversationId: pending.conversationId,
-                    callType: pending.callType || 'voice'
+                    callType: pending.callType || 'voice',
+                    autoAccept: wasAcceptedViaPush // Frontend should auto-accept if user already tapped Answer
                 });
             }
             pendingCalls.delete(userId);
@@ -1993,6 +2078,17 @@ io.on('connection', (socket) => {
         };
         sendWebPushNotification(calleeId, webPushPayload).then(count => {
             console.log(`[VOICE-CALL] Web Push sent to ${count} subscription(s) for ${callId}`);
+            // Retry push after 15s if no subscriptions found (user may re-subscribe on login)
+            if (count === 0) {
+                setTimeout(() => {
+                    const retryCall = activeCalls.get(callId);
+                    if (retryCall && (retryCall.status === 'ringing' || retryCall.status === 'accepted_via_push')) {
+                        console.log(`[VOICE-CALL] Retrying Web Push for ${callId} (0 subs on first attempt)`);
+                        sendWebPushNotification(calleeId, webPushPayload).catch(() => {});
+                        sendCallPushNotification(calleeId, pushCallData).catch(() => {});
+                    }
+                }, 15000);
+            }
         }).catch(err => {
             console.error(`[VOICE-CALL] Web Push error for ${callId}:`, err.message);
         });
@@ -2004,8 +2100,8 @@ io.on('connection', (socket) => {
             console.error(`[VOICE-CALL] FCM push error for ${callId}:`, err.message);
         });
 
-        // 90-second timeout for all calls (allows time for push notification delivery
-        // across international networks + user login from notification)
+        // 120-second timeout for all calls — extended from 90s to give logged-out users
+        // enough time to: receive push → open app → log in → establish socket → accept
         setTimeout(async () => {
             const call = activeCalls.get(callId);
             if (call && call.status === 'ringing') {
@@ -2038,7 +2134,7 @@ io.on('connection', (socket) => {
                     console.error('[VOICE-CALL] Failed to log timeout:', err.message);
                 }
             }
-        }, 90000);
+        }, 120000);
     });
 
     // Voice call: Accept
@@ -2054,6 +2150,12 @@ io.on('connection', (socket) => {
         if (call.status === 'connected') {
             console.log(`[VOICE-CALL] Call ${callId} already accepted, ignoring duplicate accept from ${socket.id}`);
             socket.emit('call-dismissed', { callId, reason: 'answered_elsewhere' });
+            return;
+        }
+
+        // Accept calls that are ringing OR were pre-accepted via push notification REST endpoint
+        if (call.status !== 'ringing' && call.status !== 'accepted_via_push') {
+            console.warn(`[VOICE-CALL] Call ${callId} in unexpected status '${call.status}' for accept`);
             return;
         }
 

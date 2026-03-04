@@ -2244,8 +2244,23 @@ io.on('connection', (socket) => {
                     continue; // Other devices are still ringing
                 }
 
+                // IMPORTANT: For ringing calls where the CALLEE disconnects (logout/close),
+                // do NOT end the call — push notifications have been sent and the user may
+                // still answer via push (like WhatsApp/Teams). The 90-second timeout will
+                // handle cleanup if they don't answer.
+                if (call.status === 'ringing' && call.calleeId === socket.userId && remainingSockets.size === 0) {
+                    console.log(`[VOICE-CALL] Callee ${socket.userId} disconnected during ringing for call ${callId} — keeping call alive for push notification delivery`);
+                    // Re-store as pending so if they reconnect (login again), they get the call
+                    pendingCalls.set(call.calleeId, {
+                        callId, callerId: call.callerId, callerName: call.callerName,
+                        conversationId: call.conversationId, callType: call.callType,
+                        startedAt: call.startedAt
+                    });
+                    continue;
+                }
+
                 if (isCallerSocket || isCalleeSocket ||
-                    (call.status === 'ringing' && (call.callerId === socket.userId || call.calleeId === socket.userId) && remainingSockets.size === 0)) {
+                    (call.status === 'ringing' && call.callerId === socket.userId && remainingSockets.size === 0)) {
                     const otherUserId = socket.userId === call.callerId ? call.calleeId : call.callerId;
                     emitToUser(otherUserId, 'call-ended', { callId, endedBy: socket.userId, reason: 'disconnected' });
 

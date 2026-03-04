@@ -1419,6 +1419,33 @@ app.post('/api/push/subscribe', async (req, res) => {
             console.log(`[WEB-PUSH] Subscription updated for user ${userId}`);
         }
 
+        // Cleanup: remove stale subscriptions (>30 days old) and keep max 5 per user
+        try {
+            const allSubs = await adminDb.collection('web_push_subscriptions')
+                .where('userId', '==', userId).get();
+            if (allSubs.size > 5) {
+                // Sort by updatedAt and remove oldest beyond 5
+                const sorted = allSubs.docs
+                    .map(d => ({ ref: d.ref, updatedAt: d.data().updatedAt || d.data().createdAt || '' }))
+                    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+                for (let i = 5; i < sorted.length; i++) {
+                    await sorted[i].ref.delete();
+                    console.log(`[WEB-PUSH] Removed excess subscription for user ${userId} (keeping max 5)`);
+                }
+            }
+            // Remove subscriptions older than 30 days
+            const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+            for (const doc of allSubs.docs) {
+                const data = doc.data();
+                if ((data.updatedAt || data.createdAt || '') < thirtyDaysAgo && data.endpoint !== subscription.endpoint) {
+                    await doc.ref.delete();
+                    console.log(`[WEB-PUSH] Removed stale subscription (>30 days) for user ${userId}`);
+                }
+            }
+        } catch (cleanupErr) {
+            console.warn('[WEB-PUSH] Cleanup error:', cleanupErr.message);
+        }
+
         res.json({ success: true, message: 'Push subscription saved' });
     } catch (error) {
         console.error('[WEB-PUSH] Subscription save error:', error.message);
@@ -1475,7 +1502,13 @@ async function sendWebPushNotification(userId, payload) {
         for (const doc of snapshot.docs) {
             try {
                 const subscription = JSON.parse(doc.data().subscription);
-                await webpush.sendNotification(subscription, JSON.stringify(payload));
+                // TTL=120s: Google/Mozilla push service will keep trying for 2 minutes
+                // urgency=high: Wakes mobile device from doze/sleep for incoming call
+                await webpush.sendNotification(subscription, JSON.stringify(payload), {
+                    TTL: 120,
+                    urgency: 'high',
+                    topic: payload.callId || 'call'
+                });
                 sentCount++;
             } catch (err) {
                 // 410 Gone / 404 Not Found = subscription expired

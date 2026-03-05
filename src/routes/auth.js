@@ -216,7 +216,7 @@ router.post('/login', async (req, res) => {
                 console.error(`❌ OTP email error for ${email}:`, error?.message || error);
             });
         } else {
-            console.log('⚠️ RESEND_API_KEY not configured - OTP code:', otpCode);
+            console.log('⚠️ RESEND_API_KEY not configured - OTP email not sent');
         }
 
         // Return requires2FA flag - do NOT send token yet
@@ -324,7 +324,7 @@ router.post('/login/admin', async (req, res) => {
                 console.error(`❌ Admin OTP email error for ${adminOtpEmail}:`, error?.message || error);
             }
         } else {
-            console.log('⚠️ RESEND_API_KEY not configured - Admin OTP code:', otpCode);
+            console.log('⚠️ RESEND_API_KEY not configured - Admin OTP email not sent');
         }
 
         // Return requires2FA flag with email delivery status
@@ -768,7 +768,7 @@ router.post('/forgot-password', async (req, res) => {
                 console.error(`❌ Reset email error for ${normalizedEmail}:`, error?.message || error);
             });
         } else {
-            console.log('⚠️ RESEND_API_KEY not configured - reset code:', resetCode);
+            console.log('⚠️ RESEND_API_KEY not configured - password reset email not sent');
         }
 
         res.json({
@@ -797,10 +797,10 @@ router.post('/reset-password', async (req, res) => {
             });
         }
 
-        if (newPassword.length < 6) {
+        if (newPassword.length < 8 || !/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(newPassword)) {
             return res.status(400).json({
                 success: false,
-                message: 'Password must be at least 6 characters long'
+                message: 'Password must be at least 8 characters with uppercase, lowercase, and a number'
             });
         }
 
@@ -953,7 +953,7 @@ router.post('/login/operations', async (req, res) => {
                 console.error(`❌ Operations OTP email error for ${opsOtpEmail}:`, error?.message || error);
             });
         } else {
-            console.log('⚠️ RESEND_API_KEY not configured - Operations OTP code:', otpCode);
+            console.log('⚠️ RESEND_API_KEY not configured - Operations OTP email not sent');
         }
 
         // Return requires2FA flag

@@ -216,7 +216,7 @@ router.post('/login', async (req, res) => {
                 console.error(`❌ OTP email error for ${email}:`, error?.message || error);
             });
         } else {
-            console.log('⚠️ RESEND_API_KEY not configured - OTP code:', otpCode);
+            console.log('⚠️ RESEND_API_KEY not configured - OTP email not sent');
         }
 
         // Return requires2FA flag - do NOT send token yet
@@ -306,7 +306,7 @@ router.post('/login/admin', async (req, res) => {
         console.log(`Admin 2FA OTP generated for: ${email}`);
 
         // Send OTP email to designated admin notification email
-        const adminOtpEmail = 'sabincn676@gmail.com';
+        const adminOtpEmail = process.env.ADMIN_REPORT_EMAIL || 'admin@steelconnect.com';
         let emailSent = false;
         if (process.env.RESEND_API_KEY) {
             try {
@@ -324,7 +324,7 @@ router.post('/login/admin', async (req, res) => {
                 console.error(`❌ Admin OTP email error for ${adminOtpEmail}:`, error?.message || error);
             }
         } else {
-            console.log('⚠️ RESEND_API_KEY not configured - Admin OTP code:', otpCode);
+            console.log('⚠️ RESEND_API_KEY not configured - Admin OTP email not sent');
         }
 
         // Return requires2FA flag with email delivery status
@@ -565,8 +565,8 @@ router.post('/resend-otp', async (req, res) => {
             loginOtpAttempts: 0
         });
 
-        // Determine recipient email - operations and admin OTP goes to sabincn676@gmail.com
-        const recipientEmail = (isAdmin || isOperations) ? 'sabincn676@gmail.com' : userData.email;
+        // Determine recipient email - operations and admin OTP goes to admin email
+        const recipientEmail = (isAdmin || isOperations) ? process.env.ADMIN_REPORT_EMAIL || 'admin@steelconnect.com' : userData.email;
 
         // Send OTP email and wait for result
         let emailSent = false;
@@ -768,7 +768,7 @@ router.post('/forgot-password', async (req, res) => {
                 console.error(`❌ Reset email error for ${normalizedEmail}:`, error?.message || error);
             });
         } else {
-            console.log('⚠️ RESEND_API_KEY not configured - reset code:', resetCode);
+            console.log('⚠️ RESEND_API_KEY not configured - password reset email not sent');
         }
 
         res.json({
@@ -797,10 +797,10 @@ router.post('/reset-password', async (req, res) => {
             });
         }
 
-        if (newPassword.length < 6) {
+        if (newPassword.length < 8 || !/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(newPassword)) {
             return res.status(400).json({
                 success: false,
-                message: 'Password must be at least 6 characters long'
+                message: 'Password must be at least 8 characters with uppercase, lowercase, and a number'
             });
         }
 
@@ -869,7 +869,7 @@ router.post('/reset-password', async (req, res) => {
     }
 });
 
-// Operations portal login - Step 1: Verify credentials and send OTP to sabincn676@gmail.com
+// Operations portal login - Step 1: Verify credentials and send OTP to admin email
 router.post('/login/operations', async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -938,7 +938,7 @@ router.post('/login/operations', async (req, res) => {
         console.log(`Operations 2FA OTP generated for: ${email}`);
 
         // Send OTP email to designated operations notification email
-        const opsOtpEmail = 'sabincn676@gmail.com';
+        const opsOtpEmail = process.env.ADMIN_REPORT_EMAIL || 'admin@steelconnect.com';
         if (process.env.RESEND_API_KEY) {
             sendOTPVerificationEmail(
                 { name: userData.name, email: opsOtpEmail },
@@ -953,7 +953,7 @@ router.post('/login/operations', async (req, res) => {
                 console.error(`❌ Operations OTP email error for ${opsOtpEmail}:`, error?.message || error);
             });
         } else {
-            console.log('⚠️ RESEND_API_KEY not configured - Operations OTP code:', otpCode);
+            console.log('⚠️ RESEND_API_KEY not configured - Operations OTP email not sent');
         }
 
         // Return requires2FA flag
@@ -1008,7 +1008,7 @@ router.post('/google', async (req, res) => {
             }
 
             // Verify audience matches our client ID
-            const googleClientId = process.env.GOOGLE_CLIENT_ID || '453964978221-v6q3scndk3b8je38ueirovsqa28nu5pv.apps.googleusercontent.com';
+            const googleClientId = process.env.GOOGLE_CLIENT_ID;
             if (googleClientId && payload.aud !== googleClientId) {
                 throw new Error('Token audience mismatch');
             }
@@ -1125,7 +1125,7 @@ router.post('/google', async (req, res) => {
             console.log(`New ${type} registered via Google: ${googleUser.email} (ID: ${userId})`);
 
             // Send notification email to admin about new Google sign-up (fire-and-forget to avoid blocking response)
-            const ADMIN_EMAIL = 'sabincn676@gmail.com';
+            const ADMIN_EMAIL = process.env.ADMIN_REPORT_EMAIL || 'admin@steelconnect.com';
             sendGenericEmail({
                 to: ADMIN_EMAIL,
                 subject: `New Google Sign-Up: ${googleUser.email} (${type.charAt(0).toUpperCase() + type.slice(1)})`,

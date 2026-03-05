@@ -302,7 +302,7 @@ export async function sendOTPVerificationEmail(user, otpCode, clientIP, userAgen
 // PROFILE APPROVAL REQUEST (to Admin)
 // ============================================================
 export async function sendProfileApprovalRequestToAdmin(user, profileData) {
-    const ADMIN_EMAIL = 'sabincn676@gmail.com';
+    const ADMIN_EMAIL = process.env.ADMIN_REPORT_EMAIL || 'admin@steelconnect.com';
     try {
         const htmlContent = `
 <h2 ${S.h2}>New Profile Approval Request</h2>

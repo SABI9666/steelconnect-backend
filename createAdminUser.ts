@@ -28,9 +28,14 @@ async function createAdminUser() {
     const db = getFirestore(app);
     console.log('✅ Firebase initialized successfully');
 
-    const adminEmail = 'pradeeksha798@gmail.com';
-    const adminPassword = 'admin123456'; // Use plain text password - will be hashed
-    const adminName = 'Admin User';
+    const adminEmail = process.env.ADMIN_EMAIL;
+    const adminPassword = process.env.ADMIN_PASSWORD;
+    const adminName = process.env.ADMIN_NAME || 'Admin User';
+
+    if (!adminEmail || !adminPassword) {
+      console.error('❌ ADMIN_EMAIL and ADMIN_PASSWORD environment variables are required.');
+      process.exit(1);
+    }
 
     console.log('🔍 Checking if admin user already exists...');
 

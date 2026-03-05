@@ -7,7 +7,7 @@
 //   WHATSAPP_ACCESS_TOKEN     - Permanent access token from Meta Business
 //   WHATSAPP_BUSINESS_ID      - (optional) Your WhatsApp Business Account ID
 //
-// Admin phone (for activity alerts): 919895909666 (testing, will change to Dubai number)
+// Admin phone (for activity alerts): Set ADMIN_WHATSAPP_NUMBER env var
 
 const GRAPH_API_VERSION = 'v21.0';
 const GRAPH_API_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
@@ -28,7 +28,7 @@ export function getWhatsAppStatus() {
         configured,
         phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID ? '***' + process.env.WHATSAPP_PHONE_NUMBER_ID.slice(-4) : null,
         businessId: process.env.WHATSAPP_BUSINESS_ID ? '***' + process.env.WHATSAPP_BUSINESS_ID.slice(-4) : null,
-        senderNumber: process.env.WHATSAPP_SENDER_NUMBER || '9895909666',
+        senderNumber: process.env.WHATSAPP_SENDER_NUMBER || '',
         message: configured
             ? 'WhatsApp Cloud API is configured and ready'
             : 'WhatsApp not configured. Set WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN in environment variables.'

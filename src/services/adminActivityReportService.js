@@ -7,9 +7,9 @@ import { adminDb } from '../config/firebase.js';
 import { getRecentActivities } from './adminActivityLogger.js';
 import { getVisitorAnalyticsSummary } from './userActivityLogger.js';
 
-const ADMIN_REPORT_EMAIL = 'sabincn676@gmail.com';
-const ADMIN_WHATSAPP_NUMBER = '919895909666'; // India country code + number
-const ADMIN_PHONE_NUMBER = '9895909666';
+const ADMIN_REPORT_EMAIL = process.env.ADMIN_REPORT_EMAIL || 'admin@steelconnect.com';
+const ADMIN_WHATSAPP_NUMBER = process.env.ADMIN_WHATSAPP_NUMBER || '';
+const ADMIN_PHONE_NUMBER = process.env.ADMIN_PHONE_NUMBER || '';
 const BATCH_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
 // ─── In-memory activity queue ────────────────────────────────────────────────

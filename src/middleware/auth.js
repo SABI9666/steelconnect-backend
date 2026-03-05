@@ -10,7 +10,10 @@ export const authenticateToken = async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'Access token is required for authentication.' });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_default_secret_key');
+    if (!process.env.JWT_SECRET) {
+      return res.status(500).json({ success: false, message: 'Server configuration error: JWT_SECRET is not set.' });
+    }
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     // --- FIX: Looks for 'decoded.userId' to correctly read the token payload ---
     if (!decoded || !decoded.userId) {

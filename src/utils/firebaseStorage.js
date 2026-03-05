@@ -66,11 +66,12 @@ export async function uploadToFirebaseStorage(file, path) {
             stream.on('finish', async () => {
                 clearTimeout(uploadTimeout);
                 try {
-                    // Make file publicly accessible
-                    await fileRef.makePublic();
-
-                    // Generate public URL
-                    const publicUrl = `https://storage.googleapis.com/${bucket.name}/${path}`;
+                    // Generate a signed URL with expiration (24 hours) instead of making file public
+                    const [signedUrl] = await fileRef.getSignedUrl({
+                        action: 'read',
+                        expires: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
+                    });
+                    const publicUrl = signedUrl;
 
                     // FIXED: Return consistent object structure
                     const fileData = {

@@ -3323,8 +3323,12 @@ router.post('/system-admin/permanent-delete/:collectionKey/:docId', async (req, 
         const cfg = SYSTEM_COLLECTIONS[collectionKey];
         if (!cfg) return res.status(400).json({ success: false, message: 'Invalid collection' });
 
-        // Verify the system admin password
-        if (password !== '9666') {
+        // Verify the system admin password (must be set via SYSTEM_ADMIN_PASSWORD env var)
+        const sysAdminPassword = process.env.SYSTEM_ADMIN_PASSWORD;
+        if (!sysAdminPassword) {
+            return res.status(500).json({ success: false, message: 'System admin password not configured on server.' });
+        }
+        if (password !== sysAdminPassword) {
             return res.status(403).json({ success: false, message: 'Invalid system admin password. Permanent delete denied.' });
         }
 

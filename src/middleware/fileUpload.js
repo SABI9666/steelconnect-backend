@@ -37,9 +37,12 @@ const uploadToFirebase = (req, res, next) => {
 
   blobStream.on('finish', async () => {
     try {
-      // Make the file publicly accessible
-      await blob.makePublic();
-      const publicUrl = `https://storage.googleapis.com/${bucket.name}/${blob.name}`;
+      // Generate a signed URL with expiration instead of making file public
+      const [signedUrl] = await blob.getSignedUrl({
+          action: 'read',
+          expires: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
+      });
+      const publicUrl = signedUrl;
       
       // Attach the URL to the request for the controller to use
       req.file.publicUrl = publicUrl;

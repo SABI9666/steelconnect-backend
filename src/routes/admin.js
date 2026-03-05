@@ -4095,7 +4095,7 @@ router.post('/chatbot/reply', async (req, res) => {
 // ================================================================
 // WHATSAPP MARKETING — Send WhatsApp messages to clients
 // Uses WhatsApp Business Cloud API (Meta Graph API)
-// Sender: 9895909666 (testing) → will change to Dubai number
+// Sender: Set WHATSAPP_SENDER_NUMBER env var
 // ================================================================
 
 // GET /api/admin/whatsapp/status - Check WhatsApp API configuration
@@ -4109,7 +4109,10 @@ router.post('/whatsapp/test', async (req, res) => {
     try {
         const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
         const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-        const testPhone = req.body.phone || '919895909666';
+        const testPhone = req.body.phone || process.env.ADMIN_WHATSAPP_NUMBER;
+        if (!testPhone) {
+            return res.status(400).json({ success: false, error: 'Phone number is required. Provide in request body or set ADMIN_WHATSAPP_NUMBER env var.' });
+        }
 
         if (!phoneNumberId || !accessToken) {
             return res.json({
@@ -4265,7 +4268,7 @@ router.post('/whatsapp/send', async (req, res) => {
             failed: result.failed,
             sentBy: req.user?.email || 'admin',
             sentByName: req.user?.name || 'Admin',
-            senderNumber: process.env.WHATSAPP_SENDER_NUMBER || '9895909666',
+            senderNumber: process.env.WHATSAPP_SENDER_NUMBER || '',
             results: result.results.map(r => ({
                 phone: r.recipientPhone,
                 name: r.recipientName,
@@ -4323,7 +4326,7 @@ router.post('/whatsapp/send-single', async (req, res) => {
             sent: result.success ? 1 : 0,
             failed: result.success ? 0 : 1,
             sentBy: req.user?.email || 'admin',
-            senderNumber: process.env.WHATSAPP_SENDER_NUMBER || '9895909666',
+            senderNumber: process.env.WHATSAPP_SENDER_NUMBER || '',
             results: [{ phone, success: result.success, messageId: result.messageId || null, error: result.error || null, usedTemplate }],
             createdAt: new Date().toISOString()
         });

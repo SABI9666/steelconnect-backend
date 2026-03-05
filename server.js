@@ -200,20 +200,17 @@ const corsOptions = {
         if (!origin) return callback(null, true);
 
         // Check if origin is allowed
-        if (allowedOrigins.includes(origin) || 
-            origin.endsWith('.vercel.app') || 
-            origin.endsWith('.netlify.app') ||
-            origin.includes('localhost') ||
-            origin.includes('127.0.0.1')) {
+        const isAllowed = allowedOrigins.includes(origin) ||
+            (process.env.NODE_ENV !== 'production' && (
+                origin.includes('localhost') ||
+                origin.includes('127.0.0.1')
+            ));
+
+        if (isAllowed) {
             callback(null, true);
         } else {
-            console.warn(`⚠️ CORS Warning: Origin "${origin}" not in allowed list`);
-            if (process.env.NODE_ENV !== 'production') {
-                console.log('🔧 Development mode: Allowing CORS for debugging');
-                callback(null, true);
-            } else {
-                callback(new Error('Not allowed by CORS'));
-            }
+            console.warn(`⚠️ CORS blocked: Origin "${origin}" not in allowed list`);
+            callback(new Error('Not allowed by CORS'));
         }
     },
     credentials: true,
@@ -222,8 +219,19 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.use(helmet({ 
-    contentSecurityPolicy: false,
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'"],
+            styleSrc: ["'self'", "'unsafe-inline'"],
+            imgSrc: ["'self'", "data:", "https:"],
+            connectSrc: ["'self'", ...(process.env.CORS_ORIGIN || '').split(',').filter(Boolean)],
+            fontSrc: ["'self'", "https://fonts.gstatic.com"],
+            objectSrc: ["'none'"],
+            upgradeInsecureRequests: [],
+        },
+    },
     crossOriginResourcePolicy: { policy: "cross-origin" },
     crossOriginEmbedderPolicy: false
 }));
@@ -242,7 +250,15 @@ app.use((req, res, next) => {
     
     if (process.env.NODE_ENV !== 'production' && method !== 'GET') {
         if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
-            const bodyStr = JSON.stringify(req.body, null, 2);
+            // Redact sensitive fields before logging
+            const sensitiveKeys = ['password', 'token', 'secret', 'otp', 'creditCard', 'ssn', 'apiKey'];
+            const safeBody = { ...req.body };
+            for (const key of Object.keys(safeBody)) {
+                if (sensitiveKeys.some(sk => key.toLowerCase().includes(sk.toLowerCase()))) {
+                    safeBody[key] = '[REDACTED]';
+                }
+            }
+            const bodyStr = JSON.stringify(safeBody, null, 2);
             if (bodyStr && bodyStr.length < 500) {
                 console.log(`🔍 Body:`, bodyStr);
             }
@@ -1025,8 +1041,12 @@ console.log('👁️ Visitor tracking endpoints registered at /api/visitors/*');
 // --- Seed Default Admin User ---
 async function seedAdminUser() {
     try {
-        const adminEmail = 'admin@steelconnect.com';
-        const adminPassword = 'admin@9666';
+        const adminEmail = process.env.ADMIN_EMAIL || 'admin@steelconnect.com';
+        const adminPassword = process.env.ADMIN_PASSWORD;
+        if (!adminPassword) {
+            console.warn('⚠️ ADMIN_PASSWORD not set in environment variables. Skipping admin seed.');
+            return;
+        }
 
         // Check if admin already exists
         const existingAdmin = await adminDb.collection('users')
@@ -1072,8 +1092,12 @@ seedAdminUser();
 // --- Seed Operations User ---
 async function seedOperationsUser() {
     try {
-        const opsEmail = 'operations@steelconnect.com';
-        const opsPassword = 'operations9666';
+        const opsEmail = process.env.OPS_EMAIL || 'operations@steelconnect.com';
+        const opsPassword = process.env.OPS_PASSWORD;
+        if (!opsPassword) {
+            console.warn('⚠️ OPS_PASSWORD not set in environment variables. Skipping operations seed.');
+            return;
+        }
 
         const existingOps = await adminDb.collection('users')
             .where('email', '==', opsEmail)
@@ -1788,8 +1812,11 @@ app.get('/api/voice-calls/turn-credentials', async (req, res) => {
         }
 
         // Option 2: Use environment-configured TURN credentials
-        const turnUsername = process.env.TURN_USERNAME || 'e8dd65b92f4f1be4b7de7118';
-        const turnCredential = process.env.TURN_CREDENTIAL || '4F0VEYoAbOCLpmhH';
+        const turnUsername = process.env.TURN_USERNAME;
+        const turnCredential = process.env.TURN_CREDENTIAL;
+        if (!turnUsername || !turnCredential) {
+            console.warn('[TURN] TURN_USERNAME and TURN_CREDENTIAL not set. Using public STUN + OpenRelay fallback only.');
+        }
         const turnServer = process.env.TURN_SERVER || 'global.relay.metered.ca';
 
         const iceServers = [
@@ -2644,13 +2671,12 @@ server.timeout = 120000; // 2 minutes
 // ─── Real-Time Admin Activity Monitoring ─────────────────────────────────────
 // Admin activity notifications are now sent in real-time (email + WhatsApp)
 // whenever any admin action happens. No hourly scheduler needed.
-// Notifications are sent to:
-//   Email: sabincn676@gmail.com
-//   WhatsApp: 9895909666
+// Notifications are sent to the email and WhatsApp number configured via
+// ADMIN_REPORT_EMAIL and ADMIN_WHATSAPP_NUMBER environment variables.
 // The real-time alerts are triggered by the adminActivityLogger service
 // immediately after logging each activity to Firestore.
 console.log('[ADMIN-ACTIVITY-MONITOR] Real-time admin activity monitoring is active');
-console.log('[ADMIN-ACTIVITY-MONITOR] Notifications sent to email: sabincn676@gmail.com & WhatsApp: 9895909666');
+console.log(`[ADMIN-ACTIVITY-MONITOR] Notifications sent to email: ${process.env.ADMIN_REPORT_EMAIL || '(not set)'} & WhatsApp: ${process.env.ADMIN_WHATSAPP_NUMBER || '(not set)'}`);
 console.log('[ADMIN-ACTIVITY-MONITOR] Every admin action triggers an immediate email + WhatsApp alert');
 
 export default app;

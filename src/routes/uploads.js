@@ -17,9 +17,30 @@ const storage = multer.diskStorage({
     }
 });
 
+const ALLOWED_MIME_TYPES = [
+    'application/pdf',
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'image/webp',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+];
+
+const fileFilter = (req, file, cb) => {
+    if (ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+        cb(null, true);
+    } else {
+        cb(new Error('File type not allowed. Accepted: PDF, images, Word, Excel.'), false);
+    }
+};
+
 const createUploader = (fieldName) => multer({
     storage: storage,
     limits: { fileSize: 10000000 }, // 10MB
+    fileFilter: fileFilter,
 }).single(fieldName);
 
 // Endpoint for job document uploads

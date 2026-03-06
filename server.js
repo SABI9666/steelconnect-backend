@@ -1664,11 +1664,17 @@ async function sendWebPushNotification(userId, payload) {
     }
 }
 
+// Expose Socket.IO instance on express app so routes can emit real-time events
+app.set('io', io);
+
 // Track online users, presence statuses, and active calls
 const onlineUsers = new Map(); // userId -> Set<socketId> (multiple devices per user)
 const userStatuses = new Map(); // userId -> 'online' | 'away' | 'busy' | 'offline'
 const activeCalls = new Map(); // callId -> { callerId, calleeId, startedAt, status, calleeSocketId }
 const pendingCalls = new Map(); // calleeId -> { callId, callerId, callerName, conversationId, callType, startedAt }
+
+// Expose onlineUsers so routes can emit targeted socket events
+app.set('onlineUsers', onlineUsers);
 
 // Helper: add a socket for a user (multi-device support)
 function addUserSocket(userId, socketId) {

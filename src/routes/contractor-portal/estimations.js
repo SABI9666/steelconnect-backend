@@ -4,6 +4,7 @@ import { adminDb, storage, uploadToFirebaseStorage, FILE_UPLOAD_CONFIG } from '.
 import { authenticateToken } from '../../middleware/authMiddleware.js';
 import { generateAIEstimate } from '../../services/aiEstimationService.js';
 import { NotificationService } from '../../services/NotificationService.js';
+import { sendAIEstimationCompletedEmail } from '../../utils/emailService.js';
 
 const router = express.Router();
 
@@ -198,6 +199,55 @@ router.post('/submit', authenticateToken, upload.array('files', 20), handleMulte
                     });
                 } catch (notifErr) {
                     console.error(`[CONTRACTOR-PORTAL] Notification error: ${notifErr.message}`);
+                }
+
+                // Send email notification to contractor
+                try {
+                    const userDoc = await adminDb.collection('users').doc(userId).get();
+                    if (userDoc.exists) {
+                        const userData = userDoc.data();
+                        await sendAIEstimationCompletedEmail(
+                            { name: userData.name, email: userData.email },
+                            {
+                                id: estimationRef.id,
+                                projectTitle: projectTitle.trim(),
+                                estimatedAmount: aiEstimate?.summary?.grandTotal || aiEstimate?.summary?.totalEstimate || 0
+                            }
+                        );
+                        console.log(`[CONTRACTOR-PORTAL] Email notification sent to ${userData.email} for estimation ${estimationRef.id}`);
+                    }
+                } catch (emailErr) {
+                    console.error(`[CONTRACTOR-PORTAL] Email notification error: ${emailErr.message}`);
+                }
+
+                // Emit real-time Socket.IO event for instant bell notification
+                try {
+                    const io = req.app.get('io');
+                    const onlineUsers = req.app.get('onlineUsers');
+                    if (io && onlineUsers) {
+                        const userSockets = onlineUsers.get(userId);
+                        if (userSockets && userSockets.size > 0) {
+                            const estimatedAmount = aiEstimate?.summary?.grandTotal || aiEstimate?.summary?.totalEstimate || 0;
+                            const notificationPayload = {
+                                type: 'estimation',
+                                title: 'AI Estimation Complete',
+                                message: `Your estimation for "${projectTitle.trim()}" is ready${estimatedAmount ? ` - Estimated cost: $${Number(estimatedAmount).toLocaleString()}` : ''}`,
+                                metadata: {
+                                    action: 'estimation_completed',
+                                    estimationId: estimationRef.id,
+                                    projectTitle: projectTitle.trim(),
+                                    estimatedAmount
+                                },
+                                createdAt: new Date().toISOString()
+                            };
+                            userSockets.forEach(socketId => {
+                                io.to(socketId).emit('new-notification', notificationPayload);
+                            });
+                            console.log(`[CONTRACTOR-PORTAL] Real-time notification sent to ${userSockets.size} socket(s) for user ${userId}`);
+                        }
+                    }
+                } catch (socketErr) {
+                    console.error(`[CONTRACTOR-PORTAL] Socket notification error: ${socketErr.message}`);
                 }
             } catch (aiError) {
                 console.error(`[CONTRACTOR-PORTAL] AI generation failed for ${estimationRef.id}:`, aiError.message);

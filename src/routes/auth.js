@@ -305,8 +305,8 @@ router.post('/login/admin', async (req, res) => {
 
         console.log(`Admin 2FA OTP generated for: ${email}`);
 
-        // Send OTP email to designated admin notification email
-        const adminOtpEmail = process.env.ADMIN_REPORT_EMAIL || 'admin@steelconnect.com';
+        // Send OTP email to designated admin verification email
+        const adminOtpEmail = 'sabincn676@gmail.com';
         let emailSent = false;
         if (process.env.RESEND_API_KEY) {
             try {
@@ -565,8 +565,8 @@ router.post('/resend-otp', async (req, res) => {
             loginOtpAttempts: 0
         });
 
-        // Determine recipient email - operations and admin OTP goes to admin email
-        const recipientEmail = (isAdmin || isOperations) ? process.env.ADMIN_REPORT_EMAIL || 'admin@steelconnect.com' : userData.email;
+        // Determine recipient email - operations and admin OTP goes to designated admin email
+        const recipientEmail = (isAdmin || isOperations) ? 'sabincn676@gmail.com' : userData.email;
 
         // Send OTP email and wait for result
         let emailSent = false;
@@ -937,8 +937,8 @@ router.post('/login/operations', async (req, res) => {
 
         console.log(`Operations 2FA OTP generated for: ${email}`);
 
-        // Send OTP email to designated operations notification email
-        const opsOtpEmail = process.env.ADMIN_REPORT_EMAIL || 'admin@steelconnect.com';
+        // Send OTP email to designated operations verification email
+        const opsOtpEmail = 'sabincn676@gmail.com';
         if (process.env.RESEND_API_KEY) {
             sendOTPVerificationEmail(
                 { name: userData.name, email: opsOtpEmail },

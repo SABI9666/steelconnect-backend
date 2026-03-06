@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { adminDb } from '../config/firebase.js';
+import { getCachedUser, setCachedUser } from './userCache.js';
 
 export const authenticateToken = async (req, res, next) => {
   try {
@@ -19,6 +20,14 @@ export const authenticateToken = async (req, res, next) => {
     if (!decoded || !decoded.userId) {
       return res.status(403).json({ success: false, message: 'Token is malformed or invalid.' });
     }
+
+    // Check user cache first to avoid Firestore read on every request
+    const cachedUser = getCachedUser(decoded.userId);
+    if (cachedUser) {
+      req.user = cachedUser;
+      return next();
+    }
+
     const userDoc = await adminDb.collection('users').doc(decoded.userId).get();
 
     if (!userDoc.exists) {
@@ -34,6 +43,9 @@ export const authenticateToken = async (req, res, next) => {
       name: userData.name,
       type: userData.type,
     };
+
+    // Cache user data for subsequent requests
+    setCachedUser(decoded.userId, req.user);
 
     next();
   } catch (error) {

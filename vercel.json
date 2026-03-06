@@ -8,8 +8,11 @@
   ],
   "routes": [
     {
-      "src": "/health",
-      "dest": "/server.js"
+      "src": "/health(.*)",
+      "dest": "/server.js",
+      "headers": {
+        "Cache-Control": "no-cache"
+      }
     },
     {
       "src": "/api/(.*)",
@@ -29,7 +32,18 @@
   },
   "functions": {
     "server.js": {
-      "maxDuration": 60
+      "maxDuration": 120,
+      "memory": 1024
     }
-  }
+  },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "X-XSS-Protection", "value": "1; mode=block" }
+      ]
+    }
+  ]
 }

@@ -4,9 +4,9 @@
 
 import crypto from 'crypto';
 
-// Cache config
+// Cache config (Optimized for 100K+ users)
 const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
-const MAX_CACHE_SIZE = 50; // Max cached estimates
+const MAX_CACHE_SIZE = 500; // Increased from 50 to handle more concurrent estimations
 
 // In-memory store: Map<hash, { result, timestamp, projectKey }>
 const cache = new Map();

@@ -7580,37 +7580,82 @@ router.get('/visitors', async (req, res) => {
     try {
         const { days, limit: queryLimit } = req.query;
         const maxDays = parseInt(days) || 30;
+        const tableLimit = parseInt(queryLimit) || 200; // Limit only for table display
         const cutoffDate = new Date();
         cutoffDate.setDate(cutoffDate.getDate() - maxDays);
         const cutoffISO = cutoffDate.toISOString();
 
+        // Fetch ALL visitors for accurate stats (no limit)
         const snapshot = await adminDb.collection('visitor_sessions')
             .where('startedAt', '>=', cutoffISO)
             .orderBy('startedAt', 'desc')
-            .limit(parseInt(queryLimit) || 500)
             .get();
 
-        const visitors = [];
+        const allVisitors = []; // ALL visitors for stats
         const staleUpdates = []; // Track sessions that need isActive cleanup
+        const geoRetries = []; // Sessions with missing location data
         const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
         snapshot.forEach(doc => {
             const data = doc.data();
             // Server-side cleanup: mark stale sessions as inactive
-            // If isActive is true but lastActiveAt is older than 5 minutes, mark inactive
             if (data.isActive && data.lastActiveAt && data.lastActiveAt < fiveMinAgo) {
                 staleUpdates.push(doc.ref.update({ isActive: false }));
-                data.isActive = false; // Update in-memory too
+                data.isActive = false;
             }
-            visitors.push({ id: doc.id, ...data });
+            // Track sessions missing geolocation for retry
+            if (!data.location && data.ip && data.ip !== 'Unknown' && data.ip !== '127.0.0.1' && data.ip !== '::1') {
+                geoRetries.push({ ref: doc.ref, ip: data.ip });
+            }
+            allVisitors.push({ id: doc.id, ...data });
         });
-        // Fire-and-forget stale session cleanup (don't block response)
+
+        // Fire-and-forget stale session cleanup
         if (staleUpdates.length > 0) {
             Promise.all(staleUpdates).catch(err => console.log('[VISITORS] Stale cleanup error:', err.message));
         }
 
+        // Fire-and-forget: retry geolocation for sessions missing location (max 10 per request to respect rate limits)
+        if (geoRetries.length > 0) {
+            const retryBatch = geoRetries.slice(0, 10);
+            (async () => {
+                for (const { ref, ip } of retryBatch) {
+                    try {
+                        const controller = new AbortController();
+                        const timeout = setTimeout(() => controller.abort(), 4000);
+                        const geoRes = await fetch(
+                            `http://ip-api.com/json/${ip}?fields=status,country,countryCode,regionName,city,zip,lat,lon,timezone,isp,org`,
+                            { signal: controller.signal }
+                        );
+                        clearTimeout(timeout);
+                        const geo = await geoRes.json();
+                        if (geo.status === 'success') {
+                            const location = {
+                                country: geo.country || '',
+                                countryCode: geo.countryCode || '',
+                                region: geo.regionName || '',
+                                city: geo.city || '',
+                                zip: geo.zip || '',
+                                lat: geo.lat || 0,
+                                lon: geo.lon || 0,
+                                timezone: geo.timezone || '',
+                                isp: geo.isp || '',
+                                org: geo.org || '',
+                            };
+                            await ref.update({ location });
+                            // Update in-memory too for current response
+                            const match = allVisitors.find(v => v.id === ref.id);
+                            if (match) match.location = location;
+                        }
+                        // Small delay between requests to respect ip-api.com rate limit (45/min)
+                        await new Promise(r => setTimeout(r, 1500));
+                    } catch (e) { /* skip this one */ }
+                }
+            })().catch(() => {});
+        }
+
         // Cross-reference with chatbot_sessions and prospects for contact info
         // Only fetch these if there are visitors without userEmail
-        const visitorsWithoutEmail = visitors.filter(v => !v.userEmail);
+        const visitorsWithoutEmail = allVisitors.filter(v => !v.userEmail);
         if (visitorsWithoutEmail.length > 0) {
             try {
                 // Get recent chatbot sessions that captured emails
@@ -7637,12 +7682,11 @@ router.get('/visitors', async (req, res) => {
                     if (d.email) prospectEmails.push({ email: d.email, capturedAt: d.capturedAt, source: 'prospect' });
                 });
 
-                // Match visitors without email by time window (within 30 min of chatbot/prospect capture)
+                // Match visitors without email by time window
                 visitorsWithoutEmail.forEach(v => {
                     const vStart = new Date(v.startedAt).getTime();
                     const vEnd = new Date(v.lastActiveAt || v.startedAt).getTime();
 
-                    // Check chatbot sessions captured during this visit
                     for (const cb of chatbotEmails) {
                         const cbTime = new Date(cb.capturedAt).getTime();
                         if (cbTime >= vStart - 60000 && cbTime <= vEnd + 60000) {
@@ -7651,7 +7695,6 @@ router.get('/visitors', async (req, res) => {
                             break;
                         }
                     }
-                    // Check prospects if not already matched
                     if (!v.contactEmail) {
                         for (const p of prospectEmails) {
                             const pTime = new Date(p.capturedAt).getTime();
@@ -7668,18 +7711,18 @@ router.get('/visitors', async (req, res) => {
             }
         }
 
-        // Calculate stats
+        // Calculate stats from ALL visitors (not limited subset)
         const now = new Date();
         const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-        const todayVisitors = visitors.filter(v => v.startedAt >= today);
-        const activeNow = visitors.filter(v => {
+        const todayVisitors = allVisitors.filter(v => v.startedAt >= today);
+        const activeNow = allVisitors.filter(v => {
             if (!v.isActive) return false;
             const lastActive = new Date(v.lastActiveAt);
             return (now - lastActive) < 300000; // active in last 5 min
         });
 
-        const totalTime = visitors.reduce((sum, v) => sum + (v.totalTimeSeconds || 0), 0);
-        const avgTime = visitors.length > 0 ? Math.round(totalTime / visitors.length) : 0;
+        const totalTime = allVisitors.reduce((sum, v) => sum + (v.totalTimeSeconds || 0), 0);
+        const avgTime = allVisitors.length > 0 ? Math.round(totalTime / allVisitors.length) : 0;
 
         // Device breakdown
         const devices = { Desktop: 0, Mobile: 0, Tablet: 0 };
@@ -7690,8 +7733,9 @@ router.get('/visitors', async (req, res) => {
         const daily = {};
         const countries = {};
         const cities = {};
+        const regions = {};
 
-        visitors.forEach(v => {
+        allVisitors.forEach(v => {
             devices[v.deviceType] = (devices[v.deviceType] || 0) + 1;
             browsers[v.browser] = (browsers[v.browser] || 0) + 1;
             osSystems[v.os] = (osSystems[v.os] || 0) + 1;
@@ -7709,7 +7753,7 @@ router.get('/visitors', async (req, res) => {
             const day = v.startedAt.split('T')[0];
             daily[day] = (daily[day] || 0) + 1;
 
-            // Location breakdown
+            // Location breakdown — country, city, AND region
             if (v.location?.country) {
                 const key = v.location.countryCode ? `${v.location.country}|${v.location.countryCode}` : v.location.country;
                 countries[key] = (countries[key] || 0) + 1;
@@ -7717,54 +7761,60 @@ router.get('/visitors', async (req, res) => {
             if (v.location?.city) {
                 cities[v.location.city] = (cities[v.location.city] || 0) + 1;
             }
+            if (v.location?.region) {
+                regions[v.location.region] = (regions[v.location.region] || 0) + 1;
+            }
         });
 
         // Top referrers
         const referrers = {};
-        visitors.forEach(v => {
+        allVisitors.forEach(v => {
             const ref = v.referrer || 'Direct';
             referrers[ref] = (referrers[ref] || 0) + 1;
         });
 
         // Count visitors with contact info
-        const identifiedVisitors = visitors.filter(v => v.userEmail || v.contactEmail).length;
+        const identifiedVisitors = allVisitors.filter(v => v.userEmail || v.contactEmail).length;
         const uniqueCountries = Object.keys(countries).length;
+        // Count visitors missing location (for monitoring geo resolution)
+        const missingLocation = allVisitors.filter(v => !v.location).length;
 
         const stats = {
-            totalVisitors: visitors.length,
+            totalVisitors: allVisitors.length,
             todayVisitors: todayVisitors.length,
             activeNow: activeNow.length,
             avgTimeSeconds: avgTime,
             identifiedVisitors,
             uniqueCountries,
+            missingLocation,
             devices,
             browsers,
             osSystems,
             countries: Object.entries(countries).sort((a, b) => b[1] - a[1]).slice(0, 20),
             cities: Object.entries(cities).sort((a, b) => b[1] - a[1]).slice(0, 15),
+            regions: Object.entries(regions).sort((a, b) => b[1] - a[1]).slice(0, 15),
             topPages: Object.entries(pages).sort((a, b) => b[1] - a[1]).slice(0, 10),
             referrers: Object.entries(referrers).sort((a, b) => b[1] - a[1]).slice(0, 10),
             hourlyDistribution: hourly,
             dailyTrend: Object.entries(daily).sort((a, b) => a[0].localeCompare(b[0])).slice(-30),
         };
 
-        // Enrich visitors with Gravatar avatar and LinkedIn search URL
-        visitors.forEach(v => {
+        // Limit visitors for table display (enrichment only on displayed visitors)
+        const displayVisitors = allVisitors.slice(0, tableLimit);
+        displayVisitors.forEach(v => {
             const email = v.userEmail || v.contactEmail;
             if (email) {
                 const hash = crypto.createHash('md5').update(email.toLowerCase().trim()).digest('hex');
                 v.gravatarUrl = `https://www.gravatar.com/avatar/${hash}?s=80&d=404`;
-                // LinkedIn search URL from name or email
                 const searchTerm = v.userName || email.split('@')[0];
                 v.linkedinSearchUrl = `https://www.linkedin.com/search/results/all/?keywords=${encodeURIComponent(searchTerm)}`;
             }
-            // Expose company/org from IP geolocation
             if (v.location) {
                 v.company = v.location.org || v.location.isp || null;
             }
         });
 
-        res.json({ success: true, visitors, stats, total: visitors.length });
+        res.json({ success: true, visitors: displayVisitors, stats, total: allVisitors.length });
     } catch (error) {
         console.error('[VISITORS] Error:', error);
         res.status(500).json({ success: false, message: error.message });

@@ -7591,7 +7591,22 @@ router.get('/visitors', async (req, res) => {
             .get();
 
         const visitors = [];
-        snapshot.forEach(doc => visitors.push({ id: doc.id, ...doc.data() }));
+        const staleUpdates = []; // Track sessions that need isActive cleanup
+        const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            // Server-side cleanup: mark stale sessions as inactive
+            // If isActive is true but lastActiveAt is older than 5 minutes, mark inactive
+            if (data.isActive && data.lastActiveAt && data.lastActiveAt < fiveMinAgo) {
+                staleUpdates.push(doc.ref.update({ isActive: false }));
+                data.isActive = false; // Update in-memory too
+            }
+            visitors.push({ id: doc.id, ...data });
+        });
+        // Fire-and-forget stale session cleanup (don't block response)
+        if (staleUpdates.length > 0) {
+            Promise.all(staleUpdates).catch(err => console.log('[VISITORS] Stale cleanup error:', err.message));
+        }
 
         // Cross-reference with chatbot_sessions and prospects for contact info
         // Only fetch these if there are visitors without userEmail

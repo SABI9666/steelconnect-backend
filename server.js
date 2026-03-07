@@ -252,6 +252,15 @@ app.use(helmet({
 app.use(compression({ level: 6, threshold: 1024 })); // Optimal compression level for speed vs size
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+// Parse text/plain as JSON — needed for navigator.sendBeacon which sends text/plain to avoid CORS preflight
+app.use(express.text({ type: 'text/plain', limit: '1mb' }));
+// Middleware to auto-parse text/plain bodies that contain JSON (for sendBeacon compatibility)
+app.use((req, res, next) => {
+    if (typeof req.body === 'string' && req.headers['content-type']?.includes('text/plain')) {
+        try { req.body = JSON.parse(req.body); } catch(e) { /* not JSON, leave as-is */ }
+    }
+    next();
+});
 
 // Global rate limiter: 200 requests/min per IP (protects against DDoS)
 app.use(generalLimiter);
@@ -1051,7 +1060,7 @@ app.post('/api/visitors/track', async (req, res) => {
 // Update visitor activity (page change, heartbeat for time tracking)
 app.post('/api/visitors/heartbeat', async (req, res) => {
     try {
-        const { sessionId, currentPage, timeSpentSeconds, userEmail, userName } = req.body;
+        const { sessionId, currentPage, timeSpentSeconds, userEmail, userName, isHidden } = req.body;
         if (!sessionId) return res.status(400).json({ success: false });
 
         const snapshot = await adminDb.collection('visitor_sessions')
@@ -1062,10 +1071,12 @@ app.post('/api/visitors/heartbeat', async (req, res) => {
 
         const doc = snapshot.docs[0];
         const data = doc.data();
+        const newTime = Math.min(parseInt(timeSpentSeconds) || 0, 86400);
         const updates = {
             lastActiveAt: new Date().toISOString(),
-            totalTimeSeconds: Math.min(parseInt(timeSpentSeconds) || 0, 86400), // cap at 24h
-            isActive: true,
+            // Only update time if it's higher than what's stored (prevents reset on page refresh)
+            totalTimeSeconds: Math.max(newTime, data.totalTimeSeconds || 0),
+            isActive: !isHidden, // Mark inactive when tab is hidden, active when visible
         };
 
         // If user just logged in, capture their contact info
@@ -1105,10 +1116,13 @@ app.post('/api/visitors/leave', async (req, res) => {
             .limit(1).get();
 
         if (!snapshot.empty) {
+            const data = snapshot.docs[0].data();
+            const newTime = Math.min(parseInt(timeSpentSeconds) || 0, 86400);
             await snapshot.docs[0].ref.update({
                 isActive: false,
                 lastActiveAt: new Date().toISOString(),
-                totalTimeSeconds: Math.min(parseInt(timeSpentSeconds) || 0, 86400),
+                // Never decrease total time (prevents reset on page refresh)
+                totalTimeSeconds: Math.max(newTime, data.totalTimeSeconds || 0),
                 endedAt: new Date().toISOString(),
             });
         }

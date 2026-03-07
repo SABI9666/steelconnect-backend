@@ -1018,21 +1018,24 @@ app.post('/api/visitors/track', async (req, res) => {
             }).catch(() => {});
         }
 
-        // Async: Resolve IP to location using ip-api.com (free, no key needed)
+        // Async: Resolve IP to location — tries ip-api.com first, then ipapi.co as fallback
         // This runs AFTER response is sent so it doesn't slow down the user
         try {
             if (ip && ip !== 'Unknown' && ip !== '127.0.0.1' && ip !== '::1') {
-                const controller = new AbortController();
-                const timeout = setTimeout(() => controller.abort(), 4000);
-                const geoRes = await fetch(
-                    `http://ip-api.com/json/${ip}?fields=status,country,countryCode,regionName,city,zip,lat,lon,timezone,isp,org`,
-                    { signal: controller.signal }
-                );
-                clearTimeout(timeout);
-                const geo = await geoRes.json();
-                if (geo.status === 'success') {
-                    await docRef.update({
-                        location: {
+                let location = null;
+
+                // Attempt 1: ip-api.com (free, 45 req/min)
+                try {
+                    const ctrl1 = new AbortController();
+                    const t1 = setTimeout(() => ctrl1.abort(), 4000);
+                    const geoRes = await fetch(
+                        `http://ip-api.com/json/${ip}?fields=status,country,countryCode,regionName,city,zip,lat,lon,timezone,isp,org`,
+                        { signal: ctrl1.signal }
+                    );
+                    clearTimeout(t1);
+                    const geo = await geoRes.json();
+                    if (geo.status === 'success') {
+                        location = {
                             country: geo.country || '',
                             countryCode: geo.countryCode || '',
                             region: geo.regionName || '',
@@ -1043,12 +1046,47 @@ app.post('/api/visitors/track', async (req, res) => {
                             timezone: geo.timezone || '',
                             isp: geo.isp || '',
                             org: geo.org || '',
+                        };
+                    }
+                } catch (e1) {
+                    console.log('[VISITOR] ip-api.com failed:', e1.message);
+                }
+
+                // Attempt 2: fallback to ipapi.co if first attempt failed
+                if (!location) {
+                    try {
+                        const ctrl2 = new AbortController();
+                        const t2 = setTimeout(() => ctrl2.abort(), 5000);
+                        const geoRes2 = await fetch(
+                            `https://ipapi.co/${ip}/json/`,
+                            { signal: ctrl2.signal }
+                        );
+                        clearTimeout(t2);
+                        const geo2 = await geoRes2.json();
+                        if (geo2.country_name && !geo2.error) {
+                            location = {
+                                country: geo2.country_name || '',
+                                countryCode: geo2.country_code || '',
+                                region: geo2.region || '',
+                                city: geo2.city || '',
+                                zip: geo2.postal || '',
+                                lat: geo2.latitude || 0,
+                                lon: geo2.longitude || 0,
+                                timezone: geo2.timezone || '',
+                                isp: geo2.org || '',
+                                org: geo2.org || '',
+                            };
                         }
-                    });
+                    } catch (e2) {
+                        console.log('[VISITOR] ipapi.co fallback failed:', e2.message);
+                    }
+                }
+
+                if (location) {
+                    await docRef.update({ location });
                 }
             }
         } catch (geoErr) {
-            // Geolocation failed — no problem, location stays null
             console.log('[VISITOR] Geo lookup skipped:', geoErr.message);
         }
     } catch (error) {

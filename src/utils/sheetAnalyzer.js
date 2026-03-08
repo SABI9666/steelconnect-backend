@@ -12,6 +12,7 @@ const MAX_ROWS_FOR_CHARTS = 500;       // Max rows stored in chart datasets
 const MAX_ROWS_FOR_ANALYSIS = 500;     // Max rows for predictive analysis
 const MAX_SHEETS = 10;                 // Max sheets to process
 const MAX_LABEL_LENGTH = 60;           // Truncate long labels
+const MAX_COLUMNS_PER_SHEET = 50;      // Max columns to process per sheet
 
 // =====================================================================
 // LINK TYPE DETECTION - Identify Google Sheets vs SharePoint vs OneDrive
@@ -304,14 +305,37 @@ export function parseSpreadsheet(buffer, originalname) {
     const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
     const sheets = {};
     const sheetsToProcess = workbook.SheetNames.slice(0, MAX_SHEETS);
+
+    // Dynamically reduce row limit when there are many sheets to keep total data manageable
+    const sheetCount = sheetsToProcess.length;
+    const dynamicRowLimit = sheetCount > 5
+        ? Math.min(200, MAX_ROWS_FOR_CHARTS)
+        : sheetCount > 3
+            ? Math.min(350, MAX_ROWS_FOR_CHARTS)
+            : MAX_ROWS_FOR_CHARTS;
+
     for (const sheetName of sheetsToProcess) {
         const ws = workbook.Sheets[sheetName];
         const jsonData = XLSX.utils.sheet_to_json(ws, { defval: '' });
         if (jsonData.length > 0) {
             // Cap rows to prevent oversized Firestore documents
-            sheets[sheetName] = jsonData.slice(0, MAX_ROWS_FOR_CHARTS);
+            let rows = jsonData.slice(0, dynamicRowLimit);
+            // Limit columns to prevent wide spreadsheets from exceeding size limits
+            if (rows.length > 0) {
+                const allCols = Object.keys(rows[0]);
+                if (allCols.length > MAX_COLUMNS_PER_SHEET) {
+                    const keepCols = allCols.slice(0, MAX_COLUMNS_PER_SHEET);
+                    rows = rows.map(row => {
+                        const trimmed = {};
+                        for (const col of keepCols) trimmed[col] = row[col];
+                        return trimmed;
+                    });
+                }
+            }
+            sheets[sheetName] = rows;
         }
     }
+    console.log(`[ANALYSIS] Parsed spreadsheet "${originalname}": ${Object.keys(sheets).length} sheets, dynamic row limit: ${dynamicRowLimit}`);
     return sheets;
 }
 

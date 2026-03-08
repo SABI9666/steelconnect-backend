@@ -8,7 +8,26 @@ import { forceSyncDashboard } from '../services/dashboardSyncService.js';
 import Subscription from '../models/Subscription.js';
 
 const router = express.Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 50 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+        const allowed = [
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+            'application/vnd.ms-excel', // .xls
+            'text/csv', // .csv
+            'application/csv',
+            'text/comma-separated-values',
+            'application/octet-stream' // fallback for some browsers
+        ];
+        const ext = (file.originalname || '').toLowerCase();
+        if (allowed.includes(file.mimetype) || ext.endsWith('.xlsx') || ext.endsWith('.xls') || ext.endsWith('.csv')) {
+            cb(null, true);
+        } else {
+            cb(new Error('Unsupported file type. Please upload an Excel (.xlsx, .xls) or CSV file.'));
+        }
+    }
+});
 
 // ── AI ANALYSIS USAGE HELPERS ──
 
@@ -175,7 +194,27 @@ function trimToFit(dashboardData, limit) {
             rowCount: 0,
             isLightweight: true
         }));
+        size = estimateJsonSize(dashboardData);
+        if (size <= limit) return dashboardData;
     }
+
+    // Step 6: Nuclear option — keep only 1 chart with metadata only, strip everything else
+    if (dashboardData.charts) {
+        dashboardData.charts = dashboardData.charts.slice(0, 1).map(chart => ({
+            sheetName: chart.sheetName,
+            customTitle: chart.customTitle,
+            chartType: chart.chartType,
+            labelColumn: chart.labelColumn,
+            dataColumns: (chart.dataColumns || []).slice(0, 2),
+            labels: [],
+            datasets: [],
+            kpis: [],
+            rowCount: 0,
+            isLightweight: true
+        }));
+    }
+    dashboardData.predictiveAnalysis = null;
+    dashboardData.sheetNames = (dashboardData.sheetNames || []).slice(0, 3);
 
     return dashboardData;
 }
@@ -230,7 +269,20 @@ router.get('/usage', async (req, res) => {
 // === CONTRACTOR SHEET UPLOAD - Auto-generates dashboard, sends to admin for approval ===
 // Supports: file upload (.xlsx, .xls, .csv) AND/OR Google Sheet link
 // POST /api/analysis/upload-sheet
-router.post('/upload-sheet', upload.single('spreadsheet'), async (req, res) => {
+router.post('/upload-sheet', (req, res, next) => {
+    upload.single('spreadsheet')(req, res, (err) => {
+        if (err) {
+            if (err.code === 'LIMIT_FILE_SIZE') {
+                return res.status(413).json({ success: false, message: 'File exceeds 50MB limit. Please use a smaller file.' });
+            }
+            if (err.message && err.message.includes('Unsupported file type')) {
+                return res.status(400).json({ success: false, message: err.message });
+            }
+            return res.status(400).json({ success: false, message: 'File upload failed: ' + (err.message || 'Unknown error') });
+        }
+        next();
+    });
+}, async (req, res) => {
     try {
         const userEmail = req.user.email;
         const userName = req.user.name || req.user.displayName || 'Unknown User';
@@ -317,10 +369,37 @@ router.post('/upload-sheet', upload.single('spreadsheet'), async (req, res) => {
             };
 
             dashboardData = trimToFit(dashboardData, FIRESTORE_DOC_LIMIT);
-            const estimatedSize = estimateJsonSize(dashboardData);
-            console.log(`[ANALYSIS] File dashboard size: ~${(estimatedSize / 1024).toFixed(1)}KB`);
+            let estimatedSize = estimateJsonSize(dashboardData);
+            console.log(`[ANALYSIS] File dashboard size after trim: ~${(estimatedSize / 1024).toFixed(1)}KB`);
 
-            const docRef = await adminDb.collection('dashboards').add(dashboardData);
+            // Safety: if still over limit after trimToFit, aggressively strip data
+            if (estimatedSize > FIRESTORE_DOC_LIMIT) {
+                console.warn(`[ANALYSIS] Dashboard still over limit (${(estimatedSize / 1024).toFixed(1)}KB), applying emergency trim`);
+                dashboardData.charts = (dashboardData.charts || []).slice(0, 2).map(c => ({
+                    sheetName: c.sheetName, customTitle: c.customTitle, chartType: c.chartType,
+                    labelColumn: c.labelColumn, dataColumns: (c.dataColumns || []).slice(0, 3),
+                    labels: [], datasets: [], kpis: [], rowCount: 0, isLightweight: true
+                }));
+                dashboardData.predictiveAnalysis = null;
+                dashboardData.sheetNames = (dashboardData.sheetNames || []).slice(0, 5);
+                estimatedSize = estimateJsonSize(dashboardData);
+                console.log(`[ANALYSIS] After emergency trim: ~${(estimatedSize / 1024).toFixed(1)}KB`);
+            }
+
+            let docRef;
+            try {
+                docRef = await adminDb.collection('dashboards').add(dashboardData);
+            } catch (firestoreErr) {
+                // If Firestore still rejects, try one more time with minimal data
+                if (firestoreErr.message && (firestoreErr.message.includes('too large') || firestoreErr.message.includes('exceeds') || firestoreErr.message.includes('INVALID_ARGUMENT'))) {
+                    console.warn('[ANALYSIS] Firestore save failed, retrying with minimal data');
+                    dashboardData.charts = [];
+                    dashboardData.predictiveAnalysis = null;
+                    docRef = await adminDb.collection('dashboards').add(dashboardData);
+                } else {
+                    throw firestoreErr;
+                }
+            }
             console.log(`[ANALYSIS] Contractor ${userEmail} uploaded file -> Dashboard ${docRef.id} (pending)`);
 
             return res.json({
@@ -399,13 +478,15 @@ router.post('/upload-sheet', upload.single('spreadsheet'), async (req, res) => {
         console.error('[ANALYSIS] Sheet upload error:', error.message, error.stack);
         const msg = (error.message || '').toLowerCase();
         if (msg.includes('exceeds the maximum allowed size') || msg.includes('invalid_argument') || msg.includes('too large') || msg.includes('document size')) {
-            res.status(400).json({ success: false, message: 'Your data is too large. Try uploading a smaller spreadsheet or fewer sheets.' });
+            res.status(400).json({ success: false, message: 'Your spreadsheet has too many sheets or columns. Try uploading a file with fewer sheets (max 5) or fewer columns.' });
         } else if (msg.includes('cfb') || msg.includes('corrupted') || msg.includes('unsupported') || msg.includes('file type')) {
             res.status(400).json({ success: false, message: 'Could not read this file. Please ensure it is a valid .xlsx, .xls, or .csv file.' });
         } else if (msg.includes('timeout') || msg.includes('abort') || msg.includes('econnreset')) {
             res.status(504).json({ success: false, message: 'The request timed out while processing your data. Try a smaller file or fewer sheets.' });
         } else if (msg.includes('not publicly shared') || msg.includes('requires authentication') || msg.includes('permission')) {
             res.status(400).json({ success: false, message: error.message });
+        } else if (msg.includes('payload too large') || msg.includes('entity too large') || msg.includes('request entity')) {
+            res.status(413).json({ success: false, message: 'File is too large to upload. Maximum file size is 50MB.' });
         } else {
             res.status(500).json({ success: false, message: 'Failed to process your data. Please try again or upload a smaller file.' });
         }

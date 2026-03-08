@@ -556,7 +556,7 @@ router.get('/my-dashboards', async (req, res) => {
             };
         });
 
-        dashboards.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        dashboards.sort((a, b) => new Date(b.approvedAt || b.createdAt) - new Date(a.approvedAt || a.createdAt));
 
         res.json({ success: true, dashboards });
     } catch (error) {

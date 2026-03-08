@@ -622,6 +622,47 @@ export async function sendMeetingCancellationEmail(attendee, meeting, organizer)
     }
 }
 
+// ============================================================
+// ANALYSIS REPORT READY NOTIFICATION
+// ============================================================
+export async function sendAnalysisReportReadyEmail(contractor, dashboard) {
+    try {
+        const reportTitle = dashboard.title || 'Analytics Report';
+        const dashboardId = dashboard.id || dashboard._id;
+        const reportType = dashboard.reportType || 'auto';
+
+        const reportTypeLabel = reportType === 'pdf' ? 'PDF Report'
+            : reportType === 'html' ? 'Interactive Report'
+            : 'Analytics Dashboard';
+
+        const autoUpdateNote = reportType === 'html'
+            ? `<div ${S.success}><strong>Auto-Update Enabled</strong> — Upload new data anytime and your report will update automatically.</div>`
+            : '';
+
+        const htmlContent = `
+<h2 ${S.h2}>Your Analysis Report is Ready</h2>
+<p ${S.p}>Hi ${contractor.name},</p>
+<p ${S.p}>Great news! Your analysis report has been completed and is ready to view.</p>
+<table ${S.table}>
+<tr><td ${S.tdLabel}>Report</td><td ${S.tdValue}>${reportTitle}</td></tr>
+<tr><td ${S.tdLabel}>Type</td><td ${S.tdValue}>${reportTypeLabel}</td></tr>
+<tr><td ${S.tdLabel}>Completed</td><td ${S.tdValue}>${new Date().toLocaleDateString()}</td></tr>
+</table>
+${autoUpdateNote}
+<p style="margin:20px 0;"><a href="https://steelconnectapp.com/?section=ai-analytics&dashboardId=${dashboardId}" ${S.btn}>View Analysis Report</a></p>
+<p ${S.muted}>If you have questions about your report, just reply to this email.</p>`;
+
+        return await sendEmail({
+            to: contractor.email,
+            subject: `Analysis Report Ready — "${reportTitle}"`,
+            htmlContent,
+        });
+    } catch (error) {
+        console.error('Error sending analysis report ready email:', error);
+        return { success: false, error: error.message || 'Failed to send analysis report email' };
+    }
+}
+
 export default {
     sendLoginNotification,
     sendEstimationResultNotification,
@@ -635,4 +676,5 @@ export default {
     sendMeetingInvitationEmail,
     sendMeetingUpdateEmail,
     sendMeetingCancellationEmail,
+    sendAnalysisReportReadyEmail,
 };

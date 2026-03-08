@@ -1195,7 +1195,7 @@ router.get('/dashboards/:id', async (req, res) => {
 });
 
 // GET /api/analysis/dashboard/:id/download-pdf - Generate and download PDF from HTML report data
-router.get('/dashboard/:id/download-pdf', authenticateToken, async (req, res) => {
+router.get('/dashboard/:id/download-pdf', async (req, res) => {
     try {
         const userEmail = req.user.email;
         const doc = await adminDb.collection('dashboards').doc(req.params.id).get();

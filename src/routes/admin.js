@@ -3990,6 +3990,68 @@ router.get('/dashboards/:id/report-file', async (req, res) => {
     }
 });
 
+// GET /api/admin/dashboards/:id/html-content - Get HTML report content for admin preview/PDF generation
+router.get('/dashboards/:id/html-content', async (req, res) => {
+    try {
+        const doc = await adminDb.collection('dashboards').doc(req.params.id).get();
+        if (!doc.exists) return res.status(404).json({ success: false, message: 'Dashboard not found' });
+
+        const data = doc.data();
+        if (data.reportType !== 'html' || !data.htmlReport) {
+            return res.status(400).json({ success: false, message: 'No HTML report available for this dashboard' });
+        }
+
+        let htmlContent = data.htmlReport.htmlContent;
+
+        // If no inline content, fetch from storage
+        if (!htmlContent && data.htmlReport.storagePath) {
+            const bucket = storage.bucket();
+            const fileRef = bucket.file(data.htmlReport.storagePath);
+            const [fileBuffer] = await fileRef.download();
+            htmlContent = fileBuffer.toString('utf-8');
+        }
+
+        if (!htmlContent) {
+            return res.status(404).json({ success: false, message: 'HTML report content not found' });
+        }
+
+        // Inject template data if available
+        let templateData = data.templateData || null;
+        if (!templateData && data.storagePath) {
+            try {
+                const bucket = storage.bucket();
+                const fileRef = bucket.file(data.storagePath);
+                const [fileBuffer] = await fileRef.download();
+                const fileName = data.fileName || 'file.xlsx';
+                const { parseSpreadsheet: parseSheet } = await import('../utils/sheetAnalyzer.js');
+                const sheets = parseSheet(fileBuffer, fileName);
+                templateData = {};
+                for (const [name, rows] of Object.entries(sheets)) {
+                    templateData[name] = rows.slice(0, 1000);
+                }
+            } catch (e) {
+                console.error('[ADMIN] Failed to parse stored spreadsheet for template:', e.message);
+            }
+        }
+
+        if (templateData) {
+            const dataScript = `<script>window.__REPORT_DATA__ = ${JSON.stringify(templateData)}; window.__REPORT_META__ = ${JSON.stringify({ title: data.title, frequency: data.frequency, updatedAt: data.templateDataUpdatedAt || data.updatedAt })};</script>`;
+            if (htmlContent.includes('</head>')) {
+                htmlContent = htmlContent.replace('</head>', dataScript + '</head>');
+            } else if (htmlContent.includes('<body')) {
+                htmlContent = htmlContent.replace(/<body[^>]*>/, (match) => match + dataScript);
+            } else {
+                htmlContent = dataScript + htmlContent;
+            }
+        }
+
+        res.json({ success: true, htmlContent, title: data.title });
+    } catch (error) {
+        console.error('[ADMIN] HTML content error:', error);
+        res.status(500).json({ success: false, message: 'Failed to get HTML report content' });
+    }
+});
+
 // GET /api/admin/dashboards/:id/download-source - Download user's uploaded Excel/data file
 router.get('/dashboards/:id/download-source', async (req, res) => {
     try {

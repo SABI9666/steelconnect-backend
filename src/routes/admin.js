@@ -46,6 +46,14 @@ router.get('/dashboard', async (req, res) => {
             }
         }
 
+        // Compute date boundaries for visitor/login stats
+        const now = new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+        const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+        const last7d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+        const last30d = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+        const fiveMinAgo = new Date(now.getTime() - 5 * 60 * 1000).toISOString();
+
         // Run ALL count queries in parallel (instead of sequentially)
         const [
             totalUsers,
@@ -64,7 +72,13 @@ router.get('/dashboard', async (req, res) => {
             totalCommunityPosts,
             pendingCommunityPosts,
             approvedCommunityPosts,
-            rejectedCommunityPosts
+            rejectedCommunityPosts,
+            // Visitor analytics counts
+            totalVisitors30d,
+            todayVisitors,
+            // Login activity counts
+            totalLogins30d,
+            todayLogins,
         ] = await Promise.all([
             getCount(adminDb.collection('users')),
             getCount(adminDb.collection('users').where('profileCompleted', '==', false).where('type', '!=', 'admin')),
@@ -82,8 +96,34 @@ router.get('/dashboard', async (req, res) => {
             getCount(adminDb.collection('community_posts')),
             getCount(adminDb.collection('community_posts').where('status', '==', 'pending')),
             getCount(adminDb.collection('community_posts').where('status', '==', 'approved')),
-            getCount(adminDb.collection('community_posts').where('status', '==', 'rejected'))
+            getCount(adminDb.collection('community_posts').where('status', '==', 'rejected')),
+            // Visitor sessions in last 30 days
+            getCount(adminDb.collection('visitor_sessions').where('startedAt', '>=', last30d)),
+            // Visitor sessions today
+            getCount(adminDb.collection('visitor_sessions').where('startedAt', '>=', todayStart)),
+            // User logins in last 30 days (category 'User Login' covers User/Admin/Operations logins)
+            getCount(adminDb.collection('user_activity_logs').where('category', '==', 'User Login').where('timestamp', '>=', last30d)),
+            // User logins today
+            getCount(adminDb.collection('user_activity_logs').where('category', '==', 'User Login').where('timestamp', '>=', todayStart)),
         ]);
+
+        // Get active visitors now (need a query, not just count, since we need to check lastActiveAt)
+        let activeVisitorsNow = 0;
+        try {
+            const activeSnap = await adminDb.collection('visitor_sessions')
+                .where('isActive', '==', true)
+                .where('lastActiveAt', '>=', fiveMinAgo)
+                .count().get();
+            activeVisitorsNow = activeSnap.data().count;
+        } catch {
+            try {
+                const activeSnap = await adminDb.collection('visitor_sessions')
+                    .where('isActive', '==', true)
+                    .where('lastActiveAt', '>=', fiveMinAgo)
+                    .get();
+                activeVisitorsNow = activeSnap.size;
+            } catch { /* ignore */ }
+        }
 
         // Compute derived stats
         const completedAnalysis = await getCount(adminDb.collection('analysis_requests').where('vercelUrl', '!=', ''));
@@ -114,7 +154,14 @@ router.get('/dashboard', async (req, res) => {
                 pendingCommunityPosts,
                 totalCommunityPosts,
                 approvedCommunityPosts,
-                rejectedCommunityPosts
+                rejectedCommunityPosts,
+                // Visitor analytics
+                totalVisitors30d,
+                todayVisitors,
+                activeVisitorsNow,
+                // Login activity
+                totalLogins30d,
+                todayLogins,
             }
         });
     } catch (error) {

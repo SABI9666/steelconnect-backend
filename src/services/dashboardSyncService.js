@@ -67,6 +67,12 @@ async function syncDashboard(docId, dashboardData) {
     const sheetUrl = dashboardData.googleSheetUrl;
     if (!sheetUrl) return false;
 
+    // Skip dashboards with admin-uploaded reports (PDF/HTML) — they should not auto-regenerate charts
+    if (dashboardData.reportType === 'html' || dashboardData.reportType === 'pdf') {
+        console.log(`[SYNC] Skipping dashboard ${docId} — has admin-uploaded ${dashboardData.reportType} report`);
+        return false;
+    }
+
     try {
         console.log(`[SYNC] Fetching data for dashboard ${docId} from: ${sheetUrl.substring(0, 60)}...`);
 
@@ -157,6 +163,8 @@ async function runSyncCheck() {
         const toSync = [];
         snapshot.docs.forEach(doc => {
             const d = doc.data();
+            // Skip dashboards with admin-uploaded reports (PDF/HTML) — they should not auto-regenerate charts
+            if (d.reportType === 'html' || d.reportType === 'pdf') return;
             if (d.googleSheetUrl && d.syncInterval && d.syncInterval !== 'manual') {
                 if (needsSync(d)) {
                     toSync.push({ id: doc.id, data: d });
@@ -191,6 +199,10 @@ export async function forceSyncDashboard(docId) {
     if (!doc.exists) throw new Error('Dashboard not found');
 
     const data = doc.data();
+    // Skip dashboards with admin-uploaded reports — sync would overwrite them
+    if (data.reportType === 'html' || data.reportType === 'pdf') {
+        return { success: true, dataChanged: false, message: `Dashboard has an admin-uploaded ${data.reportType.toUpperCase()} report — sync not needed` };
+    }
     if (!data.googleSheetUrl) throw new Error('Dashboard has no linked sheet URL');
 
     const changed = await syncDashboard(docId, data);

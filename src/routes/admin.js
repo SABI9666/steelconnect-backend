@@ -3648,6 +3648,9 @@ router.get('/dashboards', async (req, res) => {
                 lastSyncedAt: d.lastSyncedAt || null,
                 lastSyncStatus: d.lastSyncStatus || null,
                 manualDashboardUrl: d.manualDashboardUrl || null,
+                reportType: d.reportType || 'auto',
+                pdfReport: d.pdfReport ? { originalName: d.pdfReport.originalName, fileSize: d.pdfReport.fileSize, uploadedAt: d.pdfReport.uploadedAt } : null,
+                htmlReport: d.htmlReport ? { originalName: d.htmlReport.originalName, fileSize: d.htmlReport.fileSize, isTemplate: d.htmlReport.isTemplate, uploadedAt: d.htmlReport.uploadedAt } : null,
                 sheetNames: d.sheetNames,
                 status: d.status,
                 chartCount: d.totalChartsGenerated || (d.charts || []).length,
@@ -3791,6 +3794,189 @@ router.post('/dashboards/:id/approve', async (req, res) => {
     } catch (error) {
         console.error('[DASHBOARD] Approve error:', error);
         res.status(500).json({ success: false, message: 'Failed to approve dashboard' });
+    }
+});
+
+// POST /api/admin/dashboards/:id/upload-pdf - Upload PDF report instead of auto-generated dashboard
+// Admin uploads a PDF file which the client will see as a downloadable/viewable report
+router.post('/dashboards/:id/upload-pdf', upload.single('pdfFile'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ success: false, message: 'Please upload a PDF file' });
+
+        const ext = (req.file.originalname || '').toLowerCase();
+        if (!ext.endsWith('.pdf') && req.file.mimetype !== 'application/pdf') {
+            return res.status(400).json({ success: false, message: 'Only PDF files are allowed' });
+        }
+
+        const docRef = adminDb.collection('dashboards').doc(req.params.id);
+        const doc = await docRef.get();
+        if (!doc.exists) return res.status(404).json({ success: false, message: 'Dashboard not found' });
+
+        // Upload PDF to Firebase Storage
+        const bucket = storage.bucket();
+        const timestamp = Date.now();
+        const safeName = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const pdfPath = `dashboard-reports/${req.params.id}/${timestamp}_${safeName}`;
+        const fileRef = bucket.file(pdfPath);
+
+        await fileRef.save(req.file.buffer, {
+            metadata: {
+                contentType: 'application/pdf',
+                metadata: { originalName: req.file.originalname, uploadedBy: req.user.email, uploadedAt: new Date().toISOString() }
+            },
+            resumable: false
+        });
+
+        // Generate a signed URL (valid for 7 days, will be refreshed on access)
+        const [signedUrl] = await fileRef.getSignedUrl({ action: 'read', expires: Date.now() + 7 * 24 * 60 * 60 * 1000 });
+
+        const updateData = {
+            status: 'approved',
+            reportType: 'pdf',
+            pdfReport: {
+                storagePath: pdfPath,
+                originalName: req.file.originalname,
+                fileSize: req.file.size,
+                signedUrl: signedUrl,
+                uploadedAt: new Date().toISOString(),
+                uploadedBy: req.user.email
+            },
+            approvedAt: new Date().toISOString(),
+            approvedBy: req.user.email,
+            updatedAt: new Date().toISOString()
+        };
+
+        await docRef.update(updateData);
+
+        // Notify the contractor
+        const data = doc.data();
+        if (data.contractorEmail) {
+            try {
+                const userSnapshot = await adminDb.collection('users').where('email', '==', data.contractorEmail).limit(1).get();
+                if (!userSnapshot.empty) {
+                    await NotificationService.createNotification(
+                        userSnapshot.docs[0].id,
+                        'Report Ready!',
+                        `Your analytics report "${data.title}" (PDF) is now ready to view.`,
+                        'business_analytics',
+                        { action: 'dashboard_approved', dashboardId: req.params.id }
+                    );
+                }
+            } catch (e) { console.error('[DASHBOARD] Notify error:', e); }
+        }
+
+        console.log(`[DASHBOARD] PDF uploaded for ${req.params.id} by ${req.user.email} (${(req.file.size / 1024).toFixed(1)}KB)`);
+        res.json({ success: true, message: 'PDF report uploaded and dashboard approved! Client can now view the report.' });
+    } catch (error) {
+        console.error('[DASHBOARD] PDF upload error:', error);
+        res.status(500).json({ success: false, message: 'Failed to upload PDF report' });
+    }
+});
+
+// POST /api/admin/dashboards/:id/upload-html - Upload HTML report template
+// When HTML is uploaded, the user gets the report. If the dashboard has an HTML template
+// and the user uploads new data, the report auto-updates using the template.
+router.post('/dashboards/:id/upload-html', upload.single('htmlFile'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ success: false, message: 'Please upload an HTML file' });
+
+        const ext = (req.file.originalname || '').toLowerCase();
+        if (!ext.endsWith('.html') && !ext.endsWith('.htm') && req.file.mimetype !== 'text/html') {
+            return res.status(400).json({ success: false, message: 'Only HTML files are allowed' });
+        }
+
+        const docRef = adminDb.collection('dashboards').doc(req.params.id);
+        const doc = await docRef.get();
+        if (!doc.exists) return res.status(404).json({ success: false, message: 'Dashboard not found' });
+
+        // Upload HTML to Firebase Storage
+        const bucket = storage.bucket();
+        const timestamp = Date.now();
+        const safeName = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const htmlPath = `dashboard-reports/${req.params.id}/${timestamp}_${safeName}`;
+        const fileRef = bucket.file(htmlPath);
+
+        await fileRef.save(req.file.buffer, {
+            metadata: {
+                contentType: 'text/html',
+                metadata: { originalName: req.file.originalname, uploadedBy: req.user.email, uploadedAt: new Date().toISOString() }
+            },
+            resumable: false
+        });
+
+        // Store the HTML content directly for rendering (if under 500KB)
+        let htmlContent = null;
+        if (req.file.size <= 500 * 1024) {
+            htmlContent = req.file.buffer.toString('utf-8');
+        }
+
+        const [signedUrl] = await fileRef.getSignedUrl({ action: 'read', expires: Date.now() + 7 * 24 * 60 * 60 * 1000 });
+
+        const updateData = {
+            status: 'approved',
+            reportType: 'html',
+            htmlReport: {
+                storagePath: htmlPath,
+                originalName: req.file.originalname,
+                fileSize: req.file.size,
+                signedUrl: signedUrl,
+                htmlContent: htmlContent,
+                isTemplate: true,
+                uploadedAt: new Date().toISOString(),
+                uploadedBy: req.user.email
+            },
+            approvedAt: new Date().toISOString(),
+            approvedBy: req.user.email,
+            updatedAt: new Date().toISOString()
+        };
+
+        await docRef.update(updateData);
+
+        // Notify the contractor
+        const data = doc.data();
+        if (data.contractorEmail) {
+            try {
+                const userSnapshot = await adminDb.collection('users').where('email', '==', data.contractorEmail).limit(1).get();
+                if (!userSnapshot.empty) {
+                    await NotificationService.createNotification(
+                        userSnapshot.docs[0].id,
+                        'Report Ready!',
+                        `Your analytics report "${data.title}" is now ready to view. Upload new data anytime to auto-update.`,
+                        'business_analytics',
+                        { action: 'dashboard_approved', dashboardId: req.params.id }
+                    );
+                }
+            } catch (e) { console.error('[DASHBOARD] Notify error:', e); }
+        }
+
+        console.log(`[DASHBOARD] HTML template uploaded for ${req.params.id} by ${req.user.email} (${(req.file.size / 1024).toFixed(1)}KB)`);
+        res.json({ success: true, message: 'HTML report uploaded and dashboard approved! Client can view and auto-update with new data.' });
+    } catch (error) {
+        console.error('[DASHBOARD] HTML upload error:', error);
+        res.status(500).json({ success: false, message: 'Failed to upload HTML report' });
+    }
+});
+
+// GET /api/admin/dashboards/:id/report-file - Get fresh signed URL for PDF/HTML report
+router.get('/dashboards/:id/report-file', async (req, res) => {
+    try {
+        const doc = await adminDb.collection('dashboards').doc(req.params.id).get();
+        if (!doc.exists) return res.status(404).json({ success: false, message: 'Dashboard not found' });
+
+        const data = doc.data();
+        const report = data.pdfReport || data.htmlReport;
+        if (!report || !report.storagePath) {
+            return res.status(404).json({ success: false, message: 'No report file found' });
+        }
+
+        const bucket = storage.bucket();
+        const fileRef = bucket.file(report.storagePath);
+        const [signedUrl] = await fileRef.getSignedUrl({ action: 'read', expires: Date.now() + 7 * 24 * 60 * 60 * 1000 });
+
+        res.json({ success: true, signedUrl, reportType: data.reportType, originalName: report.originalName });
+    } catch (error) {
+        console.error('[DASHBOARD] Report file error:', error);
+        res.status(500).json({ success: false, message: 'Failed to get report file' });
     }
 });
 

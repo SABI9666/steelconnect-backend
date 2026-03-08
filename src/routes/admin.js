@@ -107,22 +107,24 @@ router.get('/dashboard', async (req, res) => {
             getCount(adminDb.collection('user_activity_logs').where('category', '==', 'User Login').where('timestamp', '>=', todayStart)),
         ]);
 
-        // Get active visitors now (need a query, not just count, since we need to check lastActiveAt)
+        // Get active visitors now — query by isActive only to avoid requiring composite index,
+        // then filter by lastActiveAt in memory for accuracy
         let activeVisitorsNow = 0;
         try {
             const activeSnap = await adminDb.collection('visitor_sessions')
                 .where('isActive', '==', true)
-                .where('lastActiveAt', '>=', fiveMinAgo)
-                .count().get();
-            activeVisitorsNow = activeSnap.data().count;
-        } catch {
-            try {
-                const activeSnap = await adminDb.collection('visitor_sessions')
-                    .where('isActive', '==', true)
-                    .where('lastActiveAt', '>=', fiveMinAgo)
-                    .get();
-                activeVisitorsNow = activeSnap.size;
-            } catch { /* ignore */ }
+                .get();
+            activeSnap.forEach(doc => {
+                const data = doc.data();
+                if (data.lastActiveAt && data.lastActiveAt >= fiveMinAgo) {
+                    activeVisitorsNow++;
+                } else if (data.lastActiveAt && data.lastActiveAt < fiveMinAgo) {
+                    // Clean up stale active session (fire-and-forget)
+                    doc.ref.update({ isActive: false }).catch(() => {});
+                }
+            });
+        } catch (e) {
+            console.log('[DASHBOARD] Active visitors count error:', e.message);
         }
 
         // Compute derived stats

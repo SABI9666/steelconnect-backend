@@ -1110,12 +1110,18 @@ app.post('/api/visitors/heartbeat', async (req, res) => {
         const doc = snapshot.docs[0];
         const data = doc.data();
         const newTime = Math.min(parseInt(timeSpentSeconds) || 0, 86400);
+        const isActiveNow = isHidden !== undefined ? !isHidden : true;
         const updates = {
             lastActiveAt: new Date().toISOString(),
             // Only update time if it's higher than what's stored (prevents reset on page refresh)
             totalTimeSeconds: Math.max(newTime, data.totalTimeSeconds || 0),
-            isActive: !isHidden, // Mark inactive when tab is hidden, active when visible
+            isActive: isActiveNow,
         };
+
+        // Clear endedAt if session is being reactivated (user came back)
+        if (isActiveNow && data.endedAt) {
+            updates.endedAt = null;
+        }
 
         // If user just logged in, capture their contact info
         if (userEmail && !data.userEmail) {

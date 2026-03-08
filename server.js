@@ -1335,92 +1335,8 @@ app.get('/api/files/download/:fileId', async (req, res) => {
 // END: ADDED CODE
 // =================================================================
 
-// --- Enhanced Error Handling Middleware ---
-app.use((error, req, res, next) => {
-    const timestamp = new Date().toISOString();
-    console.error(`❌ ${timestamp} - Global Error Handler:`, error);
-    
-    // Log request details for debugging
-    console.error(`🔍 Request: ${req.method} ${req.url}`);
-    console.error(`🔍 User-Agent: ${req.get('User-Agent')}`);
-    
-    if (error.code === 'LIMIT_FILE_SIZE') {
-        return res.status(413).json({ 
-            success: false, 
-            error: 'File too large. Maximum size is 50MB.',
-            code: 'FILE_TOO_LARGE',
-            timestamp
-        });
-    }
-    
-    if (error.message === 'Not allowed by CORS') {
-        return res.status(403).json({
-            success: false,
-            error: 'CORS policy violation',
-            code: 'CORS_ERROR',
-            timestamp
-        });
-    }
-
-    if (error.name === 'ValidationError') {
-        return res.status(400).json({
-            success: false,
-            error: 'Validation failed',
-            details: error.message,
-            code: 'VALIDATION_ERROR',
-            timestamp
-        });
-    }
-
-    if (error.name === 'CastError') {
-        return res.status(400).json({
-            success: false,
-            error: 'Invalid ID format',
-            code: 'INVALID_ID',
-            timestamp
-        });
-    }
-    
-    // Generic error response
-    res.status(error.status || 500).json({ 
-        success: false, 
-        error: process.env.NODE_ENV === 'production' 
-            ? 'Internal Server Error' 
-            : error.message || 'Internal Server Error',
-        code: 'INTERNAL_ERROR',
-        timestamp,
-        ...(process.env.NODE_ENV !== 'production' && { stack: error.stack })
-    });
-});
-
-// --- Enhanced 404 Handler ---
-app.use('*', (req, res) => {
-    console.warn(`⚠️ 404 - Route not found: ${req.method} ${req.originalUrl}`);
-    
-    res.status(404).json({
-        success: false,
-        error: `Route ${req.originalUrl} not found`,
-        method: req.method,
-        timestamp: new Date().toISOString(),
-        available_routes: [
-            '/',
-            '/health',
-            '/api',
-            '/api/auth/*',
-            '/api/profile/*',
-            '/api/jobs/*',
-            '/api/quotes/*',
-            '/api/messages/*',
-            '/api/files/download/:fileId',
-            ...(supportRoutes ? ['/api/support/*'] : ['⚠️ /api/support/* (disabled)']), // NEW
-            ...(notificationRoutes ? ['/api/notifications/*'] : ['⚠️ /api/notifications/* (disabled)']),
-            ...(estimationRoutes ? ['/api/estimation/*'] : ['⚠️ /api/estimation/* (disabled)']),
-            ...(adminRoutes ? ['/api/admin/*'] : ['⚠️ /api/admin/* (disabled)']),
-            '/api/analysis/*' // NEW
-        ],
-        suggestion: 'Check the API documentation at /api'
-    });
-});
+// NOTE: Error handler and 404 handler moved AFTER all route definitions (after voice-call routes)
+// to prevent them from intercepting push, FCM, and voice-call endpoints.
 
 // --- Enhanced Graceful Shutdown ---
 const gracefulShutdown = (signal) => {
@@ -2161,6 +2077,48 @@ app.post('/api/voice-calls/accept', (req, res) => {
         callerName: call.callerName,
         conversationId: call.conversationId,
         callType: call.callType
+    });
+});
+
+// --- Enhanced Error Handling Middleware ---
+// IMPORTANT: Must be AFTER all route definitions so it doesn't intercept valid routes
+app.use((error, req, res, next) => {
+    const timestamp = new Date().toISOString();
+    console.error(`❌ ${timestamp} - Global Error Handler:`, error);
+    console.error(`🔍 Request: ${req.method} ${req.url}`);
+    console.error(`🔍 User-Agent: ${req.get('User-Agent')}`);
+
+    if (error.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ success: false, error: 'File too large. Maximum size is 50MB.', code: 'FILE_TOO_LARGE', timestamp });
+    }
+    if (error.message === 'Not allowed by CORS') {
+        return res.status(403).json({ success: false, error: 'CORS policy violation', code: 'CORS_ERROR', timestamp });
+    }
+    if (error.name === 'ValidationError') {
+        return res.status(400).json({ success: false, error: 'Validation failed', details: error.message, code: 'VALIDATION_ERROR', timestamp });
+    }
+    if (error.name === 'CastError') {
+        return res.status(400).json({ success: false, error: 'Invalid ID format', code: 'INVALID_ID', timestamp });
+    }
+    res.status(error.status || 500).json({
+        success: false,
+        error: process.env.NODE_ENV === 'production' ? 'Internal Server Error' : error.message || 'Internal Server Error',
+        code: 'INTERNAL_ERROR', timestamp,
+        ...(process.env.NODE_ENV !== 'production' && { stack: error.stack })
+    });
+});
+
+// --- Enhanced 404 Handler ---
+// IMPORTANT: Must be the LAST route handler — catches any unmatched routes
+app.use('*', (req, res) => {
+    console.warn(`⚠️ 404 - Route not found: ${req.method} ${req.originalUrl}`);
+    res.status(404).json({
+        success: false,
+        error: `Route ${req.originalUrl} not found`,
+        message: `Route ${req.originalUrl} not found`,
+        method: req.method,
+        timestamp: new Date().toISOString(),
+        suggestion: 'Check the API documentation at /api'
     });
 });
 

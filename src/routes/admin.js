@@ -3835,6 +3835,10 @@ router.post('/dashboards/:id/upload-pdf', upload.single('pdfFile'), async (req, 
         const updateData = {
             status: 'approved',
             reportType: 'pdf',
+            charts: [],
+            totalChartsGenerated: 0,
+            predictiveAnalysis: null,
+            htmlReport: null,
             pdfReport: {
                 storagePath: pdfPath,
                 originalName: req.file.originalname,
@@ -3917,6 +3921,10 @@ router.post('/dashboards/:id/upload-html', upload.single('htmlFile'), async (req
         const updateData = {
             status: 'approved',
             reportType: 'html',
+            charts: [],
+            totalChartsGenerated: 0,
+            predictiveAnalysis: null,
+            pdfReport: null,
             htmlReport: {
                 storagePath: htmlPath,
                 originalName: req.file.originalname,
@@ -3979,6 +3987,51 @@ router.get('/dashboards/:id/report-file', async (req, res) => {
     } catch (error) {
         console.error('[DASHBOARD] Report file error:', error);
         res.status(500).json({ success: false, message: 'Failed to get report file' });
+    }
+});
+
+// GET /api/admin/dashboards/:id/download-source - Download user's uploaded Excel/data file
+router.get('/dashboards/:id/download-source', async (req, res) => {
+    try {
+        const doc = await adminDb.collection('dashboards').doc(req.params.id).get();
+        if (!doc.exists) return res.status(404).json({ success: false, message: 'Dashboard not found' });
+
+        const data = doc.data();
+
+        // If dashboard has a Google Sheet URL, return the link
+        if (data.googleSheetUrl) {
+            return res.json({
+                success: true,
+                type: 'link',
+                url: data.googleSheetUrl,
+                linkType: data.linkType || 'google',
+                fileName: data.fileName || null
+            });
+        }
+
+        // If dashboard has a stored file, generate a signed URL for download
+        if (data.storagePath) {
+            const bucket = storage.bucket();
+            const fileRef = bucket.file(data.storagePath);
+            const [signedUrl] = await fileRef.getSignedUrl({
+                action: 'read',
+                expires: Date.now() + 2 * 60 * 60 * 1000, // 2 hours
+                responseDisposition: `attachment; filename="${data.fileName || 'data-file.xlsx'}"`
+            });
+
+            return res.json({
+                success: true,
+                type: 'file',
+                signedUrl,
+                fileName: data.fileName || 'data-file.xlsx',
+                fileSize: data.fileSize || null
+            });
+        }
+
+        res.status(404).json({ success: false, message: 'No source file or link found for this dashboard' });
+    } catch (error) {
+        console.error('[DASHBOARD] Download source error:', error);
+        res.status(500).json({ success: false, message: 'Failed to get source file' });
     }
 });
 

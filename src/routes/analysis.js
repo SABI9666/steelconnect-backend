@@ -1217,9 +1217,9 @@ router.get('/dashboard/:id/download-pdf', authenticateToken, async (req, res) =>
             return res.redirect(signedUrl);
         }
 
-        // For HTML or auto report types, generate a structured PDF from the data
+        // For HTML or auto report types, generate a comprehensive structured PDF
         const title = data.title || 'Analytics Report';
-        const pdfDoc = new PDFDocument({ size: 'A4', margin: 50, info: { Title: title, Author: 'SteelConnect Analytics' } });
+        const pdfDoc = new PDFDocument({ size: 'A4', margin: 40, info: { Title: title, Author: 'SteelConnect Analytics' }, bufferPages: true });
 
         const safeTitle = title.replace(/[^a-zA-Z0-9_\- ]/g, '').trim() || 'Report';
         const filename = `${safeTitle}_${new Date().toISOString().slice(0, 10)}.pdf`;
@@ -1228,29 +1228,28 @@ router.get('/dashboard/:id/download-pdf', authenticateToken, async (req, res) =>
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
         pdfDoc.pipe(res);
 
-        // Colors
-        const primaryColor = '#1e293b';
-        const accentColor = '#6366f1';
-        const successColor = '#10b981';
-        const textGray = '#64748b';
+        // Colors matching the HTML dashboard theme
+        const colors = {
+            headerBg: '#0f172a',
+            headerAccent: '#6366f1',
+            primary: '#1e293b',
+            accent: '#6366f1',
+            success: '#10b981',
+            warning: '#f59e0b',
+            danger: '#ef4444',
+            info: '#3b82f6',
+            textDark: '#0f172a',
+            textMed: '#334155',
+            textLight: '#64748b',
+            bgLight: '#f8fafc',
+            bgCard: '#f1f5f9',
+            border: '#e2e8f0',
+            white: '#ffffff'
+        };
+        const pageWidth = 515; // 595 - 40*2 margins
 
-        // Header section
-        pdfDoc.rect(0, 0, 595, 100).fill('#1e293b');
-        pdfDoc.fillColor('white').fontSize(24).font('Helvetica-Bold').text(title, 50, 30, { width: 495 });
-        pdfDoc.fontSize(11).font('Helvetica').text(`Generated: ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`, 50, 62);
-        pdfDoc.fontSize(9).text(`Frequency: ${(data.frequency || 'daily').charAt(0).toUpperCase() + (data.frequency || 'daily').slice(1)} | SteelConnect Analytics`, 50, 78);
-        pdfDoc.moveDown(2);
-        let yPos = 120;
-
-        // Description
-        if (data.description) {
-            pdfDoc.fillColor(textGray).fontSize(11).font('Helvetica').text(data.description, 50, yPos, { width: 495 });
-            yPos = pdfDoc.y + 20;
-        }
-
-        // Template data tables (from spreadsheet data)
+        // Load template data
         let templateData = data.templateData || null;
-
         if (!templateData && data.storagePath) {
             try {
                 const bucket = storage.bucket();
@@ -1266,7 +1265,6 @@ router.get('/dashboard/:id/download-pdf', authenticateToken, async (req, res) =>
                 console.error('[PDF-GEN] Failed to parse spreadsheet:', e.message);
             }
         }
-
         if (!templateData && data.googleSheetUrl) {
             try {
                 const result = await fetchSheetData(data.googleSheetUrl);
@@ -1279,146 +1277,285 @@ router.get('/dashboard/:id/download-pdf', authenticateToken, async (req, res) =>
             }
         }
 
-        // Render data tables
+        // Helper: check page space and add new page if needed
+        let yPos = 0;
+        const ensureSpace = (needed) => {
+            if (yPos + needed > 780) { pdfDoc.addPage(); yPos = 40; }
+        };
+
+        // Helper: draw a rounded rect (simulated with rect since PDFKit doesn't have roundedRect with fill easily)
+        const drawCard = (x, y, w, h, bgColor) => {
+            pdfDoc.save();
+            pdfDoc.roundedRect(x, y, w, h, 6).fill(bgColor);
+            pdfDoc.restore();
+        };
+
+        // ==================== COVER PAGE ====================
+        // Full header banner
+        pdfDoc.rect(0, 0, 595, 140).fill(colors.headerBg);
+        // Accent stripe
+        pdfDoc.rect(0, 130, 595, 10).fill(colors.headerAccent);
+
+        // Title
+        pdfDoc.fillColor(colors.white).fontSize(26).font('Helvetica-Bold')
+            .text(title, 40, 35, { width: pageWidth });
+
+        // Subtitle / description
+        if (data.description) {
+            pdfDoc.fillColor('#94a3b8').fontSize(11).font('Helvetica')
+                .text(data.description, 40, pdfDoc.y + 4, { width: pageWidth });
+        }
+
+        // Report metadata badges
+        yPos = 160;
+        const genDate = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        const freq = (data.frequency || 'daily').charAt(0).toUpperCase() + (data.frequency || 'daily').slice(1);
+
+        drawCard(40, yPos, pageWidth, 50, colors.bgLight);
+        pdfDoc.fillColor(colors.textLight).fontSize(8).font('Helvetica').text('GENERATED', 55, yPos + 8);
+        pdfDoc.fillColor(colors.textDark).fontSize(10).font('Helvetica-Bold').text(genDate, 55, yPos + 20);
+        pdfDoc.fillColor(colors.textLight).fontSize(8).font('Helvetica').text('FREQUENCY', 300, yPos + 8);
+        pdfDoc.fillColor(colors.textDark).fontSize(10).font('Helvetica-Bold').text(freq, 300, yPos + 20);
+        pdfDoc.fillColor(colors.textLight).fontSize(8).font('Helvetica').text('TYPE', 440, yPos + 8);
+        pdfDoc.fillColor(colors.accent).fontSize(10).font('Helvetica-Bold').text((data.reportType || 'auto').toUpperCase(), 440, yPos + 20);
+        yPos += 70;
+
+        // ==================== SUMMARY METRICS (from template data) ====================
         if (templateData && Object.keys(templateData).length > 0) {
+            // Extract key metrics from the data for a summary section
+            const allSheetNames = Object.keys(templateData);
+            let totalRows = 0;
+            let totalColumns = 0;
+            const numericSummaries = [];
+
             for (const [sheetName, rows] of Object.entries(templateData)) {
                 if (!rows || rows.length === 0) continue;
+                totalRows += rows.length;
+                const headers = Object.keys(rows[0] || {});
+                totalColumns += headers.length;
 
-                // Check page space
-                if (yPos > 700) { pdfDoc.addPage(); yPos = 50; }
+                // Find numeric columns and compute summaries
+                headers.forEach(h => {
+                    const numericVals = rows.map(r => parseFloat(r[h])).filter(v => !isNaN(v));
+                    if (numericVals.length > rows.length * 0.5) { // At least 50% numeric
+                        const sum = numericVals.reduce((a, b) => a + b, 0);
+                        const avg = sum / numericVals.length;
+                        const max = Math.max(...numericVals);
+                        const min = Math.min(...numericVals);
+                        numericSummaries.push({ sheet: sheetName, column: h, sum, avg, max, min, count: numericVals.length });
+                    }
+                });
+            }
 
-                // Sheet title
-                pdfDoc.fillColor(accentColor).fontSize(14).font('Helvetica-Bold').text(sheetName, 50, yPos);
+            // Summary cards row
+            ensureSpace(80);
+            pdfDoc.fillColor(colors.primary).fontSize(14).font('Helvetica-Bold').text('Report Overview', 40, yPos);
+            yPos += 22;
+
+            const cardWidth = Math.floor((pageWidth - 30) / 4);
+            const summaryCards = [
+                { label: 'Data Sheets', value: allSheetNames.length.toString(), color: colors.accent },
+                { label: 'Total Records', value: totalRows.toLocaleString(), color: colors.success },
+                { label: 'Data Fields', value: totalColumns.toString(), color: colors.info },
+                { label: 'Metrics Found', value: numericSummaries.length.toString(), color: colors.warning }
+            ];
+
+            summaryCards.forEach((card, idx) => {
+                const cx = 40 + idx * (cardWidth + 10);
+                drawCard(cx, yPos, cardWidth, 52, colors.bgCard);
+                pdfDoc.fillColor(colors.textLight).fontSize(7.5).font('Helvetica').text(card.label.toUpperCase(), cx + 10, yPos + 8, { width: cardWidth - 20 });
+                pdfDoc.fillColor(card.color).fontSize(18).font('Helvetica-Bold').text(card.value, cx + 10, yPos + 22, { width: cardWidth - 20 });
+            });
+            yPos += 72;
+
+            // Key metrics summary (top numeric columns)
+            if (numericSummaries.length > 0) {
+                ensureSpace(120);
+                pdfDoc.fillColor(colors.primary).fontSize(14).font('Helvetica-Bold').text('Key Metrics Summary', 40, yPos);
                 yPos += 22;
 
-                // Draw table
-                const headers = Object.keys(rows[0] || {}).slice(0, 6);
+                const topMetrics = numericSummaries.slice(0, 8);
+                const metricCardW = Math.floor((pageWidth - 10) / 2);
+
+                topMetrics.forEach((metric, idx) => {
+                    if (idx % 2 === 0) ensureSpace(55);
+                    const cx = 40 + (idx % 2) * (metricCardW + 10);
+                    const cy = yPos;
+
+                    drawCard(cx, cy, metricCardW, 48, colors.bgLight);
+                    // Metric name
+                    const displayName = metric.column.length > 25 ? metric.column.substring(0, 25) + '...' : metric.column;
+                    pdfDoc.fillColor(colors.textDark).fontSize(9).font('Helvetica-Bold').text(displayName, cx + 10, cy + 6, { width: metricCardW - 20 });
+                    // Metric values in a row
+                    const formatNum = (n) => Number.isInteger(n) ? n.toLocaleString() : n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+                    pdfDoc.fillColor(colors.textLight).fontSize(7).font('Helvetica')
+                        .text(`Sum: ${formatNum(metric.sum)}  |  Avg: ${formatNum(metric.avg)}  |  Min: ${formatNum(metric.min)}  |  Max: ${formatNum(metric.max)}`, cx + 10, cy + 22, { width: metricCardW - 20 });
+                    pdfDoc.fillColor(colors.textLight).fontSize(7).font('Helvetica')
+                        .text(`Sheet: ${metric.sheet}  |  ${metric.count} values`, cx + 10, cy + 34, { width: metricCardW - 20 });
+
+                    if (idx % 2 === 1) yPos += 58;
+                });
+                if (topMetrics.length % 2 === 1) yPos += 58;
+                yPos += 10;
+            }
+
+            // ==================== DATA TABLES ====================
+            for (const [sheetName, rows] of Object.entries(templateData)) {
+                if (!rows || rows.length === 0) continue;
+                const headers = Object.keys(rows[0] || {});
                 if (headers.length === 0) continue;
 
-                const colWidth = Math.min(Math.floor(495 / headers.length), 120);
-                const tableWidth = colWidth * headers.length;
+                ensureSpace(80);
 
-                // Table header
-                pdfDoc.rect(50, yPos, tableWidth, 20).fill('#f1f5f9');
-                headers.forEach((h, i) => {
-                    pdfDoc.fillColor(primaryColor).fontSize(8).font('Helvetica-Bold')
-                        .text(String(h).substring(0, 18), 54 + (i * colWidth), yPos + 5, { width: colWidth - 8 });
+                // Section header with accent bar
+                pdfDoc.rect(40, yPos, 4, 20).fill(colors.accent);
+                pdfDoc.fillColor(colors.primary).fontSize(13).font('Helvetica-Bold')
+                    .text(sheetName, 52, yPos + 2);
+                pdfDoc.fillColor(colors.textLight).fontSize(8).font('Helvetica')
+                    .text(`${rows.length} records · ${headers.length} columns`, 52, yPos + 17);
+                yPos += 36;
+
+                // Draw table - use all available width, limit columns to fit
+                const maxCols = Math.min(headers.length, 8);
+                const displayHeaders = headers.slice(0, maxCols);
+                const colWidth = Math.floor(pageWidth / maxCols);
+                const tableWidth = colWidth * maxCols;
+
+                // Table header row
+                pdfDoc.rect(40, yPos, tableWidth, 22).fill(colors.headerBg);
+                displayHeaders.forEach((h, i) => {
+                    pdfDoc.fillColor(colors.white).fontSize(7.5).font('Helvetica-Bold')
+                        .text(String(h).substring(0, 20), 44 + (i * colWidth), yPos + 6, { width: colWidth - 8 });
                 });
-                yPos += 22;
+                yPos += 24;
 
-                // Table rows (limit to 40 rows per sheet for PDF)
-                const maxRows = Math.min(rows.length, 40);
+                // Table rows
+                const maxRows = Math.min(rows.length, 50);
                 for (let r = 0; r < maxRows; r++) {
-                    if (yPos > 740) { pdfDoc.addPage(); yPos = 50; }
-
+                    ensureSpace(18);
                     if (r % 2 === 0) {
-                        pdfDoc.rect(50, yPos, tableWidth, 16).fill('#fafafa');
+                        pdfDoc.rect(40, yPos, tableWidth, 17).fill(colors.bgLight);
                     }
-
-                    headers.forEach((h, i) => {
+                    displayHeaders.forEach((h, i) => {
                         const val = rows[r][h];
-                        const displayVal = val !== null && val !== undefined ? String(val).substring(0, 22) : '';
-                        pdfDoc.fillColor('#334155').fontSize(7.5).font('Helvetica')
-                            .text(displayVal, 54 + (i * colWidth), yPos + 3, { width: colWidth - 8 });
+                        const displayVal = val !== null && val !== undefined ? String(val).substring(0, 24) : '';
+                        pdfDoc.fillColor(colors.textMed).fontSize(7).font('Helvetica')
+                            .text(displayVal, 44 + (i * colWidth), yPos + 4, { width: colWidth - 8 });
                     });
                     yPos += 17;
                 }
 
+                // Row count indicator
                 if (rows.length > maxRows) {
-                    pdfDoc.fillColor(textGray).fontSize(8).font('Helvetica-Oblique')
-                        .text(`... and ${rows.length - maxRows} more rows`, 50, yPos + 4);
-                    yPos += 18;
+                    pdfDoc.fillColor(colors.textLight).fontSize(7.5).font('Helvetica-Oblique')
+                        .text(`Showing ${maxRows} of ${rows.length} records`, 40, yPos + 4);
+                    yPos += 16;
                 }
 
-                yPos += 16;
+                yPos += 20;
             }
         }
 
-        // Predictive Analysis section
-        if (data.predictiveAnalysis) {
-            if (yPos > 650) { pdfDoc.addPage(); yPos = 50; }
+        // ==================== CHARTS SECTION ====================
+        if (data.charts && data.charts.length > 0) {
+            ensureSpace(60);
+            pdfDoc.rect(40, yPos, 4, 20).fill(colors.warning);
+            pdfDoc.fillColor(colors.primary).fontSize(14).font('Helvetica-Bold').text('Charts & Visualizations', 52, yPos + 2);
+            yPos += 32;
 
+            data.charts.forEach((chart, idx) => {
+                ensureSpace(80);
+
+                const chartTitle = chart.title || `Chart ${idx + 1}`;
+                const chartType = (chart.type || 'bar').charAt(0).toUpperCase() + (chart.type || 'bar').slice(1);
+
+                // Chart card
+                drawCard(40, yPos, pageWidth, 65, colors.bgLight);
+                pdfDoc.fillColor(colors.textDark).fontSize(11).font('Helvetica-Bold')
+                    .text(`${idx + 1}. ${chartTitle}`, 55, yPos + 8, { width: pageWidth - 30 });
+                pdfDoc.fillColor(colors.accent).fontSize(8).font('Helvetica')
+                    .text(`Chart Type: ${chartType}`, 55, yPos + 24);
+
+                // Data summary inside chart card
+                if (chart.labels && chart.labels.length > 0 && chart.datasets && chart.datasets.length > 0) {
+                    const ds = chart.datasets[0];
+                    const dataItems = chart.labels.slice(0, 10).map((label, i) => {
+                        const val = ds.data && ds.data[i] !== undefined ? ds.data[i] : '-';
+                        return `${label}: ${val}`;
+                    }).join('  ·  ');
+                    pdfDoc.fillColor(colors.textMed).fontSize(7).font('Helvetica')
+                        .text(dataItems, 55, yPos + 38, { width: pageWidth - 30 });
+                }
+
+                yPos += 75;
+            });
+        }
+
+        // ==================== PREDICTIVE ANALYSIS ====================
+        if (data.predictiveAnalysis) {
             const pa = data.predictiveAnalysis;
-            pdfDoc.fillColor(accentColor).fontSize(14).font('Helvetica-Bold').text('Predictive Analysis', 50, yPos);
-            yPos += 22;
+            ensureSpace(60);
+
+            pdfDoc.rect(40, yPos, 4, 20).fill(colors.success);
+            pdfDoc.fillColor(colors.primary).fontSize(14).font('Helvetica-Bold').text('Predictive Analysis', 52, yPos + 2);
+            yPos += 32;
 
             if (pa.summary) {
-                pdfDoc.fillColor('#334155').fontSize(10).font('Helvetica').text(pa.summary, 50, yPos, { width: 495 });
-                yPos = pdfDoc.y + 12;
+                ensureSpace(40);
+                drawCard(40, yPos, pageWidth, 'auto');
+                pdfDoc.fillColor(colors.textMed).fontSize(10).font('Helvetica')
+                    .text(pa.summary, 50, yPos, { width: pageWidth - 20 });
+                yPos = pdfDoc.y + 16;
             }
 
             // Key insights
             if (pa.insights && pa.insights.length > 0) {
-                pdfDoc.fillColor(primaryColor).fontSize(11).font('Helvetica-Bold').text('Key Insights:', 50, yPos);
-                yPos += 16;
+                ensureSpace(30);
+                pdfDoc.fillColor(colors.success).fontSize(11).font('Helvetica-Bold').text('Key Insights', 50, yPos);
+                yPos += 18;
 
                 pa.insights.forEach(insight => {
-                    if (yPos > 740) { pdfDoc.addPage(); yPos = 50; }
-                    pdfDoc.fillColor(successColor).fontSize(9).font('Helvetica').text('●', 54, yPos);
-                    pdfDoc.fillColor('#334155').fontSize(9).font('Helvetica')
-                        .text(typeof insight === 'string' ? insight : (insight.text || insight.title || JSON.stringify(insight)), 68, yPos, { width: 475 });
-                    yPos = pdfDoc.y + 6;
+                    ensureSpace(20);
+                    const insightText = typeof insight === 'string' ? insight : (insight.text || insight.title || JSON.stringify(insight));
+                    drawCard(50, yPos, pageWidth - 20, 'auto');
+                    pdfDoc.fillColor(colors.success).fontSize(9).font('Helvetica').text('●', 54, yPos + 1);
+                    pdfDoc.fillColor(colors.textMed).fontSize(9).font('Helvetica')
+                        .text(insightText, 68, yPos, { width: pageWidth - 48 });
+                    yPos = pdfDoc.y + 8;
                 });
                 yPos += 8;
             }
 
             // Predictions
             if (pa.predictions && pa.predictions.length > 0) {
-                if (yPos > 700) { pdfDoc.addPage(); yPos = 50; }
-                pdfDoc.fillColor(primaryColor).fontSize(11).font('Helvetica-Bold').text('Predictions:', 50, yPos);
-                yPos += 16;
+                ensureSpace(30);
+                pdfDoc.fillColor(colors.accent).fontSize(11).font('Helvetica-Bold').text('Predictions', 50, yPos);
+                yPos += 18;
 
                 pa.predictions.forEach(pred => {
-                    if (yPos > 740) { pdfDoc.addPage(); yPos = 50; }
+                    ensureSpace(20);
                     const predText = typeof pred === 'string' ? pred : (pred.text || pred.description || JSON.stringify(pred));
-                    pdfDoc.fillColor('#6366f1').fontSize(9).font('Helvetica').text('▸', 54, yPos);
-                    pdfDoc.fillColor('#334155').fontSize(9).font('Helvetica').text(predText, 68, yPos, { width: 475 });
-                    yPos = pdfDoc.y + 6;
+                    pdfDoc.fillColor(colors.accent).fontSize(9).font('Helvetica').text('▸', 54, yPos + 1);
+                    pdfDoc.fillColor(colors.textMed).fontSize(9).font('Helvetica')
+                        .text(predText, 68, yPos, { width: pageWidth - 48 });
+                    yPos = pdfDoc.y + 8;
                 });
             }
         }
 
-        // Charts info (metadata only - visual charts are in client-side)
-        if (data.charts && data.charts.length > 0) {
-            if (yPos > 680) { pdfDoc.addPage(); yPos = 50; }
-
-            pdfDoc.fillColor(accentColor).fontSize(14).font('Helvetica-Bold').text('Charts & Visualizations', 50, yPos);
-            yPos += 22;
-
-            data.charts.forEach((chart, idx) => {
-                if (yPos > 740) { pdfDoc.addPage(); yPos = 50; }
-
-                pdfDoc.fillColor(primaryColor).fontSize(10).font('Helvetica-Bold')
-                    .text(`${idx + 1}. ${chart.title || 'Chart ' + (idx + 1)}`, 54, yPos);
-                yPos += 14;
-
-                if (chart.type) {
-                    pdfDoc.fillColor(textGray).fontSize(8).font('Helvetica')
-                        .text(`Type: ${chart.type.charAt(0).toUpperCase() + chart.type.slice(1)}`, 62, yPos);
-                    yPos += 12;
-                }
-
-                // Include data summary
-                if (chart.labels && chart.labels.length > 0 && chart.datasets && chart.datasets.length > 0) {
-                    const ds = chart.datasets[0];
-                    const dataItems = chart.labels.slice(0, 8).map((label, i) => {
-                        const val = ds.data && ds.data[i] !== undefined ? ds.data[i] : '-';
-                        return `${label}: ${val}`;
-                    }).join(' | ');
-                    pdfDoc.fillColor('#475569').fontSize(7.5).font('Helvetica')
-                        .text(dataItems, 62, yPos, { width: 480 });
-                    yPos = pdfDoc.y + 8;
-                }
-            });
+        // ==================== FOOTER ON EVERY PAGE ====================
+        const totalPages = pdfDoc.bufferedPageRange().count;
+        for (let i = 0; i < totalPages; i++) {
+            pdfDoc.switchToPage(i);
+            // Bottom bar
+            pdfDoc.save();
+            pdfDoc.rect(0, 805, 595, 37).fill(colors.bgLight);
+            pdfDoc.fillColor(colors.textLight).fontSize(7).font('Helvetica')
+                .text('Generated by SteelConnect Analytics Platform', 40, 812, { width: 400 });
+            pdfDoc.fillColor(colors.textLight).fontSize(7).font('Helvetica')
+                .text(`Page ${i + 1} of ${totalPages}`, 460, 812, { width: 95, align: 'right' });
+            pdfDoc.restore();
         }
-
-        // Footer
-        if (yPos > 740) { pdfDoc.addPage(); yPos = 50; }
-        yPos = Math.max(yPos + 30, 750);
-        pdfDoc.rect(0, yPos, 595, 50).fill('#f8fafc');
-        pdfDoc.fillColor(textGray).fontSize(8).font('Helvetica')
-            .text('Generated by SteelConnect Analytics Platform', 50, yPos + 10, { width: 495, align: 'center' });
-        pdfDoc.text(`Report: ${title} | ${new Date().toLocaleString()}`, 50, yPos + 22, { width: 495, align: 'center' });
 
         pdfDoc.end();
 

@@ -4033,6 +4033,66 @@ router.get('/dashboards/:id/download-source', async (req, res) => {
     }
 });
 
+// POST /api/admin/dashboards/:id/reupload-source - Re-upload/edit user's source data file (Excel/CSV)
+router.post('/dashboards/:id/reupload-source', upload.single('sourceFile'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ success: false, message: 'Please upload a file' });
+
+        const ext = (req.file.originalname || '').toLowerCase();
+        if (!ext.endsWith('.xlsx') && !ext.endsWith('.xls') && !ext.endsWith('.csv')) {
+            return res.status(400).json({ success: false, message: 'Only Excel (.xlsx, .xls) or CSV files are allowed' });
+        }
+
+        const docRef = adminDb.collection('dashboards').doc(req.params.id);
+        const doc = await docRef.get();
+        if (!doc.exists) return res.status(404).json({ success: false, message: 'Dashboard not found' });
+
+        const data = doc.data();
+
+        // Delete old file from storage if exists
+        if (data.storagePath) {
+            try {
+                const bucket = storage.bucket();
+                await bucket.file(data.storagePath).delete();
+            } catch (delErr) {
+                console.warn('[DASHBOARD] Could not delete old source file:', delErr.message);
+            }
+        }
+
+        // Upload new file to Firebase Storage
+        const bucket = storage.bucket();
+        const timestamp = Date.now();
+        const safeName = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const filePath = `analytics/${data.contractorId || 'unknown'}/${req.params.id}/${timestamp}_${safeName}`;
+        const fileRef = bucket.file(filePath);
+
+        const contentType = ext.endsWith('.csv') ? 'text/csv' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+        await fileRef.save(req.file.buffer, {
+            metadata: {
+                contentType,
+                metadata: { originalName: req.file.originalname, reuploadedBy: req.user.email, reuploadedAt: new Date().toISOString() }
+            },
+            resumable: false
+        });
+
+        await docRef.update({
+            storagePath: filePath,
+            fileName: req.file.originalname,
+            fileSize: req.file.size,
+            sourceReuploadedAt: new Date().toISOString(),
+            sourceReuploadedBy: req.user.email,
+            updatedAt: new Date().toISOString()
+        });
+
+        console.log(`[DASHBOARD] Source file re-uploaded for ${req.params.id} by ${req.user.email}: ${req.file.originalname}`);
+        res.json({ success: true, message: 'Source file re-uploaded successfully', fileName: req.file.originalname });
+    } catch (error) {
+        console.error('[DASHBOARD] Reupload source error:', error);
+        res.status(500).json({ success: false, message: 'Failed to re-upload source file' });
+    }
+});
+
 // POST /api/admin/dashboards/:id/reject - Reject dashboard
 router.post('/dashboards/:id/reject', async (req, res) => {
     try {

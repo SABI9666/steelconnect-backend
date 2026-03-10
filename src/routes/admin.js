@@ -127,8 +127,14 @@ router.get('/dashboard', async (req, res) => {
             console.log('[DASHBOARD] Active visitors count error:', e.message);
         }
 
-        // Compute derived stats
-        const completedAnalysis = await getCount(adminDb.collection('analysis_requests').where('vercelUrl', '!=', ''));
+        // Compute derived stats — count completed analysis requests by iterating
+        // (Firestore '!=' query matches null values, which would inflate the count)
+        let completedAnalysis = 0;
+        const analysisSnap = await adminDb.collection('analysis_requests').select('vercelUrl').get();
+        analysisSnap.forEach(doc => {
+            const url = doc.data().vercelUrl;
+            if (url && url !== '') completedAnalysis++;
+        });
         const pendingAnalysis = totalAnalysisRequests - completedAnalysis;
 
         res.json({

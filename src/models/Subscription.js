@@ -24,11 +24,25 @@ const subscriptionSchema = new mongoose.Schema({
         type: String,
         required: true,
         enum: [
+            // Designer plans
             'designer_free',
             'designer_5',
             'designer_10',
             'designer_15',
             'designer_30',
+            // AI Estimation (Drawing Based) plans
+            'estimation_free',
+            'estimation_starter',
+            'estimation_professional',
+            'estimation_business',
+            'estimation_payperuse',
+            // AI Data Analysis plans
+            'analysis_free',
+            'analysis_basic',
+            'analysis_advanced',
+            'analysis_pro',
+            'analysis_business',
+            // Legacy plans (for backward compatibility)
             'contractor_pro',
             'contractor_ai_estimation',
             'contractor_ai_analysis',
@@ -59,7 +73,24 @@ const subscriptionSchema = new mongoose.Schema({
         type: Number,
         default: 0,
     },
-    // Contractor Pro specific fields
+    // AI Estimation plan fields
+    aiEstimationsAllowed: {
+        type: Number,
+        default: null,
+    },
+    aiEstimationsUsed: {
+        type: Number,
+        default: 0,
+    },
+    maxUploadMB: {
+        type: Number,
+        default: 25,
+    },
+    isPayPerUse: {
+        type: Boolean,
+        default: false,
+    },
+    // Legacy fields (kept for backward compatibility)
     aiEstimationRate: {
         type: Number,
         default: null,

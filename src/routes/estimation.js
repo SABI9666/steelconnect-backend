@@ -17,7 +17,7 @@ import {
   batchDeleteFiles,
   FILE_UPLOAD_CONFIG 
 } from '../config/firebase.js';
-import { sendEstimationResultNotification } from '../utils/emailService.js';
+import { sendEstimationResultNotification, sendWebsiteEstimationConfirmation, sendWebsiteEstimationResultReady } from '../utils/emailService.js';
 import { generateSmartQuestions, generateAIEstimate } from '../services/aiEstimationService.js';
 import { runMultiPassEstimation } from '../services/multiPassEstimationEngine.js';
 import { extractMeasurementsFromPDFs } from '../services/pdfMeasurementExtractor.js';
@@ -2275,6 +2275,260 @@ router.get('/:estimationId/ai-result', authenticateToken, async (req, res) => {
     } catch (error) {
         console.error('[AI-ESTIMATION] Error fetching AI result:', error);
         res.status(500).json({ success: false, message: 'Failed to fetch AI estimate' });
+    }
+});
+
+// ============================================================
+// Website Estimation: Public endpoint for landing page visitors (no auth required)
+// ============================================================
+router.post('/website-submit', async (req, res) => {
+    try {
+        // Handle file upload
+        await safeEstimationUpload(req, res);
+
+        const { email, name, projectTitle, description, projectType, region, totalArea } = req.body;
+        const files = req.files;
+
+        // Validation
+        if (!email || !email.trim()) {
+            return res.status(400).json({ success: false, message: 'Email is required' });
+        }
+        if (!projectTitle || !projectTitle.trim()) {
+            return res.status(400).json({ success: false, message: 'Project title is required' });
+        }
+        if (!files || files.length === 0) {
+            return res.status(400).json({ success: false, message: 'At least one file is required' });
+        }
+
+        // Upload files to Firebase Storage
+        let uploadedFiles = [];
+        try {
+            const uploadPromises = files.map(async (file, index) => {
+                const timestamp = Date.now();
+                const fileName = `${timestamp}_${index}_${file.originalname}`;
+                const filePath = `website-estimation-files/${fileName}`;
+
+                const metadata = {
+                    uploaderEmail: email.trim(),
+                    source: 'landing-page',
+                    fileIndex: index,
+                    uploadBatch: timestamp
+                };
+
+                return uploadToFirebaseStorage(file, filePath, metadata);
+            });
+
+            uploadedFiles = await Promise.all(uploadPromises);
+            console.log(`[WEBSITE-ESTIMATION] Successfully uploaded ${uploadedFiles.length} files for ${email}`);
+        } catch (uploadError) {
+            console.error('[WEBSITE-ESTIMATION] File upload failed:', uploadError);
+            return res.status(500).json({
+                success: false,
+                message: `File upload failed: ${uploadError.message}`
+            });
+        }
+
+        // Calculate total file size
+        const totalFileSize = files.reduce((sum, f) => sum + (f.size || 0), 0);
+
+        // Save to Firestore
+        const now = new Date().toISOString();
+        const estimationData = sanitizeForFirestore({
+            email: email.trim(),
+            name: name ? name.trim() : '',
+            projectTitle: projectTitle.trim(),
+            description: description ? description.trim() : '',
+            projectType: projectType || '',
+            region: region || '',
+            totalArea: totalArea || '',
+            uploadedFiles,
+            fileCount: uploadedFiles.length,
+            totalFileSize,
+            status: 'pending',
+            source: 'landing-page',
+            createdAt: now,
+            updatedAt: now
+        });
+
+        const docRef = await adminDb.collection('website_estimations').add(estimationData);
+        const estimationId = docRef.id;
+
+        console.log(`[WEBSITE-ESTIMATION] Created estimation ${estimationId} for ${email}`);
+
+        // Send confirmation email (non-blocking)
+        sendWebsiteEstimationConfirmation(email.trim(), name ? name.trim() : '', projectTitle.trim(), estimationId)
+            .catch(err => console.error('[WEBSITE-ESTIMATION] Failed to send confirmation email:', err));
+
+        res.status(201).json({
+            success: true,
+            message: 'Estimation submitted successfully',
+            estimationId
+        });
+    } catch (error) {
+        console.error('[WEBSITE-ESTIMATION] Submission error:', error);
+
+        // Handle multer-specific errors
+        if (error.code === 'LIMIT_FILE_SIZE') {
+            return res.status(400).json({ success: false, message: 'File size exceeds the maximum limit' });
+        }
+        if (error.code === 'LIMIT_FILE_COUNT') {
+            return res.status(400).json({ success: false, message: 'Too many files uploaded' });
+        }
+
+        res.status(500).json({ success: false, message: 'Failed to submit estimation' });
+    }
+});
+
+// ============================================================
+// Admin: Get all website estimations
+// ============================================================
+router.get('/website-estimations', authenticateToken, isAdmin, async (req, res) => {
+    try {
+        const snapshot = await adminDb.collection('website_estimations')
+            .orderBy('createdAt', 'desc')
+            .get();
+
+        const estimations = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+
+        res.json({ success: true, data: estimations, count: estimations.length });
+    } catch (error) {
+        console.error('[WEBSITE-ESTIMATION] Error fetching estimations:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch website estimations' });
+    }
+});
+
+// ============================================================
+// Admin: Get single website estimation details
+// ============================================================
+router.get('/website-estimations/:id', authenticateToken, isAdmin, async (req, res) => {
+    try {
+        const docRef = adminDb.collection('website_estimations').doc(req.params.id);
+        const doc = await docRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ success: false, message: 'Website estimation not found' });
+        }
+
+        res.json({ success: true, data: { id: doc.id, ...doc.data() } });
+    } catch (error) {
+        console.error('[WEBSITE-ESTIMATION] Error fetching estimation:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch website estimation' });
+    }
+});
+
+// ============================================================
+// Admin: Upload HTML result file for website estimation
+// ============================================================
+router.post('/website-estimations/:id/upload-html-result', authenticateToken, isAdmin, upload.single('htmlFile'), async (req, res) => {
+    try {
+        const docRef = adminDb.collection('website_estimations').doc(req.params.id);
+        const doc = await docRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ success: false, message: 'Website estimation not found' });
+        }
+
+        const data = doc.data();
+        let htmlContent = '';
+
+        // Accept file upload or raw HTML content
+        if (req.file) {
+            htmlContent = req.file.buffer.toString('utf-8');
+        } else if (req.body.htmlContent) {
+            htmlContent = req.body.htmlContent;
+        } else {
+            return res.status(400).json({ success: false, message: 'Either an HTML file or htmlContent field is required' });
+        }
+
+        // Update the estimation document
+        await docRef.update({
+            htmlResultContent: htmlContent,
+            htmlResultUploadedAt: new Date().toISOString(),
+            htmlResultUploadedBy: req.user.email,
+            status: 'result-ready',
+            updatedAt: new Date().toISOString()
+        });
+
+        console.log(`[WEBSITE-ESTIMATION] HTML result uploaded for ${req.params.id} by ${req.user.email}`);
+
+        // Send result ready email (non-blocking)
+        sendWebsiteEstimationResultReady(data.email, data.name, data.projectTitle, req.params.id)
+            .catch(err => console.error('[WEBSITE-ESTIMATION] Failed to send result ready email:', err));
+
+        res.json({ success: true, message: 'HTML result uploaded and notification sent' });
+    } catch (error) {
+        console.error('[WEBSITE-ESTIMATION] Error uploading HTML result:', error);
+        res.status(500).json({ success: false, message: 'Failed to upload HTML result' });
+    }
+});
+
+// ============================================================
+// Admin: Delete website estimation
+// ============================================================
+router.delete('/website-estimations/:id', authenticateToken, isAdmin, async (req, res) => {
+    try {
+        const docRef = adminDb.collection('website_estimations').doc(req.params.id);
+        const doc = await docRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ success: false, message: 'Website estimation not found' });
+        }
+
+        await docRef.delete();
+
+        console.log(`[WEBSITE-ESTIMATION] Deleted estimation ${req.params.id} by ${req.user.email}`);
+
+        res.json({ success: true, message: 'Website estimation deleted' });
+    } catch (error) {
+        console.error('[WEBSITE-ESTIMATION] Error deleting estimation:', error);
+        res.status(500).json({ success: false, message: 'Failed to delete website estimation' });
+    }
+});
+
+// ============================================================
+// Public: View estimation result (requires email verification via query param)
+// ============================================================
+router.get('/website-estimations/:id/result', async (req, res) => {
+    try {
+        const { email } = req.query;
+
+        if (!email) {
+            return res.status(400).json({ success: false, message: 'Email query parameter is required for verification' });
+        }
+
+        const docRef = adminDb.collection('website_estimations').doc(req.params.id);
+        const doc = await docRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ success: false, message: 'Estimation not found' });
+        }
+
+        const data = doc.data();
+
+        // Simple email verification
+        if (data.email.toLowerCase() !== email.toLowerCase()) {
+            return res.status(403).json({ success: false, message: 'Email verification failed' });
+        }
+
+        if (!data.htmlResultContent) {
+            return res.status(404).json({ success: false, message: 'Estimation result is not ready yet' });
+        }
+
+        res.json({
+            success: true,
+            htmlContent: data.htmlResultContent,
+            estimation: {
+                projectTitle: data.projectTitle,
+                status: data.status,
+                createdAt: data.createdAt
+            }
+        });
+    } catch (error) {
+        console.error('[WEBSITE-ESTIMATION] Error fetching result:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch estimation result' });
     }
 });
 

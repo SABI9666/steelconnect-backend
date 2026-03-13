@@ -663,6 +663,67 @@ ${autoUpdateNote}
     }
 }
 
+// ============================================================
+// WEBSITE ESTIMATION: Submission Confirmation (public landing page)
+// ============================================================
+export async function sendWebsiteEstimationConfirmation(email, name, projectTitle, estimationId) {
+    try {
+        const displayName = name || 'there';
+        const htmlContent = `
+<h2 ${S.h2}>We've Received Your Project</h2>
+<p ${S.p}>Hi ${displayName},</p>
+<p ${S.p}>Thank you for submitting your project for a free estimation. Here are the details we received:</p>
+<table ${S.table}>
+<tr><td ${S.tdLabel}>Project</td><td ${S.tdValue}>${projectTitle}</td></tr>
+<tr><td ${S.tdLabel}>Reference</td><td ${S.tdValue}>#${estimationId.substring(0, 8).toUpperCase()}</td></tr>
+<tr><td ${S.tdLabel}>Submitted</td><td ${S.tdValue}>${new Date().toLocaleDateString()}</td></tr>
+</table>
+<p ${S.p}>We've received your project files and will prepare your free estimation. You'll receive an email when your result is ready.</p>
+<p ${S.muted}>If you have questions in the meantime, just reply to this email.</p>`;
+
+        return await sendEmail({
+            to: email,
+            subject: `Project Received — "${projectTitle}"`,
+            htmlContent,
+        });
+    } catch (error) {
+        console.error('Error sending website estimation confirmation email:', error);
+        return { success: false, error: error.message || 'Failed to send confirmation email' };
+    }
+}
+
+// ============================================================
+// WEBSITE ESTIMATION: Result Ready Notification
+// ============================================================
+export async function sendWebsiteEstimationResultReady(email, name, projectTitle, estimationId) {
+    try {
+        const displayName = name || 'there';
+        const resultUrl = `https://steelconnectapp.com/?section=website-estimation-result&estimationId=${estimationId}&email=${encodeURIComponent(email)}`;
+        const htmlContent = `
+<h2 ${S.h2}>Your Free Estimation is Ready</h2>
+<p ${S.p}>Hi ${displayName},</p>
+<p ${S.p}>Great news! The estimation for your project has been completed.</p>
+<table ${S.table}>
+<tr><td ${S.tdLabel}>Project</td><td ${S.tdValue}>${projectTitle}</td></tr>
+<tr><td ${S.tdLabel}>Reference</td><td ${S.tdValue}>#${estimationId.substring(0, 8).toUpperCase()}</td></tr>
+<tr><td ${S.tdLabel}>Completed</td><td ${S.tdValue}>${new Date().toLocaleDateString()}</td></tr>
+</table>
+<p ${S.p}>Your free estimation result is ready! To view your detailed estimation report, you'll need to create a free SteelConnect account.</p>
+<p style="margin:20px 0;"><a href="${resultUrl}" ${S.btn}>View Estimation Result</a></p>
+<div ${S.notice}>After signing up, complete your profile to unlock the full result.</div>
+<p ${S.muted}>If you have questions, just reply to this email.</p>`;
+
+        return await sendEmail({
+            to: email,
+            subject: `Estimation Result Ready — "${projectTitle}"`,
+            htmlContent,
+        });
+    } catch (error) {
+        console.error('Error sending website estimation result ready email:', error);
+        return { success: false, error: error.message || 'Failed to send result ready email' };
+    }
+}
+
 export default {
     sendLoginNotification,
     sendEstimationResultNotification,
@@ -677,4 +738,6 @@ export default {
     sendMeetingUpdateEmail,
     sendMeetingCancellationEmail,
     sendAnalysisReportReadyEmail,
+    sendWebsiteEstimationConfirmation,
+    sendWebsiteEstimationResultReady,
 };

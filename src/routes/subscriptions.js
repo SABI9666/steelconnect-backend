@@ -253,6 +253,16 @@ const PLAN_DEFINITIONS = {
 // PUBLIC ROUTES (Authenticated users)
 // ============================================================
 
+// GET /api/subscriptions/public-plans - Public plans (no auth required, for landing page)
+router.get('/public-plans', async (req, res) => {
+    try {
+        res.json({ success: true, plans: PLAN_DEFINITIONS });
+    } catch (error) {
+        console.error('Error fetching public plans:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch plans' });
+    }
+});
+
 // GET /api/subscriptions/plans - Get available plans
 router.get('/plans', authenticateToken, async (req, res) => {
     try {

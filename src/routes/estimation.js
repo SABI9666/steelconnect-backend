@@ -2282,6 +2282,23 @@ router.get('/:estimationId/ai-result', authenticateToken, async (req, res) => {
 // ============================================================
 // Website Estimation: Public endpoint for landing page visitors (no auth required)
 // ============================================================
+
+// GET /api/estimation/website-estimation-check - Public check if free estimation is enabled
+router.get('/website-estimation-check', async (req, res) => {
+    try {
+        const settingsDoc = await adminDb.collection('settings').doc('website_estimation').get();
+        if (!settingsDoc.exists) {
+            return res.json({ success: true, enabled: true });
+        }
+        const data = settingsDoc.data();
+        res.json({ success: true, enabled: !!data.enabled });
+    } catch (error) {
+        console.error('[WEBSITE-ESTIMATION] Public check error:', error);
+        // Default to enabled on error so users aren't blocked by a backend issue
+        res.json({ success: true, enabled: true });
+    }
+});
+
 router.post('/website-submit', estimationLimiter, async (req, res) => {
     try {
         // Handle file upload

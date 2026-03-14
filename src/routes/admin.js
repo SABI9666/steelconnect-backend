@@ -8417,6 +8417,51 @@ router.get('/meetings', async (req, res) => {
 });
 
 // ============================================================
+// WEBSITE ESTIMATION TOGGLE (Admin)
+// ============================================================
+
+// GET /api/admin/website-estimation/status - Get website estimation toggle status
+router.get('/website-estimation/status', async (req, res) => {
+    try {
+        const settingsDoc = await adminDb.collection('settings').doc('website_estimation').get();
+        if (!settingsDoc.exists) {
+            await adminDb.collection('settings').doc('website_estimation').set({
+                enabled: true,
+                updatedAt: new Date().toISOString(),
+                updatedBy: req.user.email || 'admin'
+            });
+            return res.json({ success: true, enabled: true });
+        }
+        const data = settingsDoc.data();
+        res.json({ success: true, enabled: !!data.enabled, updatedAt: data.updatedAt, updatedBy: data.updatedBy });
+    } catch (error) {
+        console.error('[WEBSITE-ESTIMATION] Status error:', error);
+        res.status(500).json({ success: false, message: 'Error fetching website estimation status' });
+    }
+});
+
+// POST /api/admin/website-estimation/toggle - Toggle website estimation on/off
+router.post('/website-estimation/toggle', async (req, res) => {
+    try {
+        const { enabled } = req.body;
+        if (typeof enabled !== 'boolean') {
+            return res.status(400).json({ success: false, message: 'enabled (boolean) is required' });
+        }
+        await adminDb.collection('settings').doc('website_estimation').set({
+            enabled,
+            updatedAt: new Date().toISOString(),
+            updatedBy: req.user.email || 'admin'
+        }, { merge: true });
+
+        console.log(`[WEBSITE-ESTIMATION] Website estimation ${enabled ? 'ENABLED' : 'DISABLED'} by ${req.user.email}`);
+        res.json({ success: true, enabled, message: `Website estimation ${enabled ? 'enabled' : 'disabled'}` });
+    } catch (error) {
+        console.error('[WEBSITE-ESTIMATION] Toggle error:', error);
+        res.status(500).json({ success: false, message: 'Error toggling website estimation' });
+    }
+});
+
+// ============================================================
 // WEBSITE ESTIMATION MANAGEMENT (Admin)
 // ============================================================
 

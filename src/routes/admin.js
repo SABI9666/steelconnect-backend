@@ -8417,47 +8417,65 @@ router.get('/meetings', async (req, res) => {
 });
 
 // ============================================================
-// WEBSITE ESTIMATION TOGGLE (Admin)
+// WEBSITE ESTIMATION PER-USER ACCESS CONTROL (Admin)
 // ============================================================
 
-// GET /api/admin/website-estimation/status - Get website estimation toggle status
-router.get('/website-estimation/status', async (req, res) => {
+// POST /api/admin/website-estimation/block-user - Block a specific email from free estimation
+router.post('/website-estimation/block-user', async (req, res) => {
     try {
-        const settingsDoc = await adminDb.collection('settings').doc('website_estimation').get();
-        if (!settingsDoc.exists) {
-            await adminDb.collection('settings').doc('website_estimation').set({
-                enabled: true,
-                updatedAt: new Date().toISOString(),
-                updatedBy: req.user.email || 'admin'
-            });
-            return res.json({ success: true, enabled: true });
+        const { email } = req.body;
+        if (!email || !email.trim()) {
+            return res.status(400).json({ success: false, message: 'email is required' });
         }
-        const data = settingsDoc.data();
-        res.json({ success: true, enabled: !!data.enabled, updatedAt: data.updatedAt, updatedBy: data.updatedBy });
+        const normalizedEmail = email.trim().toLowerCase();
+        await adminDb.collection('blocked_estimation_emails').doc(normalizedEmail).set({
+            email: normalizedEmail,
+            blocked: true,
+            blockedAt: new Date().toISOString(),
+            blockedBy: req.user.email || 'admin'
+        });
+
+        // Also update the estimationBlocked flag on all website_estimations for this email
+        const snapshot = await adminDb.collection('website_estimations')
+            .where('email', '==', normalizedEmail).get();
+        const batch = adminDb.batch();
+        snapshot.docs.forEach(doc => {
+            batch.update(doc.ref, { estimationBlocked: true });
+        });
+        if (!snapshot.empty) await batch.commit();
+
+        console.log(`[WEBSITE-ESTIMATION] Blocked email ${normalizedEmail} by ${req.user.email}`);
+        res.json({ success: true, blocked: true, email: normalizedEmail, message: `Free estimation blocked for ${normalizedEmail}` });
     } catch (error) {
-        console.error('[WEBSITE-ESTIMATION] Status error:', error);
-        res.status(500).json({ success: false, message: 'Error fetching website estimation status' });
+        console.error('[WEBSITE-ESTIMATION] Block user error:', error);
+        res.status(500).json({ success: false, message: 'Error blocking user' });
     }
 });
 
-// POST /api/admin/website-estimation/toggle - Toggle website estimation on/off
-router.post('/website-estimation/toggle', async (req, res) => {
+// POST /api/admin/website-estimation/unblock-user - Unblock a specific email for free estimation
+router.post('/website-estimation/unblock-user', async (req, res) => {
     try {
-        const { enabled } = req.body;
-        if (typeof enabled !== 'boolean') {
-            return res.status(400).json({ success: false, message: 'enabled (boolean) is required' });
+        const { email } = req.body;
+        if (!email || !email.trim()) {
+            return res.status(400).json({ success: false, message: 'email is required' });
         }
-        await adminDb.collection('settings').doc('website_estimation').set({
-            enabled,
-            updatedAt: new Date().toISOString(),
-            updatedBy: req.user.email || 'admin'
-        }, { merge: true });
+        const normalizedEmail = email.trim().toLowerCase();
+        await adminDb.collection('blocked_estimation_emails').doc(normalizedEmail).delete();
 
-        console.log(`[WEBSITE-ESTIMATION] Website estimation ${enabled ? 'ENABLED' : 'DISABLED'} by ${req.user.email}`);
-        res.json({ success: true, enabled, message: `Website estimation ${enabled ? 'enabled' : 'disabled'}` });
+        // Also update the estimationBlocked flag on all website_estimations for this email
+        const snapshot = await adminDb.collection('website_estimations')
+            .where('email', '==', normalizedEmail).get();
+        const batch = adminDb.batch();
+        snapshot.docs.forEach(doc => {
+            batch.update(doc.ref, { estimationBlocked: false });
+        });
+        if (!snapshot.empty) await batch.commit();
+
+        console.log(`[WEBSITE-ESTIMATION] Unblocked email ${normalizedEmail} by ${req.user.email}`);
+        res.json({ success: true, blocked: false, email: normalizedEmail, message: `Free estimation unblocked for ${normalizedEmail}` });
     } catch (error) {
-        console.error('[WEBSITE-ESTIMATION] Toggle error:', error);
-        res.status(500).json({ success: false, message: 'Error toggling website estimation' });
+        console.error('[WEBSITE-ESTIMATION] Unblock user error:', error);
+        res.status(500).json({ success: false, message: 'Error unblocking user' });
     }
 });
 

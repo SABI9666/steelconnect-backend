@@ -2283,19 +2283,24 @@ router.get('/:estimationId/ai-result', authenticateToken, async (req, res) => {
 // Website Estimation: Public endpoint for landing page visitors (no auth required)
 // ============================================================
 
-// GET /api/estimation/website-estimation-check - Public check if free estimation is enabled
+// GET /api/estimation/website-estimation-check?email=xxx - Public check if a specific email is blocked from free estimation
 router.get('/website-estimation-check', async (req, res) => {
     try {
-        const settingsDoc = await adminDb.collection('settings').doc('website_estimation').get();
-        if (!settingsDoc.exists) {
-            return res.json({ success: true, enabled: true });
+        const email = req.query.email;
+        if (!email || !email.trim()) {
+            // No email provided — allow access (they haven't entered email yet)
+            return res.json({ success: true, blocked: false });
         }
-        const data = settingsDoc.data();
-        res.json({ success: true, enabled: !!data.enabled });
+        const normalizedEmail = email.trim().toLowerCase();
+        const blockedDoc = await adminDb.collection('blocked_estimation_emails').doc(normalizedEmail).get();
+        if (blockedDoc.exists && blockedDoc.data().blocked) {
+            return res.json({ success: true, blocked: true, message: 'Your free estimation access has been used. Please subscribe for more estimations.' });
+        }
+        res.json({ success: true, blocked: false });
     } catch (error) {
         console.error('[WEBSITE-ESTIMATION] Public check error:', error);
-        // Default to enabled on error so users aren't blocked by a backend issue
-        res.json({ success: true, enabled: true });
+        // Default to not blocked on error
+        res.json({ success: true, blocked: false });
     }
 });
 

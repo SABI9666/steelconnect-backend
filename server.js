@@ -649,10 +649,11 @@ if (notificationRoutes) {
     console.warn('🔧 Create ./src/routes/notifications.js for real-time notifications');
 }
 
-// Estimation routes with strict rate limiting (expensive AI operations)
+// Estimation routes — general rate limit (read endpoints are frequent after login)
+// Strict AI rate limit is applied per-route inside estimation.js for expensive operations
 if (estimationRoutes) {
-    app.use('/api/estimation', estimationLimiter, estimationRoutes);
-    console.log('✅ Estimation routes registered at /api/estimation (rate limited: 5/min)');
+    app.use('/api/estimation', generalLimiter, estimationRoutes);
+    console.log('✅ Estimation routes registered at /api/estimation (general rate limit: 200/min, AI ops: 5/min per-route)');
     console.log('🤖 AI Cost Estimation: ENABLED');
     console.log('   • File upload and processing');
     console.log('   • Contractor estimation requests');

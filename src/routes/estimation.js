@@ -24,6 +24,7 @@ import { extractMeasurementsFromPDFs } from '../services/pdfMeasurementExtractor
 import { generateCacheKey, getCachedEstimate, setCachedEstimate, getCacheStats } from '../services/estimationCache.js';
 import { generateQuickEstimate } from '../services/quickEstimationEngine.js';
 import { NotificationService } from '../services/NotificationService.js';
+import { estimationLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
 
@@ -302,7 +303,7 @@ router.get('/', authenticateToken, isAdmin, async (req, res) => {
 });
 
 // Estimation submission: upload files + auto-generate AI estimate + save to Firestore
-router.post('/contractor/submit', authenticateToken, isContractor, async (req, res) => {
+router.post('/contractor/submit', estimationLimiter, authenticateToken, isContractor, async (req, res) => {
   try {
     // Parse multipart upload safely (handles multer errors inline)
     try {
@@ -1551,7 +1552,7 @@ router.use((error, req, res, next) => {
 // ==========================================
 
 // POST /estimation/ai-estimate - Generate AI-powered cost estimation
-router.post('/ai-estimate', authenticateToken, async (req, res) => {
+router.post('/ai-estimate', estimationLimiter, authenticateToken, async (req, res) => {
     try {
         // Parse multipart upload safely (handles multer errors inline)
         try {
@@ -2017,7 +2018,7 @@ function generateFallbackEstimation(q, title, description) {
 // ==========================================
 
 // POST /estimation/ai/questions - Generate smart questionnaire based on project info
-router.post('/ai/questions', authenticateToken, async (req, res) => {
+router.post('/ai/questions', estimationLimiter, authenticateToken, async (req, res) => {
     try {
         const { projectTitle, description, designStandard, projectType, region, totalArea, fileCount, fileNames } = req.body;
 
@@ -2037,7 +2038,7 @@ router.post('/ai/questions', authenticateToken, async (req, res) => {
 });
 
 // POST /estimation/ai/generate - Generate full AI estimate from answers (with file upload support)
-router.post('/ai/generate', authenticateToken, async (req, res) => {
+router.post('/ai/generate', estimationLimiter, authenticateToken, async (req, res) => {
     try {
         // Parse multipart upload if files are included
         let fileUploadWarning = null;
@@ -2281,7 +2282,7 @@ router.get('/:estimationId/ai-result', authenticateToken, async (req, res) => {
 // ============================================================
 // Website Estimation: Public endpoint for landing page visitors (no auth required)
 // ============================================================
-router.post('/website-submit', async (req, res) => {
+router.post('/website-submit', estimationLimiter, async (req, res) => {
     try {
         // Handle file upload
         await safeEstimationUpload(req, res);

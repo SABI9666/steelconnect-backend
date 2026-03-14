@@ -700,17 +700,19 @@ export async function sendWebsiteEstimationResultReady(email, name, projectTitle
         const displayName = name || 'there';
         const resultUrl = `https://steelconnectapp.com/?section=website-estimation-result&estimationId=${estimationId}&email=${encodeURIComponent(email)}`;
         const htmlContent = `
-<h2 ${S.h2}>Your Free Estimation is Ready</h2>
+<h2 ${S.h2}>Your Free Estimation is Ready!</h2>
 <p ${S.p}>Hi ${displayName},</p>
-<p ${S.p}>Great news! The estimation for your project has been completed.</p>
+<p ${S.p}>Great news! Your estimation for <strong>${projectTitle}</strong> has been completed by our experts.</p>
 <table ${S.table}>
 <tr><td ${S.tdLabel}>Project</td><td ${S.tdValue}>${projectTitle}</td></tr>
 <tr><td ${S.tdLabel}>Reference</td><td ${S.tdValue}>#${estimationId.substring(0, 8).toUpperCase()}</td></tr>
-<tr><td ${S.tdLabel}>Completed</td><td ${S.tdValue}>${new Date().toLocaleDateString()}</td></tr>
 </table>
-<p ${S.p}>Your free estimation result is ready! To view your detailed estimation report, you'll need to create a free SteelConnect account.</p>
-<p style="margin:20px 0;"><a href="${resultUrl}" ${S.btn}>View Estimation Result</a></p>
-<div ${S.notice}>After signing up, complete your profile to unlock the full result.</div>
+<p style="margin:20px 0;"><a href="${resultUrl}" ${S.btn}>View My Estimation Result</a></p>
+<div ${S.notice}>
+<strong>How to access your result:</strong><br><br>
+<strong>Already have an approved profile?</strong> Click the button above and you'll be taken directly to your detailed estimation report.<br><br>
+<strong>New to SteelConnect?</strong> Click the button above — you'll be guided to create a free account and complete your profile. Once your profile is approved, your estimation result will be waiting for you in the portal.
+</div>
 <p ${S.muted}>If you have questions, just reply to this email.</p>`;
 
         return await sendEmail({

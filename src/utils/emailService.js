@@ -334,7 +334,7 @@ export async function sendOTPVerificationEmail(user, otpCode, clientIP, userAgen
         const htmlContent = `
 <h2 ${S.h2}>Login Verification Code</h2>
 <p ${S.p}>Hi ${user.name},</p>
-<p ${S.p}>A login attempt was made on your SteelConnect account. Enter the code below to verify your identity. It expires in <strong>5 minutes</strong>.</p>
+<p ${S.p}>A login attempt was made on your SteelConnect account. Enter the code below to verify your identity. It expires in <strong>10 minutes</strong>.</p>
 <div ${S.codeBox}>
 <p ${S.codeLabel}>Your Code</p>
 <p ${S.code}>${otpCode}</p>
@@ -348,7 +348,7 @@ export async function sendOTPVerificationEmail(user, otpCode, clientIP, userAgen
 </table>
 <div ${S.notice}><strong>Security Notice:</strong> If you did not attempt to log in, your password may be compromised. Change it immediately.</div>`;
 
-        const textContent = `Login Verification Code\n\nHi ${user.name},\n\nYour verification code is: ${otpCode}\n\nThis code expires in 5 minutes. Do not share it with anyone.\n\nIf you didn't attempt to log in, change your password immediately.\n\n— SteelConnect Team`;
+        const textContent = `Login Verification Code\n\nHi ${user.name},\n\nYour verification code is: ${otpCode}\n\nThis code expires in 10 minutes. Do not share it with anyone.\n\nIf you didn't attempt to log in, change your password immediately.\n\n— SteelConnect Team`;
 
         return await sendEmail({
             to: user.email,

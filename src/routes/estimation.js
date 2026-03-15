@@ -24,7 +24,7 @@ import { extractMeasurementsFromPDFs } from '../services/pdfMeasurementExtractor
 import { generateCacheKey, getCachedEstimate, setCachedEstimate, getCacheStats } from '../services/estimationCache.js';
 import { generateQuickEstimate } from '../services/quickEstimationEngine.js';
 import { NotificationService } from '../services/NotificationService.js';
-import { estimationLimiter } from '../middleware/rateLimiter.js';
+import { estimationLimiter, websiteEstimationLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
 
@@ -2317,7 +2317,7 @@ router.get('/website-estimation-check', async (req, res) => {
     }
 });
 
-router.post('/website-submit', estimationLimiter, async (req, res) => {
+router.post('/website-submit', websiteEstimationLimiter, async (req, res) => {
     try {
         // Handle file upload
         await safeEstimationUpload(req, res);

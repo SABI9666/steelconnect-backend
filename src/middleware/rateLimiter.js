@@ -112,11 +112,18 @@ export const uploadLimiter = createRateLimiter({
     message: 'Upload rate limit exceeded. Please wait before uploading more files.'
 });
 
-// AI estimation: 5 per minute (expensive operation)
+// AI estimation: 5 per minute (expensive operation - for authenticated AI endpoints)
 export const estimationLimiter = createRateLimiter({
     windowMs: 60_000,
     max: 5,
     message: 'AI estimation rate limit exceeded. Please wait before submitting another estimation.'
+});
+
+// Website free estimation: 3 per 5 minutes per IP (public landing page form)
+export const websiteEstimationLimiter = createRateLimiter({
+    windowMs: 5 * 60_000,
+    max: 3,
+    message: 'You have already submitted an estimation request. Please wait a few minutes before trying again.'
 });
 
 // Admin endpoints: 300 per minute (admins need higher limits)
@@ -146,6 +153,7 @@ export default {
     authLimiter,
     uploadLimiter,
     estimationLimiter,
+    websiteEstimationLimiter,
     adminLimiter,
     publicLimiter,
     wsConnectionLimiter

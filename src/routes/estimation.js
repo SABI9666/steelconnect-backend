@@ -2292,6 +2292,19 @@ router.get('/website-estimation-check', async (req, res) => {
             return res.json({ success: true, blocked: false });
         }
         const normalizedEmail = email.trim().toLowerCase();
+
+        // Check if this email belongs to a designer account
+        const userQuery = await adminDb.collection('users')
+            .where('email', '==', normalizedEmail)
+            .limit(1)
+            .get();
+        if (!userQuery.empty) {
+            const userData = userQuery.docs[0].data();
+            if (userData.type === 'designer') {
+                return res.json({ success: true, blocked: true, isDesigner: true, message: 'AI Estimation is only available for Contractor accounts. Please login with a Contractor account to get precise AI estimation results.' });
+            }
+        }
+
         const blockedDoc = await adminDb.collection('blocked_estimation_emails').doc(normalizedEmail).get();
         if (blockedDoc.exists && blockedDoc.data().blocked) {
             return res.json({ success: true, blocked: true, message: 'Your free estimation access has been used. Please subscribe for more estimations.' });
@@ -2327,6 +2340,16 @@ router.post('/website-submit', estimationLimiter, async (req, res) => {
         }
         if (!files || files.length === 0) {
             return res.status(400).json({ success: false, message: 'At least one file is required' });
+        }
+
+        // Block designer accounts from submitting free estimation
+        const normalizedEmail = email.trim().toLowerCase();
+        const designerCheck = await adminDb.collection('users')
+            .where('email', '==', normalizedEmail)
+            .limit(1)
+            .get();
+        if (!designerCheck.empty && designerCheck.docs[0].data().type === 'designer') {
+            return res.status(403).json({ success: false, message: 'AI Estimation is only available for Contractor accounts. Please login with a Contractor account to get precise AI estimation results.' });
         }
 
         // Upload files to Firebase Storage

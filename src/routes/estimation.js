@@ -2352,38 +2352,10 @@ router.post('/website-submit', websiteEstimationLimiter, async (req, res) => {
             return res.status(403).json({ success: false, message: 'AI Estimation is only available for Contractor accounts. Please login with a Contractor account to get precise AI estimation results.' });
         }
 
-        // Upload files to Firebase Storage
-        let uploadedFiles = [];
-        try {
-            const uploadPromises = files.map(async (file, index) => {
-                const timestamp = Date.now();
-                const fileName = `${timestamp}_${index}_${file.originalname}`;
-                const filePath = `website-estimation-files/${fileName}`;
-
-                const metadata = {
-                    uploaderEmail: email.trim(),
-                    source: 'landing-page',
-                    fileIndex: index,
-                    uploadBatch: timestamp
-                };
-
-                return uploadToFirebaseStorage(file, filePath, metadata);
-            });
-
-            uploadedFiles = await Promise.all(uploadPromises);
-            console.log(`[WEBSITE-ESTIMATION] Successfully uploaded ${uploadedFiles.length} files for ${email}`);
-        } catch (uploadError) {
-            console.error('[WEBSITE-ESTIMATION] File upload failed:', uploadError);
-            return res.status(500).json({
-                success: false,
-                message: `File upload failed: ${uploadError.message}`
-            });
-        }
-
         // Calculate total file size
         const totalFileSize = files.reduce((sum, f) => sum + (f.size || 0), 0);
 
-        // Save to Firestore
+        // Save to Firestore FIRST (fast) — respond immediately, upload files in background
         const now = new Date().toISOString();
         const estimationData = sanitizeForFirestore({
             email: email.trim(),
@@ -2394,10 +2366,11 @@ router.post('/website-submit', websiteEstimationLimiter, async (req, res) => {
             projectType: projectType || '',
             region: region || '',
             totalArea: totalArea || '',
-            uploadedFiles,
-            fileCount: uploadedFiles.length,
+            uploadedFiles: [],
+            fileCount: files.length,
             totalFileSize,
             status: 'pending',
+            fileUploadStatus: 'uploading',
             source: 'landing-page',
             createdAt: now,
             updatedAt: now
@@ -2406,17 +2379,55 @@ router.post('/website-submit', websiteEstimationLimiter, async (req, res) => {
         const docRef = await adminDb.collection('website_estimations').add(estimationData);
         const estimationId = docRef.id;
 
-        console.log(`[WEBSITE-ESTIMATION] Created estimation ${estimationId} for ${email}`);
+        console.log(`[WEBSITE-ESTIMATION] Created estimation ${estimationId} for ${email} — responding immediately, uploading ${files.length} files in background`);
 
-        // Send confirmation email (non-blocking)
-        sendWebsiteEstimationConfirmation(email.trim(), name ? name.trim() : '', projectTitle.trim(), estimationId)
-            .catch(err => console.error('[WEBSITE-ESTIMATION] Failed to send confirmation email:', err));
-
+        // Respond to user IMMEDIATELY — don't wait for file uploads
         res.status(201).json({
             success: true,
             message: 'Estimation submitted successfully',
             estimationId
         });
+
+        // Upload files to Firebase Storage in BACKGROUND (after response sent)
+        (async () => {
+            try {
+                const uploadPromises = files.map(async (file, index) => {
+                    const timestamp = Date.now();
+                    const fileName = `${timestamp}_${index}_${file.originalname}`;
+                    const filePath = `website-estimation-files/${fileName}`;
+
+                    const metadata = {
+                        uploaderEmail: email.trim(),
+                        source: 'landing-page',
+                        fileIndex: index,
+                        uploadBatch: timestamp
+                    };
+
+                    return uploadToFirebaseStorage(file, filePath, metadata);
+                });
+
+                const uploadedFiles = await Promise.all(uploadPromises);
+                console.log(`[WEBSITE-ESTIMATION] Background upload complete: ${uploadedFiles.length} files for estimation ${estimationId}`);
+
+                // Update Firestore with uploaded file URLs
+                await adminDb.collection('website_estimations').doc(estimationId).update({
+                    uploadedFiles,
+                    fileUploadStatus: 'completed',
+                    updatedAt: new Date().toISOString()
+                });
+            } catch (uploadError) {
+                console.error(`[WEBSITE-ESTIMATION] Background upload failed for ${estimationId}:`, uploadError);
+                await adminDb.collection('website_estimations').doc(estimationId).update({
+                    fileUploadStatus: 'failed',
+                    fileUploadError: uploadError.message,
+                    updatedAt: new Date().toISOString()
+                }).catch(() => {});
+            }
+        })();
+
+        // Send confirmation email (non-blocking)
+        sendWebsiteEstimationConfirmation(email.trim(), name ? name.trim() : '', projectTitle.trim(), estimationId)
+            .catch(err => console.error('[WEBSITE-ESTIMATION] Failed to send confirmation email:', err));
     } catch (error) {
         console.error('[WEBSITE-ESTIMATION] Submission error:', error);
 

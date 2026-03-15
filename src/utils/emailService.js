@@ -87,8 +87,18 @@ function htmlToPlainText(html) {
         .trim();
 }
 
-// Core email sender with inbox-optimized defaults
-async function sendEmail({ to, subject, htmlContent, textContent }) {
+// Send email with timeout to prevent hanging requests
+async function sendEmailWithTimeout(emailData, timeoutMs = 10000) {
+    return Promise.race([
+        resend.emails.send(emailData),
+        new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`Email send timed out after ${timeoutMs}ms`)), timeoutMs)
+        )
+    ]);
+}
+
+// Core email sender with inbox-optimized defaults and retry logic
+async function sendEmail({ to, subject, htmlContent, textContent }, retries = 2) {
     const html = getEmailTemplate(htmlContent);
     const text = textContent || htmlToPlainText(html);
 
@@ -104,15 +114,36 @@ async function sendEmail({ to, subject, htmlContent, textContent }) {
         },
     };
 
-    const response = await resend.emails.send(emailData);
+    let lastError = null;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            const response = await sendEmailWithTimeout(emailData);
 
-    if (response.error) {
-        console.error('Resend API error:', response.error);
-        return { success: false, error: response.error };
+            if (response.error) {
+                lastError = response.error;
+                console.error(`Resend API error (attempt ${attempt + 1}/${retries + 1}):`, response.error);
+                if (attempt < retries) {
+                    const delay = Math.pow(2, attempt) * 1000; // 1s, 2s backoff
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    continue;
+                }
+                return { success: false, error: response.error };
+            }
+
+            console.log(`Email sent to ${to} — ID: ${response.data?.id || 'N/A'} (attempt ${attempt + 1})`);
+            return { success: true, messageId: response.data?.id };
+        } catch (err) {
+            lastError = err;
+            console.error(`Email send error (attempt ${attempt + 1}/${retries + 1}):`, err.message);
+            if (attempt < retries) {
+                const delay = Math.pow(2, attempt) * 1000;
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
     }
 
-    console.log(`Email sent to ${to} — ID: ${response.data?.id || 'N/A'}`);
-    return { success: true, messageId: response.data?.id };
+    console.error(`Email to ${to} failed after ${retries + 1} attempts:`, lastError?.message || lastError);
+    return { success: false, error: lastError?.message || 'Failed after all retry attempts' };
 }
 
 // Reusable inline styles for email content (email clients strip <style> blocks)

@@ -16,7 +16,7 @@ import webpush from 'web-push';
 import { adminDb, admin } from './src/config/firebase.js';
 
 // Import scalability middleware
-import { generalLimiter, authLimiter, uploadLimiter, estimationLimiter, adminLimiter, publicLimiter } from './src/middleware/rateLimiter.js';
+import { generalLimiter, authLimiter, otpLimiter, uploadLimiter, estimationLimiter, adminLimiter, publicLimiter } from './src/middleware/rateLimiter.js';
 import { cacheResponse, getCacheStats, clearResponseCache, autoCacheInvalidation } from './src/middleware/responseCache.js';
 import { getUserCacheStats, clearUserCache } from './src/middleware/userCache.js';
 
@@ -549,7 +549,7 @@ console.log('📋 Registering routes...');
 // Auth routes (Critical - must work) with stricter rate limiting
 if (authRoutes) {
     app.use('/api/auth', authLimiter, authRoutes);
-    console.log('✅ Auth routes registered at /api/auth (rate limited: 20/min)');
+    console.log('✅ Auth routes registered at /api/auth (rate limited: 40/min, OTP: 10/5min)');
     console.log('   • User registration with profile workflow');
     console.log('   • Login with email notifications from verified domain');
     console.log('   • Token verification');

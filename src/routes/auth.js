@@ -189,7 +189,7 @@ router.post('/login', otpLimiter, async (req, res) => {
 
         // Generate 6-digit OTP for 2FA
         const otpCode = crypto.randomInt(100000, 999999).toString();
-        const otpExpiry = new Date(Date.now() + 5 * 60 * 1000).toISOString(); // 5 minutes
+        const otpExpiry = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 minutes
 
         // Store OTP in Firestore
         await adminDb.collection('users').doc(userId).update({
@@ -200,7 +200,7 @@ router.post('/login', otpLimiter, async (req, res) => {
             pendingLoginAgent: userAgent
         });
 
-        console.log(`2FA OTP generated for: ${email}`);
+        console.log(`2FA OTP generated for: ${email} (userId: ${userId})`);
 
         // Send OTP email - await result so we can report delivery status
         let emailSent = false;
@@ -223,11 +223,12 @@ router.post('/login', otpLimiter, async (req, res) => {
             console.log('⚠️ RESEND_API_KEY not configured - OTP email not sent');
         }
 
-        // Return requires2FA flag - do NOT send token yet
+        // Return requires2FA flag with userId for reliable OTP verification
         res.json({
             success: true,
             requires2FA: true,
             emailSent,
+            userId,
             message: emailSent
                 ? 'Verification code sent to your email. Please check your inbox.'
                 : 'Verification code generated but email delivery could not be confirmed. Please try resending.',
@@ -299,7 +300,7 @@ router.post('/login/admin', otpLimiter, async (req, res) => {
 
         // Generate 6-digit OTP for 2FA
         const otpCode = crypto.randomInt(100000, 999999).toString();
-        const otpExpiry = new Date(Date.now() + 5 * 60 * 1000).toISOString(); // 5 minutes
+        const otpExpiry = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 minutes
 
         // Store OTP in Firestore
         await adminDb.collection('users').doc(userId).update({
@@ -310,7 +311,7 @@ router.post('/login/admin', otpLimiter, async (req, res) => {
             pendingLoginAgent: userAgent
         });
 
-        console.log(`Admin 2FA OTP generated for: ${email}`);
+        console.log(`Admin 2FA OTP generated for: ${email} (userId: ${userId})`);
 
         // Send OTP email to designated admin verification email
         const adminOtpEmail = 'sabincn676@gmail.com';
@@ -334,11 +335,12 @@ router.post('/login/admin', otpLimiter, async (req, res) => {
             console.log('⚠️ RESEND_API_KEY not configured - Admin OTP email not sent');
         }
 
-        // Return requires2FA flag with email delivery status
+        // Return requires2FA flag with userId for reliable OTP verification
         res.json({
             success: true,
             requires2FA: true,
             emailSent,
+            userId,
             message: emailSent
                 ? 'Verification code sent to your email. Please check your inbox.'
                 : 'Verification code generated but email delivery could not be confirmed. Please try resending.',
@@ -357,49 +359,120 @@ router.post('/login/admin', otpLimiter, async (req, res) => {
 // Step 2: Verify OTP and complete login (for both user and admin)
 router.post('/verify-otp', async (req, res) => {
     try {
-        const { email, otp, loginType } = req.body;
+        const { email, otp, loginType, userId: requestUserId } = req.body;
         const clientIP = getClientIP(req);
         const userAgent = req.headers['user-agent'] || 'Unknown';
 
-        if (!email || !otp) {
+        if (!otp) {
             return res.status(400).json({
                 success: false,
-                message: 'Email and verification code are required'
+                message: 'Verification code is required'
             });
         }
 
-        const normalizedEmail = email.toLowerCase().trim();
+        if (!email && !requestUserId) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email or user identification is required'
+            });
+        }
+
+        const normalizedEmail = email ? email.toLowerCase().trim() : null;
         const isAdmin = loginType === 'admin';
         const isOperations = loginType === 'operations';
 
-        // Find user
-        let userQuery;
-        if (isAdmin) {
-            userQuery = await adminDb.collection('users')
-                .where('email', '==', normalizedEmail)
-                .where('type', '==', 'admin')
-                .get();
-        } else if (isOperations) {
-            userQuery = await adminDb.collection('users')
-                .where('email', '==', normalizedEmail)
-                .where('type', '==', 'operations')
-                .get();
+        // Prefer direct document read by userId (strongly consistent)
+        // Fall back to query by email if userId not provided (backward compatibility)
+        let userDoc;
+        let userData;
+        let userId;
+
+        if (requestUserId) {
+            // Direct document read - always strongly consistent in Firestore
+            const docRef = await adminDb.collection('users').doc(requestUserId).get();
+            if (!docRef.exists) {
+                console.error(`OTP verify: userId ${requestUserId} not found in Firestore`);
+                return res.status(401).json({
+                    success: false,
+                    message: 'Invalid credentials'
+                });
+            }
+            userDoc = docRef;
+            userData = docRef.data();
+            userId = requestUserId;
+
+            // Verify the email matches if both provided (security check)
+            if (normalizedEmail && userData.email !== normalizedEmail) {
+                console.error(`OTP verify: email mismatch - expected ${normalizedEmail}, got ${userData.email} for userId ${userId}`);
+                return res.status(401).json({
+                    success: false,
+                    message: 'Invalid credentials'
+                });
+            }
+
+            // Verify user type matches loginType
+            if (isAdmin && userData.type !== 'admin') {
+                return res.status(401).json({ success: false, message: 'Invalid credentials' });
+            }
+            if (isOperations && userData.type !== 'operations') {
+                return res.status(401).json({ success: false, message: 'Invalid credentials' });
+            }
+
+            console.log(`OTP verify: direct doc read for userId ${userId} (${userData.email})`);
         } else {
-            userQuery = await adminDb.collection('users')
-                .where('email', '==', normalizedEmail)
-                .get();
+            // Fallback: query by email (for older clients without userId)
+            let userQuery;
+            if (isAdmin) {
+                userQuery = await adminDb.collection('users')
+                    .where('email', '==', normalizedEmail)
+                    .where('type', '==', 'admin')
+                    .get();
+            } else if (isOperations) {
+                userQuery = await adminDb.collection('users')
+                    .where('email', '==', normalizedEmail)
+                    .where('type', '==', 'operations')
+                    .get();
+            } else {
+                // Filter out admin/operations users for regular user login
+                userQuery = await adminDb.collection('users')
+                    .where('email', '==', normalizedEmail)
+                    .get();
+                // If multiple docs found, pick the non-admin/non-operations one
+                if (userQuery.docs.length > 1) {
+                    const regularDoc = userQuery.docs.find(d => {
+                        const t = d.data().type;
+                        return t !== 'admin' && t !== 'operations';
+                    });
+                    if (regularDoc) {
+                        userQuery = { empty: false, docs: [regularDoc] };
+                    }
+                }
+            }
+
+            if (userQuery.empty) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'Invalid credentials'
+                });
+            }
+
+            userDoc = userQuery.docs[0];
+            userData = userDoc.data();
+            userId = userDoc.id;
+            console.log(`OTP verify: query lookup for ${normalizedEmail} → userId ${userId}`);
         }
 
-        if (userQuery.empty) {
-            return res.status(401).json({
+        // Debug: log OTP state for troubleshooting
+        console.log(`OTP verify state: userId=${userId}, hasOtp=${!!userData.loginOtp}, hasExpiry=${!!userData.loginOtpExpiry}, attempts=${userData.loginOtpAttempts || 0}`);
+
+        // Check if OTP exists at all
+        if (!userData.loginOtp) {
+            console.error(`OTP verify: no OTP found on user document ${userId} - OTP may have been cleared or never stored`);
+            return res.status(400).json({
                 success: false,
-                message: 'Invalid credentials'
+                message: 'No verification code found. Please login again to get a new code.'
             });
         }
-
-        const userDoc = userQuery.docs[0];
-        const userData = userDoc.data();
-        const userId = userDoc.id;
 
         // Check OTP attempts (max 5)
         if (userData.loginOtpAttempts >= 5) {
@@ -414,13 +487,16 @@ router.post('/verify-otp', async (req, res) => {
             });
         }
 
-        // Verify OTP code
-        if (!userData.loginOtp || userData.loginOtp !== otp.trim()) {
+        // Verify OTP code (explicit string comparison)
+        const submittedOtp = String(otp).trim();
+        const storedOtp = String(userData.loginOtp);
+        if (storedOtp !== submittedOtp) {
             // Increment attempts
             await adminDb.collection('users').doc(userId).update({
                 loginOtpAttempts: (userData.loginOtpAttempts || 0) + 1
             });
             const remaining = 5 - ((userData.loginOtpAttempts || 0) + 1);
+            console.log(`OTP verify: code mismatch for userId ${userId} (${remaining} attempts remaining)`);
             return res.status(400).json({
                 success: false,
                 message: `Invalid verification code. ${remaining} attempt${remaining !== 1 ? 's' : ''} remaining.`
@@ -525,46 +601,71 @@ router.post('/verify-otp', async (req, res) => {
 // Resend OTP code
 router.post('/resend-otp', otpLimiter, async (req, res) => {
     try {
-        const { email, loginType } = req.body;
+        const { email, loginType, userId: requestUserId } = req.body;
         const clientIP = getClientIP(req);
         const userAgent = req.headers['user-agent'] || 'Unknown';
 
-        if (!email) {
+        if (!email && !requestUserId) {
             return res.status(400).json({ success: false, message: 'Email is required' });
         }
 
-        const normalizedEmail = email.toLowerCase().trim();
+        const normalizedEmail = email ? email.toLowerCase().trim() : null;
         const isAdmin = loginType === 'admin';
         const isOperations = loginType === 'operations';
 
-        let userQuery;
-        if (isAdmin) {
-            userQuery = await adminDb.collection('users')
-                .where('email', '==', normalizedEmail)
-                .where('type', '==', 'admin')
-                .get();
-        } else if (isOperations) {
-            userQuery = await adminDb.collection('users')
-                .where('email', '==', normalizedEmail)
-                .where('type', '==', 'operations')
-                .get();
+        let userData;
+        let userId;
+
+        if (requestUserId) {
+            // Direct document read - strongly consistent
+            const docRef = await adminDb.collection('users').doc(requestUserId).get();
+            if (!docRef.exists) {
+                return res.status(400).json({ success: false, message: 'Invalid request' });
+            }
+            userData = docRef.data();
+            userId = requestUserId;
+            console.log(`Resend OTP: direct doc read for userId ${userId}`);
         } else {
-            userQuery = await adminDb.collection('users')
-                .where('email', '==', normalizedEmail)
-                .get();
-        }
+            // Fallback: query by email
+            let userQuery;
+            if (isAdmin) {
+                userQuery = await adminDb.collection('users')
+                    .where('email', '==', normalizedEmail)
+                    .where('type', '==', 'admin')
+                    .get();
+            } else if (isOperations) {
+                userQuery = await adminDb.collection('users')
+                    .where('email', '==', normalizedEmail)
+                    .where('type', '==', 'operations')
+                    .get();
+            } else {
+                userQuery = await adminDb.collection('users')
+                    .where('email', '==', normalizedEmail)
+                    .get();
+                // Filter out admin/operations for regular user
+                if (userQuery.docs.length > 1) {
+                    const regularDoc = userQuery.docs.find(d => {
+                        const t = d.data().type;
+                        return t !== 'admin' && t !== 'operations';
+                    });
+                    if (regularDoc) {
+                        userQuery = { empty: false, docs: [regularDoc] };
+                    }
+                }
+            }
 
-        if (userQuery.empty) {
-            return res.status(400).json({ success: false, message: 'Invalid request' });
-        }
+            if (userQuery.empty) {
+                return res.status(400).json({ success: false, message: 'Invalid request' });
+            }
 
-        const userDoc = userQuery.docs[0];
-        const userData = userDoc.data();
-        const userId = userDoc.id;
+            const userDoc = userQuery.docs[0];
+            userData = userDoc.data();
+            userId = userDoc.id;
+        }
 
         // Generate new OTP
         const otpCode = crypto.randomInt(100000, 999999).toString();
-        const otpExpiry = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+        const otpExpiry = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 minutes
 
         await adminDb.collection('users').doc(userId).update({
             loginOtp: otpCode,
@@ -931,7 +1032,7 @@ router.post('/login/operations', otpLimiter, async (req, res) => {
 
         // Generate 6-digit OTP for 2FA
         const otpCode = crypto.randomInt(100000, 999999).toString();
-        const otpExpiry = new Date(Date.now() + 5 * 60 * 1000).toISOString(); // 5 minutes
+        const otpExpiry = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 minutes
 
         // Store OTP in Firestore
         await adminDb.collection('users').doc(userId).update({
@@ -942,7 +1043,7 @@ router.post('/login/operations', otpLimiter, async (req, res) => {
             pendingLoginAgent: userAgent
         });
 
-        console.log(`Operations 2FA OTP generated for: ${email}`);
+        console.log(`Operations 2FA OTP generated for: ${email} (userId: ${userId})`);
 
         // Send OTP email to designated operations verification email - await for delivery status
         const opsOtpEmail = 'sabincn676@gmail.com';
@@ -966,11 +1067,12 @@ router.post('/login/operations', otpLimiter, async (req, res) => {
             console.log('⚠️ RESEND_API_KEY not configured - Operations OTP email not sent');
         }
 
-        // Return requires2FA flag with email delivery status
+        // Return requires2FA flag with userId for reliable OTP verification
         res.json({
             success: true,
             requires2FA: true,
             emailSent,
+            userId,
             message: emailSent
                 ? 'Verification code sent to your email. Please check your inbox.'
                 : 'Verification code generated but email delivery could not be confirmed. Please try resending.',

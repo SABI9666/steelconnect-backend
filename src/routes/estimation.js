@@ -2319,6 +2319,12 @@ router.post('/website-submit', estimationLimiter, async (req, res) => {
         if (!projectTitle || !projectTitle.trim()) {
             return res.status(400).json({ success: false, message: 'Project title is required' });
         }
+        if (!description || !description.trim()) {
+            return res.status(400).json({ success: false, message: 'Scope of estimation is required' });
+        }
+        if (!region || !region.trim()) {
+            return res.status(400).json({ success: false, message: 'Region is required' });
+        }
         if (!files || files.length === 0) {
             return res.status(400).json({ success: false, message: 'At least one file is required' });
         }
@@ -2361,6 +2367,7 @@ router.post('/website-submit', estimationLimiter, async (req, res) => {
             name: name ? name.trim() : '',
             projectTitle: projectTitle.trim(),
             description: description ? description.trim() : '',
+            scopeOfEstimation: description ? description.trim() : '',
             projectType: projectType || '',
             region: region || '',
             totalArea: totalArea || '',

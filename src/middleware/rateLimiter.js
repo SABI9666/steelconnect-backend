@@ -97,11 +97,19 @@ export const generalLimiter = createRateLimiter({
     message: 'Too many requests. Please slow down.'
 });
 
-// Auth endpoints: 20 requests per minute (prevent brute force)
+// Auth endpoints: 40 requests per minute (prevent brute force while allowing normal 2FA flow)
 export const authLimiter = createRateLimiter({
     windowMs: 60_000,
-    max: 20,
+    max: 40,
     message: 'Too many authentication attempts. Please wait before trying again.',
+    skipFailedRequests: false
+});
+
+// OTP-specific limiter: 10 OTP sends per 5 minutes per IP (prevent OTP spam)
+export const otpLimiter = createRateLimiter({
+    windowMs: 5 * 60_000,
+    max: 10,
+    message: 'Too many verification code requests. Please wait before requesting another code.',
     skipFailedRequests: false
 });
 
@@ -151,6 +159,7 @@ export default {
     createRateLimiter,
     generalLimiter,
     authLimiter,
+    otpLimiter,
     uploadLimiter,
     estimationLimiter,
     websiteEstimationLimiter,

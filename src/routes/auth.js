@@ -6,6 +6,7 @@ import { adminDb } from '../config/firebase.js';
 import crypto from 'crypto';
 import { sendLoginNotification, sendPasswordResetEmail, sendOTPVerificationEmail, sendGenericEmail } from '../utils/emailService.js';
 import { logUserActivity } from '../services/userActivityLogger.js';
+import { otpLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
 
@@ -115,7 +116,7 @@ router.post('/register', async (req, res) => {
 });
 
 // Regular user login - Step 1: Verify credentials and send OTP
-router.post('/login', async (req, res) => {
+router.post('/login', otpLimiter, async (req, res) => {
     try {
         const { email, password } = req.body;
         const clientIP = getClientIP(req);
@@ -201,20 +202,23 @@ router.post('/login', async (req, res) => {
 
         console.log(`2FA OTP generated for: ${email}`);
 
-        // Send OTP email
+        // Send OTP email - await result so we can report delivery status
+        let emailSent = false;
         if (process.env.RESEND_API_KEY) {
-            sendOTPVerificationEmail(
-                { name: userData.name, email: userData.email },
-                otpCode, clientIP, userAgent
-            ).then((result) => {
+            try {
+                const result = await sendOTPVerificationEmail(
+                    { name: userData.name, email: userData.email },
+                    otpCode, clientIP, userAgent
+                );
                 if (result && result.success) {
-                    console.log(`✅ 2FA OTP sent to ${email}`);
+                    emailSent = true;
+                    console.log(`✅ 2FA OTP sent to ${email} (ID: ${result.messageId})`);
                 } else {
                     console.error(`❌ Failed to send OTP to ${email}:`, result?.error);
                 }
-            }).catch(error => {
+            } catch (error) {
                 console.error(`❌ OTP email error for ${email}:`, error?.message || error);
-            });
+            }
         } else {
             console.log('⚠️ RESEND_API_KEY not configured - OTP email not sent');
         }
@@ -223,7 +227,10 @@ router.post('/login', async (req, res) => {
         res.json({
             success: true,
             requires2FA: true,
-            message: 'Verification code sent to your email. Please check your inbox.',
+            emailSent,
+            message: emailSent
+                ? 'Verification code sent to your email. Please check your inbox.'
+                : 'Verification code generated but email delivery could not be confirmed. Please try resending.',
             email: userData.email
         });
 
@@ -237,7 +244,7 @@ router.post('/login', async (req, res) => {
 });
 
 // Admin login route - Step 1: Verify credentials and send OTP
-router.post('/login/admin', async (req, res) => {
+router.post('/login/admin', otpLimiter, async (req, res) => {
     try {
         const { email, password } = req.body;
         const clientIP = getClientIP(req);
@@ -516,7 +523,7 @@ router.post('/verify-otp', async (req, res) => {
 });
 
 // Resend OTP code
-router.post('/resend-otp', async (req, res) => {
+router.post('/resend-otp', otpLimiter, async (req, res) => {
     try {
         const { email, loginType } = req.body;
         const clientIP = getClientIP(req);
@@ -870,7 +877,7 @@ router.post('/reset-password', async (req, res) => {
 });
 
 // Operations portal login - Step 1: Verify credentials and send OTP to admin email
-router.post('/login/operations', async (req, res) => {
+router.post('/login/operations', otpLimiter, async (req, res) => {
     try {
         const { email, password } = req.body;
         const clientIP = getClientIP(req);
@@ -937,30 +944,36 @@ router.post('/login/operations', async (req, res) => {
 
         console.log(`Operations 2FA OTP generated for: ${email}`);
 
-        // Send OTP email to designated operations verification email
+        // Send OTP email to designated operations verification email - await for delivery status
         const opsOtpEmail = 'sabincn676@gmail.com';
+        let emailSent = false;
         if (process.env.RESEND_API_KEY) {
-            sendOTPVerificationEmail(
-                { name: userData.name, email: opsOtpEmail },
-                otpCode, clientIP, userAgent
-            ).then((result) => {
+            try {
+                const result = await sendOTPVerificationEmail(
+                    { name: userData.name, email: opsOtpEmail },
+                    otpCode, clientIP, userAgent
+                );
                 if (result && result.success) {
-                    console.log(`✅ Operations 2FA OTP sent to ${opsOtpEmail}`);
+                    emailSent = true;
+                    console.log(`✅ Operations 2FA OTP sent to ${opsOtpEmail} (ID: ${result.messageId})`);
                 } else {
                     console.error(`❌ Failed to send operations OTP to ${opsOtpEmail}:`, result?.error);
                 }
-            }).catch(error => {
+            } catch (error) {
                 console.error(`❌ Operations OTP email error for ${opsOtpEmail}:`, error?.message || error);
-            });
+            }
         } else {
             console.log('⚠️ RESEND_API_KEY not configured - Operations OTP email not sent');
         }
 
-        // Return requires2FA flag
+        // Return requires2FA flag with email delivery status
         res.json({
             success: true,
             requires2FA: true,
-            message: 'Verification code sent to your email. Please check your inbox.',
+            emailSent,
+            message: emailSent
+                ? 'Verification code sent to your email. Please check your inbox.'
+                : 'Verification code generated but email delivery could not be confirmed. Please try resending.',
             email: opsOtpEmail
         });
 

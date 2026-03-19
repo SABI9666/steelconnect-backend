@@ -120,10 +120,12 @@ export const uploadLimiter = createRateLimiter({
     message: 'Upload rate limit exceeded. Please wait before uploading more files.'
 });
 
-// AI estimation: 5 per minute (expensive operation - for authenticated AI endpoints)
+// AI estimation: 15 per minute per user (covers full flow: questions + generate + submit)
+// Keyed by authenticated userId to avoid shared IP issues behind proxies
 export const estimationLimiter = createRateLimiter({
     windowMs: 60_000,
-    max: 5,
+    max: 15,
+    keyGenerator: (req) => req.user?.userId || req.ip || 'unknown',
     message: 'AI estimation rate limit exceeded. Please wait before submitting another estimation.'
 });
 

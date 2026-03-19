@@ -591,7 +591,7 @@ router.get('/:estimationId/details', authenticateToken, async (req, res) => {
     const data = estimationDoc.data();
 
     // Check access permission
-    const isOwner = data.contractorEmail === req.user.email || data.contractorId === req.user.uid;
+    const isOwner = data.contractorEmail === req.user.email || data.contractorId === req.user.userId;
     const isAdmin = req.user.type === 'admin';
 
     if (!isOwner && !isAdmin) {
@@ -664,7 +664,7 @@ router.get('/:estimationId/result/download', authenticateToken, async (req, res)
     const data = estimationDoc.data();
 
     // Verify access
-    const isOwner = data.contractorEmail === req.user.email || data.contractorId === req.user.uid;
+    const isOwner = data.contractorEmail === req.user.email || data.contractorId === req.user.userId;
     const isAdmin = req.user.type === 'admin';
 
     if (!isOwner && !isAdmin) {
@@ -694,7 +694,7 @@ router.get('/:estimationId/result/download', authenticateToken, async (req, res)
     try {
       // Generate download links for all result files
       const downloadLinks = await Promise.all(allResultFiles.map(async (rf) => {
-        const dlInfo = await createSecureDownloadLink(rf.path, req.user.email, req.user.uid, 15);
+        const dlInfo = await createSecureDownloadLink(rf.path, req.user.email, req.user.userId, 15);
         return {
           downloadUrl: dlInfo.downloadUrl,
           filename: dlInfo.filename || rf.originalname || rf.name || 'result_file',
@@ -763,7 +763,7 @@ router.get('/:estimationId/result', authenticateToken, async (req, res) => {
     const data = estimationDoc.data();
 
     // Verify access
-    const isOwner = data.contractorEmail === req.user.email || data.contractorId === req.user.uid;
+    const isOwner = data.contractorEmail === req.user.email || data.contractorId === req.user.userId;
     const isAdmin = req.user.type === 'admin';
 
     if (!isOwner && !isAdmin) {
@@ -786,7 +786,7 @@ router.get('/:estimationId/result', authenticateToken, async (req, res) => {
       const hasAccess = await validateContractorAccess(
         data.resultFile.path,
         req.user.email,
-        req.user.uid
+        req.user.userId
       );
 
       if (!hasAccess && !isAdmin) {
@@ -841,7 +841,7 @@ router.get('/:estimationId/result-info', authenticateToken, async (req, res) => 
     const data = estimationDoc.data();
     
     // Check access
-    const isOwner = data.contractorEmail === req.user.email || data.contractorId === req.user.uid;
+    const isOwner = data.contractorEmail === req.user.email || data.contractorId === req.user.userId;
     const isAdmin = req.user.type === 'admin';
 
     if (!isOwner && !isAdmin) {
@@ -1160,7 +1160,7 @@ router.get('/:estimationId/files/:fileIndex/download', authenticateToken, async 
       const downloadInfo = await createSecureDownloadLink(
         filePath,
         req.user.email,
-        req.user.uid,
+        req.user.userId,
         15 // 15 minutes expiration
       );
       
@@ -1247,7 +1247,7 @@ router.get('/:estimationId/files/:fileName/download', authenticateToken, async (
       const hasAccess = await validateContractorAccess(
         filePath,
         req.user.email,
-        req.user.uid
+        req.user.userId
       );
 
       if (!hasAccess && !isAdmin) {

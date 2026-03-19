@@ -1760,6 +1760,9 @@ router.post('/ai-estimate', estimationLimiter, authenticateToken, async (req, re
         const estimationDoc = {
             projectTitle,
             description,
+            projectType: projectType || '',
+            region: region || '',
+            totalArea: totalArea || '',
             contractorName: contractorName || req.user.name,
             contractorEmail: contractorEmail || req.user.email,
             contractorId: req.user.userId,
@@ -2238,6 +2241,11 @@ router.post('/ai/generate', estimationLimiter, authenticateToken, async (req, re
                         status: 'completed',
                         updatedAt: new Date().toISOString()
                     };
+                    // Backfill projectType/region if missing in existing doc
+                    const existingData = doc.data();
+                    if (!existingData.projectType && projectType) updateData.projectType = projectType;
+                    if (!existingData.region && region) updateData.region = region;
+                    if (!existingData.totalArea && totalArea) updateData.totalArea = totalArea;
                     if (uploadedFiles.length > 0) {
                         updateData.uploadedFiles = uploadedFiles;
                         updateData.fileCount = uploadedFiles.length;
@@ -2252,6 +2260,9 @@ router.post('/ai/generate', estimationLimiter, authenticateToken, async (req, re
                     projectTitle,
                     description: description || '',
                     scopeOfEstimation: description || '',
+                    projectType: projectType || '',
+                    region: region || '',
+                    totalArea: totalArea || '',
                     contractorName: req.user.name || '',
                     contractorEmail: req.user.email,
                     contractorId: req.user.userId,

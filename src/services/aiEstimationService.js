@@ -404,18 +404,17 @@ ${c.materialSpecs?.concreteGrades?.length > 0 ? `- Concrete grades: ${c.material
 IMPORTANT: Since drawing data was auto-detected, generate CONFIRMATION questions with "defaultValue" pre-filled from the detected data. For example, if area "9,600 SF" was detected, set defaultValue: "9,600 sq ft" on the area question. Ask the user to CONFIRM or CORRECT the auto-detected values rather than asking open-ended questions.`;
         }
 
-        const prompt = `Based on this project information, generate targeted follow-up questions needed to produce an accurate construction cost estimate.
+        const prompt = `Based on this project information, generate targeted follow-up questions needed to produce an accurate construction cost estimate across all applicable trades.
 
 PROJECT INFO:
 - Title: ${projectInfo.projectTitle}
-- Description: ${projectInfo.description}
-- Design Standard: ${projectInfo.designStandard || 'Not specified'}
+- Scope of Work: ${projectInfo.description}
 - Project Type: ${projectInfo.projectType || 'Not specified'}
 - Region/Location: ${projectInfo.region || 'Not specified'}
 - Files uploaded: ${projectInfo.fileCount} files (${projectInfo.fileNames?.join(', ') || 'N/A'})
 ${measurementContext}
 
-NOTE: Analyze the uploaded file names carefully. If DWG/CAD files are present, the user has construction drawings - ask questions about structural details, member sizes, connection types, and specifications that would be found in those drawings. Always ask about total project area/dimensions since this is critical for estimation.
+NOTE: Analyze the uploaded file names carefully. If DWG/CAD files are present, the user has construction drawings - ask questions about structural details, member sizes, connection types, and specifications that would be found in those drawings. Always ask about total project area/dimensions since this is critical for estimation. Consider ALL construction trades mentioned in the scope: Structural, MEP (Mechanical/HVAC, Electrical, Plumbing), Civil, Architectural, Fire Fighting, etc.
 
 Generate 8-12 critical questions grouped into categories. Each question should have options where applicable to make it easy for the user.
 
@@ -777,13 +776,12 @@ YOUR ACCURACY ON READING THESE DRAWINGS DIRECTLY DETERMINES THE QUALITY OF THE E
         }
     }
 
-    return `\n\nGenerate a PRECISE, REALISTIC construction cost estimate. Extract scope, dimensions, and specs directly from the provided drawings/designs.
+    return `\n\nGenerate a PRECISE, REALISTIC construction cost estimate. Extract scope, dimensions, and specs directly from the provided drawings/designs. Cover ALL trades mentioned in the scope of work.
 ${drawingAnalysisInstruction}
 
 PROJECT INFORMATION:
 - Title: ${projectInfo.projectTitle}
-- Description: ${projectInfo.description}
-- Design Standard: ${projectInfo.designStandard || 'Not specified'}
+- Scope of Work: ${projectInfo.description}
 - Project Type: ${projectInfo.projectType || 'Not specified'}
 - Region/Location: ${projectInfo.region || 'Not specified'}
 - Total Area: ${projectInfo.totalArea || 'Not specified'}

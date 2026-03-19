@@ -1725,9 +1725,13 @@ router.get('/estimations/:estimationId/download/:fileIndex', async (req, res) =>
 });
 
 // UPDATED: Secure result upload with contractor metadata and email notification
-router.post('/estimations/:estimationId/result', upload.single('resultFile'), async (req, res) => {
+// Accepts both 'resultFile' (single, legacy) and 'resultFiles' (multiple) field names
+router.post('/estimations/:estimationId/result', upload.array('resultFiles', 20), async (req, res) => {
     try {
-        if (!req.file) return res.status(400).json({ success: false, message: 'Result file is required' });
+        // Support both single legacy field and multiple files field
+        const files = req.files && req.files.length > 0 ? req.files : (req.file ? [req.file] : []);
+        if (files.length === 0) return res.status(400).json({ success: false, message: 'At least one result file is required' });
+
         // Get estimation details first
         const estDoc = await adminDb.collection('estimations').doc(req.params.estimationId).get();
         if (!estDoc.exists) {
@@ -1736,34 +1740,38 @@ router.post('/estimations/:estimationId/result', upload.single('resultFile'), as
 
         const estData = estDoc.data();
 
-        // Create secure file path
-        const filePath = `estimation-results/${req.params.estimationId}/${req.file.originalname}`;
+        // Upload all result files
+        const resultFilesData = [];
+        for (const file of files) {
+            const filePath = `estimation-results/${req.params.estimationId}/${Date.now()}_${file.originalname}`;
 
-        // Add contractor metadata for secure access control
-        const uploadMetadata = {
-            contractorEmail: estData.contractorEmail,
-            contractorId: estData.contractorId,
-            estimationId: req.params.estimationId,
-            uploadedBy: req.user.email,
-            fileType: 'estimation_result'
-        };
+            const uploadMetadata = {
+                contractorEmail: estData.contractorEmail,
+                contractorId: estData.contractorId,
+                estimationId: req.params.estimationId,
+                uploadedBy: req.user.email,
+                fileType: 'estimation_result'
+            };
 
-        console.log(`[ADMIN-UPLOAD] Uploading result for estimation ${req.params.estimationId} with metadata:`, uploadMetadata);
+            console.log(`[ADMIN-UPLOAD] Uploading result file "${file.originalname}" for estimation ${req.params.estimationId}`);
 
-        // Use the updated secure upload function
-        const uploadedFile = await uploadToFirebaseStorage(req.file, filePath, uploadMetadata);
-        const resultFileData = {
-            path: filePath,
-            url: uploadedFile.url,
-            name: req.file.originalname,
-            originalname: req.file.originalname,
-            size: req.file.size,
-            mimetype: req.file.mimetype,
-            uploadedAt: new Date().toISOString(),
-            uploadedBy: req.user.email
-        };
+            const uploadedFile = await uploadToFirebaseStorage(file, filePath, uploadMetadata);
+            resultFilesData.push({
+                path: filePath,
+                url: uploadedFile.url,
+                name: file.originalname,
+                originalname: file.originalname,
+                size: file.size,
+                mimetype: file.mimetype,
+                uploadedAt: new Date().toISOString(),
+                uploadedBy: req.user.email
+            });
+        }
+
+        // Store first file as resultFile for backward compat, all files in resultFiles array
         const updateData = {
-            resultFile: resultFileData,
+            resultFile: resultFilesData[0],
+            resultFiles: resultFilesData,
             resultType: 'manual-upload',
             status: 'completed',
             completedAt: new Date().toISOString(),
@@ -1771,7 +1779,7 @@ router.post('/estimations/:estimationId/result', upload.single('resultFile'), as
         };
         await adminDb.collection('estimations').doc(req.params.estimationId).update(updateData);
 
-        console.log(`[ADMIN-UPLOAD] Result uploaded successfully for estimation ${req.params.estimationId}`);
+        console.log(`[ADMIN-UPLOAD] ${resultFilesData.length} result file(s) uploaded for estimation ${req.params.estimationId}`);
 
         // Get contractor details for email
         let contractor = null;
@@ -1813,12 +1821,11 @@ router.post('/estimations/:estimationId/result', upload.single('resultFile'), as
                 createdAt: estData.createdAt
             };
 
-            sendEstimationResultNotification(contractor, estimationData, resultFileData)
+            sendEstimationResultNotification(contractor, estimationData, resultFilesData[0])
                 .then((result) => {
                     if (result && result.success) {
                         console.log(`✅ Estimation result notification sent successfully to ${contractor.email}`);
 
-                        // Log email sent in the estimation document
                         adminDb.collection('estimations').doc(req.params.estimationId).update({
                             emailSent: true,
                             emailSentAt: new Date().toISOString(),
@@ -1837,7 +1844,7 @@ router.post('/estimations/:estimationId/result', upload.single('resultFile'), as
 
         res.json({
             success: true,
-            message: 'Estimation result uploaded successfully and notification sent to contractor'
+            message: `${resultFilesData.length} result file(s) uploaded successfully and notification sent to contractor`
         });
     } catch (error) {
         console.error("[ADMIN-UPLOAD] Upload Estimation Result Error:", error);
@@ -1845,7 +1852,7 @@ router.post('/estimations/:estimationId/result', upload.single('resultFile'), as
     }
 });
 
-// Download estimation result file (generates signed URL on-demand)
+// Download estimation result file(s) (generates signed URLs on-demand)
 router.get('/estimations/:estimationId/result/download', async (req, res) => {
     try {
         const estDoc = await adminDb.collection('estimations').doc(req.params.estimationId).get();
@@ -1853,22 +1860,34 @@ router.get('/estimations/:estimationId/result/download', async (req, res) => {
 
         const data = estDoc.data();
 
-        if (!data.resultFile || !data.resultFile.path) {
+        // Support both single resultFile and multiple resultFiles
+        const allResultFiles = data.resultFiles || (data.resultFile ? [data.resultFile] : []);
+        if (allResultFiles.length === 0 || !allResultFiles[0].path) {
             return res.status(404).json({ success: false, message: 'Result file not available yet' });
         }
 
         try {
-            const signedUrl = await generateSignedUrl(data.resultFile.path, 15, 'inline');
+            // Generate signed URLs for all result files
+            const fileLinks = await Promise.all(allResultFiles.map(async (rf) => {
+                const signedUrl = await generateSignedUrl(rf.path, 15, 'inline');
+                return {
+                    url: signedUrl,
+                    downloadUrl: signedUrl,
+                    name: rf.name || rf.originalname || 'estimation_result',
+                    filename: rf.name || rf.originalname || 'estimation_result',
+                    size: rf.size,
+                    fileSizeMB: rf.size ? (rf.size / (1024 * 1024)).toFixed(2) : null,
+                    mimetype: rf.mimetype
+                };
+            }));
 
             res.json({
                 success: true,
-                file: {
-                    url: signedUrl,
-                    name: data.resultFile.name || data.resultFile.originalname || 'estimation_result',
-                    downloadUrl: signedUrl,
-                    size: data.resultFile.size,
-                    mimetype: data.resultFile.mimetype
-                }
+                // Single file backward compat
+                file: fileLinks[0],
+                // All files
+                resultFiles: fileLinks,
+                downloadUrl: fileLinks[0].url
             });
         } catch (error) {
             console.error("Error generating signed URL for result file:", error);

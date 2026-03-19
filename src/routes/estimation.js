@@ -510,12 +510,16 @@ router.get('/contractor/:contractorEmail', authenticateToken, async (req, res) =
         projectTitle: data.projectTitle,
         projectDescription: data.description || data.projectDescription,
         description: data.description,
+        projectType: data.projectType || '',
+        region: data.region || '',
+        totalArea: data.totalArea || '',
         contractorName: data.contractorName,
         contractorEmail: data.contractorEmail,
         contractorId: data.contractorId,
         status: data.status || 'pending',
         uploadedFiles: data.uploadedFiles || [],
         resultFile: data.resultFile || null,
+        resultFiles: data.resultFiles || [],
         resultType: data.resultType || null,
         estimatedAmount: data.estimatedAmount || null,
         aiEstimate: data.aiEstimate || null,
@@ -604,12 +608,16 @@ router.get('/:estimationId/details', authenticateToken, async (req, res) => {
       projectTitle: data.projectTitle,
       projectDescription: data.description || data.projectDescription,
       description: data.description,
+      projectType: data.projectType || '',
+      region: data.region || '',
+      totalArea: data.totalArea || '',
       contractorName: data.contractorName,
       contractorEmail: data.contractorEmail,
       contractorId: data.contractorId,
       status: data.status || 'pending',
       uploadedFiles: data.uploadedFiles || [],
       resultFile: data.resultFile || null,
+      resultFiles: data.resultFiles || [],
       estimatedAmount: data.estimatedAmount || null,
       notes: data.notes || '',
       createdAt: data.createdAt,
@@ -621,7 +629,7 @@ router.get('/:estimationId/details', authenticateToken, async (req, res) => {
       resultAvailable: !!(data.resultFile && data.resultFile.path && data.status === 'completed'),
       canDownloadResult: !!(data.resultFile && data.resultFile.path && data.status === 'completed'),
       fileCount: data.uploadedFiles ? data.uploadedFiles.length : 0,
-      totalFileSize: data.uploadedFiles ? 
+      totalFileSize: data.uploadedFiles ?
         data.uploadedFiles.reduce((sum, file) => sum + (file.size || 0), 0) : 0
     };
 
@@ -1341,6 +1349,39 @@ router.get('/:estimationId/files/:fileIndex/url', authenticateToken, async (req,
   } catch (error) {
     console.error('[FILE-URL] Error:', error);
     res.status(500).json({ success: false, message: 'Error generating file URL' });
+  }
+});
+
+// Update estimation details (Admin only) - for adding missing fields to old estimations
+router.put('/:estimationId', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const { estimationId } = req.params;
+    const { projectTitle, projectType, region, description, notes } = req.body;
+
+    const estimationDoc = await adminDb.collection('estimations').doc(estimationId).get();
+    if (!estimationDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Estimation not found' });
+    }
+
+    const updateData = { updatedAt: new Date().toISOString() };
+    if (projectTitle !== undefined) updateData.projectTitle = projectTitle.trim();
+    if (projectType !== undefined) updateData.projectType = projectType.trim();
+    if (region !== undefined) updateData.region = region.trim();
+    if (description !== undefined) updateData.description = description.trim();
+    if (notes !== undefined) updateData.notes = notes.trim();
+
+    await adminDb.collection('estimations').doc(estimationId).update(updateData);
+
+    console.log(`[ADMIN] Updated estimation ${estimationId} by ${req.user.email}:`, Object.keys(updateData));
+
+    res.json({
+      success: true,
+      message: 'Estimation updated successfully',
+      data: updateData
+    });
+  } catch (error) {
+    console.error('[ADMIN] Error updating estimation:', error);
+    res.status(500).json({ success: false, message: 'Error updating estimation', error: error.message });
   }
 });
 

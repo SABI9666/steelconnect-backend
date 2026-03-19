@@ -53,16 +53,23 @@ const handleMulterError = (err, req, res, next) => {
 // Submit estimation request (for contractors) - supports multiple files
 router.post('/submit', authenticateToken, upload.array('files', 20), handleMulterError, async (req, res) => {
     try {
-        const { projectTitle, description, designStandard, projectType, region } = req.body;
+        const { projectTitle, description, projectType, region } = req.body;
         const files = req.files || [];
         const file = files[0] || req.file; // backwards compat for single file
         const userId = req.user.userId;
 
         // Validate required fields
         if (!projectTitle || !description) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'Project title and description are required' 
+            return res.status(400).json({
+                success: false,
+                message: 'Project title and scope of estimation are required'
+            });
+        }
+
+        if (!region || !region.trim()) {
+            return res.status(400).json({
+                success: false,
+                message: 'Project location is required'
             });
         }
 
@@ -125,9 +132,9 @@ router.post('/submit', authenticateToken, upload.array('files', 20), handleMulte
             contractorName: req.user.name || '',
             projectTitle: projectTitle.trim(),
             description: description.trim(),
-            designStandard: designStandard || '',
+            scopeOfEstimation: description.trim(),
             projectType: projectType || '',
-            region: region || '',
+            region: region.trim(),
             uploadedFiles,
             uploadedFile: uploadedFiles[0] || null, // backwards compat
             fileCount: uploadedFiles.length,
@@ -171,9 +178,8 @@ router.post('/submit', authenticateToken, upload.array('files', 20), handleMulte
                     {
                         projectTitle: projectTitle.trim(),
                         description: description.trim(),
-                        designStandard: designStandard || '',
                         projectType: projectType || '',
-                        region: region || ''
+                        region: region.trim()
                     },
                     {},
                     fileNames,

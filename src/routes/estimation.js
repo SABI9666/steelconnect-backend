@@ -326,14 +326,21 @@ router.post('/contractor/submit', estimationLimiter, authenticateToken, isContra
     console.log('[CONTRACTOR] Estimation submission by:', req.user?.email);
     console.log('[CONTRACTOR] Files received:', req.files?.length || 0);
 
-    const { projectTitle, description, contractorName, contractorEmail, designStandard, projectType, region, totalArea, fileNames } = req.body;
+    const { projectTitle, description, contractorName, contractorEmail, projectType, region, totalArea, fileNames } = req.body;
     const files = req.files;
 
     // Validate required fields
     if (!projectTitle || !description) {
       return res.status(400).json({
         success: false,
-        message: 'Project title and description are required'
+        message: 'Project title and scope of estimation are required'
+      });
+    }
+
+    if (!region || !region.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Project location is required'
       });
     }
 
@@ -405,10 +412,10 @@ router.post('/contractor/submit', estimationLimiter, authenticateToken, isContra
     const estimationData = {
       projectTitle,
       description,
+      scopeOfEstimation: description,
       totalArea: totalArea || '',
-      designStandard: designStandard || '',
       projectType: projectType || '',
-      region: region || '',
+      region: region.trim(),
       contractorName: contractorName || req.user.name,
       contractorEmail: contractorEmail || req.user.email,
       contractorId: req.user.userId,
@@ -2020,15 +2027,15 @@ function generateFallbackEstimation(q, title, description) {
 // POST /estimation/ai/questions - Generate smart questionnaire based on project info
 router.post('/ai/questions', estimationLimiter, authenticateToken, async (req, res) => {
     try {
-        const { projectTitle, description, designStandard, projectType, region, totalArea, fileCount, fileNames } = req.body;
+        const { projectTitle, description, projectType, region, totalArea, fileCount, fileNames } = req.body;
 
         if (!projectTitle || !description) {
-            return res.status(400).json({ success: false, message: 'Project title and description are required' });
+            return res.status(400).json({ success: false, message: 'Project title and scope of estimation are required' });
         }
 
         console.log(`[AI-ESTIMATION] Generating questions for "${projectTitle}" by ${req.user.email}`);
 
-        const questions = await generateSmartQuestions({ projectTitle, description, designStandard, projectType, region, totalArea, fileCount, fileNames });
+        const questions = await generateSmartQuestions({ projectTitle, description, projectType, region, totalArea, fileCount, fileNames });
 
         res.json({ success: true, data: questions });
     } catch (error) {
@@ -2063,7 +2070,7 @@ router.post('/ai/generate', estimationLimiter, authenticateToken, async (req, re
             fileUploadWarning = `File upload skipped: ${uploadErr.message}`;
         }
 
-        const { estimationId, projectTitle, description, designStandard, projectType, region, totalArea, answers, fileNames, estimationTier } = req.body;
+        const { estimationId, projectTitle, description, projectType, region, totalArea, answers, fileNames, estimationTier } = req.body;
 
         // Parse answers if sent as string (FormData sends strings)
         let parsedAnswers = answers;
@@ -2116,7 +2123,7 @@ router.post('/ai/generate', estimationLimiter, authenticateToken, async (req, re
         }
 
         // Route estimation based on tier selection
-        const projectInfoObj = { projectTitle, description, designStandard, projectType, region, totalArea };
+        const projectInfoObj = { projectTitle, description, projectType, region, totalArea };
         const fileNamesArr = parsedFileNames || (uploadedFiles.length > 0 ? uploadedFiles.map(f => f.name) : []);
         const fileBuffersArr = files || [];
         let estimate;
@@ -2184,7 +2191,7 @@ router.post('/ai/generate', estimationLimiter, authenticateToken, async (req, re
                 const estimationDoc = {
                     projectTitle,
                     description: description || '',
-                    designStandard: designStandard || '',
+                    scopeOfEstimation: description || '',
                     contractorName: req.user.name || '',
                     contractorEmail: req.user.email,
                     contractorId: req.user.userId,

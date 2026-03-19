@@ -1972,8 +1972,7 @@ router.post('/estimations/:estimationId/retry-ai', async (req, res) => {
         // Generate AI estimate in background (don't await in request handler)
         const projectInfo = {
             projectTitle: estData.projectTitle || estData.projectName || '',
-            description: estData.description || '',
-            designStandard: estData.designStandard || '',
+            description: estData.description || estData.scopeOfEstimation || '',
             projectType: estData.projectType || '',
             region: estData.region || '',
             totalArea: estData.totalArea || ''

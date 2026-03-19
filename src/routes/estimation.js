@@ -1353,7 +1353,8 @@ router.get('/:estimationId/files/:fileIndex/url', authenticateToken, async (req,
 });
 
 // Update estimation details (Admin only) - for adding missing fields to old estimations
-router.put('/:estimationId', authenticateToken, isAdmin, async (req, res) => {
+// Update estimation details (contractor can edit own, admin can edit any)
+router.put('/:estimationId', authenticateToken, async (req, res) => {
   try {
     const { estimationId } = req.params;
     const { projectTitle, projectType, region, description, notes } = req.body;
@@ -1363,16 +1364,29 @@ router.put('/:estimationId', authenticateToken, isAdmin, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Estimation not found' });
     }
 
+    const estData = estimationDoc.data();
+    const isAdmin = req.user.type === 'admin';
+    const isOwner = estData.contractorEmail === req.user.email || estData.contractorId === req.user.userId;
+
+    if (!isAdmin && !isOwner) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    // Contractors can only edit pending estimations
+    if (!isAdmin && estData.status !== 'pending') {
+      return res.status(400).json({ success: false, message: 'Can only edit pending estimations' });
+    }
+
     const updateData = { updatedAt: new Date().toISOString() };
     if (projectTitle !== undefined) updateData.projectTitle = projectTitle.trim();
     if (projectType !== undefined) updateData.projectType = projectType.trim();
     if (region !== undefined) updateData.region = region.trim();
-    if (description !== undefined) updateData.description = description.trim();
-    if (notes !== undefined) updateData.notes = notes.trim();
+    if (description !== undefined) { updateData.description = description.trim(); updateData.scopeOfEstimation = description.trim(); }
+    if (isAdmin && notes !== undefined) updateData.notes = notes.trim();
 
     await adminDb.collection('estimations').doc(estimationId).update(updateData);
 
-    console.log(`[ADMIN] Updated estimation ${estimationId} by ${req.user.email}:`, Object.keys(updateData));
+    console.log(`[UPDATE] Estimation ${estimationId} updated by ${req.user.email} (${isAdmin ? 'admin' : 'contractor'}):`, Object.keys(updateData));
 
     res.json({
       success: true,
@@ -1380,8 +1394,114 @@ router.put('/:estimationId', authenticateToken, isAdmin, async (req, res) => {
       data: updateData
     });
   } catch (error) {
-    console.error('[ADMIN] Error updating estimation:', error);
+    console.error('[UPDATE] Error updating estimation:', error);
     res.status(500).json({ success: false, message: 'Error updating estimation', error: error.message });
+  }
+});
+
+// Add additional files to an existing estimation (contractor only, pending status)
+router.post('/:estimationId/add-files', authenticateToken, async (req, res) => {
+  try {
+    await safeEstimationUpload(req, res);
+    const { estimationId } = req.params;
+    const files = req.files;
+
+    if (!files || files.length === 0) {
+      return res.status(400).json({ success: false, message: 'No files provided' });
+    }
+
+    const estimationDoc = await adminDb.collection('estimations').doc(estimationId).get();
+    if (!estimationDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Estimation not found' });
+    }
+
+    const estData = estimationDoc.data();
+    const isOwner = estData.contractorEmail === req.user.email || estData.contractorId === req.user.userId;
+    if (!isOwner && req.user.type !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+    if (estData.status !== 'pending') {
+      return res.status(400).json({ success: false, message: 'Can only add files to pending estimations' });
+    }
+
+    // Upload new files
+    const uploadedFiles = await Promise.all(files.map(async (file, index) => {
+      const timestamp = Date.now();
+      const fileName = timestamp + '_' + index + '_' + file.originalname;
+      const filePath = 'estimation-files/' + req.user.userId + '/' + fileName;
+      const metadata = { contractorEmail: req.user.email, contractorId: req.user.userId, uploadedBy: req.user.userId, fileIndex: index, uploadBatch: timestamp };
+      return uploadToFirebaseStorage(file, filePath, metadata);
+    }));
+
+    // Merge with existing files
+    const existingFiles = estData.uploadedFiles || [];
+    const allFiles = existingFiles.concat(uploadedFiles);
+
+    await adminDb.collection('estimations').doc(estimationId).update({
+      uploadedFiles: allFiles,
+      fileCount: allFiles.length,
+      totalFileSize: allFiles.reduce((sum, f) => sum + (f.size || 0), 0),
+      updatedAt: new Date().toISOString()
+    });
+
+    console.log('[ADD-FILES] Added ' + uploadedFiles.length + ' files to estimation ' + estimationId);
+
+    res.json({
+      success: true,
+      message: uploadedFiles.length + ' file(s) added successfully',
+      data: { fileCount: allFiles.length, addedFiles: uploadedFiles.length }
+    });
+  } catch (error) {
+    console.error('[ADD-FILES] Error:', error);
+    res.status(500).json({ success: false, message: 'Error adding files', error: error.message });
+  }
+});
+
+// Remove a file from estimation (contractor only, pending status)
+router.delete('/:estimationId/files/:fileIndex', authenticateToken, async (req, res) => {
+  try {
+    const { estimationId, fileIndex } = req.params;
+    const idx = parseInt(fileIndex);
+
+    const estimationDoc = await adminDb.collection('estimations').doc(estimationId).get();
+    if (!estimationDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Estimation not found' });
+    }
+
+    const estData = estimationDoc.data();
+    const isOwner = estData.contractorEmail === req.user.email || estData.contractorId === req.user.userId;
+    if (!isOwner && req.user.type !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+    if (estData.status !== 'pending') {
+      return res.status(400).json({ success: false, message: 'Can only remove files from pending estimations' });
+    }
+
+    const files = estData.uploadedFiles || [];
+    if (idx < 0 || idx >= files.length) {
+      return res.status(400).json({ success: false, message: 'Invalid file index' });
+    }
+
+    // Try to delete from storage
+    try {
+      const fileToDelete = files[idx];
+      if (fileToDelete.path) {
+        await deleteFileFromFirebase(fileToDelete.path);
+      }
+    } catch (delErr) { console.warn('[REMOVE-FILE] Storage delete failed:', delErr.message); }
+
+    files.splice(idx, 1);
+    await adminDb.collection('estimations').doc(estimationId).update({
+      uploadedFiles: files,
+      fileCount: files.length,
+      totalFileSize: files.reduce((sum, f) => sum + (f.size || 0), 0),
+      updatedAt: new Date().toISOString()
+    });
+
+    res.json({ success: true, message: 'File removed', data: { fileCount: files.length } });
+  } catch (error) {
+    console.error('[REMOVE-FILE] Error:', error);
+    res.status(500).json({ success: false, message: 'Error removing file', error: error.message });
   }
 });
 

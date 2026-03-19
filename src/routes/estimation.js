@@ -668,7 +668,8 @@ router.get('/:estimationId/result/download', authenticateToken, async (req, res)
     }
 
     // Check if result exists and estimation is completed
-    if (!data.resultFile || !data.resultFile.path) {
+    const allResultFiles = data.resultFiles || (data.resultFile ? [data.resultFile] : []);
+    if (allResultFiles.length === 0 || !allResultFiles[0].path) {
       return res.status(404).json({
         success: false,
         message: 'Result file not available yet - estimation may still be in progress'
@@ -683,24 +684,33 @@ router.get('/:estimationId/result/download', authenticateToken, async (req, res)
     }
 
     try {
-      // Create secure download link with access validation
-      const downloadInfo = await createSecureDownloadLink(
-        data.resultFile.path,
-        req.user.email,
-        req.user.uid,
-        15 // 15 minutes expiration
-      );
+      // Generate download links for all result files
+      const downloadLinks = await Promise.all(allResultFiles.map(async (rf) => {
+        const dlInfo = await createSecureDownloadLink(rf.path, req.user.email, req.user.uid, 15);
+        return {
+          downloadUrl: dlInfo.downloadUrl,
+          filename: dlInfo.filename || rf.originalname || rf.name || 'result_file',
+          fileSize: rf.size || dlInfo.fileSize,
+          fileSizeMB: rf.size ? (rf.size / (1024 * 1024)).toFixed(2) : null,
+          mimetype: rf.mimetype || 'application/octet-stream',
+          expiresIn: dlInfo.expiresIn,
+          expiresAt: dlInfo.expiresAt
+        };
+      }));
 
-      console.log(`[RESULT-DOWNLOAD] Generated secure download link for estimation ${estimationId}`);
+      console.log(`[RESULT-DOWNLOAD] Generated ${downloadLinks.length} secure download link(s) for estimation ${estimationId}`);
 
       res.json({
         success: true,
-        downloadUrl: downloadInfo.downloadUrl,
-        filename: downloadInfo.filename,
-        expiresIn: downloadInfo.expiresIn,
-        expiresAt: downloadInfo.expiresAt,
-        fileSize: downloadInfo.fileSize,
-        fileSizeMB: downloadInfo.fileSize ? (downloadInfo.fileSize / (1024 * 1024)).toFixed(2) : null,
+        // Backward compat: first file
+        downloadUrl: downloadLinks[0].downloadUrl,
+        filename: downloadLinks[0].filename,
+        expiresIn: downloadLinks[0].expiresIn,
+        expiresAt: downloadLinks[0].expiresAt,
+        fileSize: downloadLinks[0].fileSize,
+        fileSizeMB: downloadLinks[0].fileSizeMB,
+        // All files
+        resultFiles: downloadLinks,
         estimationInfo: {
           id: estimationId,
           projectTitle: data.projectTitle,
@@ -880,22 +890,25 @@ router.get('/:estimationId/result-info', authenticateToken, async (req, res) => 
 });
 
 // Enhanced result upload (Admin only) with secure file handling
-router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('resultFile'), async (req, res) => {
+router.post('/:estimationId/result', authenticateToken, isAdmin, upload.array('resultFiles', 10), async (req, res) => {
   try {
     const { estimationId } = req.params;
     const { amount, notes } = req.body;
-    const file = req.file;
+    const files = req.files || [];
 
-    console.log(`[ADMIN-RESULT-UPLOAD] Admin ${req.user?.email} uploading result for estimation ${estimationId}`);
-    
-    if (!file) {
+    // Backward compat: also check req.file for single upload clients
+    if (files.length === 0 && req.file) files.push(req.file);
+
+    console.log(`[ADMIN-RESULT-UPLOAD] Admin ${req.user?.email} uploading ${files.length} result file(s) for estimation ${estimationId}`);
+
+    if (files.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'Result file is required'
+        message: 'At least one result file is required'
       });
     }
-    
-    // Validate file type (PDF and Excel for results)
+
+    // Validate file types (PDF, Excel, Word, CSV)
     const allowedResultMimes = [
       'application/pdf',
       'application/vnd.ms-excel',
@@ -904,22 +917,22 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       'text/csv'
     ];
-    if (!allowedResultMimes.includes(file.mimetype)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Result file must be a PDF, Excel, Word, or CSV file'
-      });
+    for (const file of files) {
+      if (!allowedResultMimes.includes(file.mimetype)) {
+        return res.status(400).json({
+          success: false,
+          message: `File "${file.originalname}" has invalid type. Allowed: PDF, Excel, Word, CSV.`
+        });
+      }
+      if (file.size > FILE_UPLOAD_CONFIG.maxFileSize) {
+        const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+        return res.status(400).json({
+          success: false,
+          message: `File "${file.originalname}" (${sizeMB}MB) exceeds 50MB limit`
+        });
+      }
     }
 
-    // Check file size
-    if (file.size > FILE_UPLOAD_CONFIG.maxFileSize) {
-      const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
-      return res.status(400).json({
-        success: false,
-        message: `Result file size (${sizeMB}MB) exceeds 50MB limit`
-      });
-    }
-    
     // Check if estimation exists
     const estimationDoc = await adminDb.collection('estimations').doc(estimationId).get();
     if (!estimationDoc.exists) {
@@ -928,13 +941,10 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
         message: 'Estimation not found'
       });
     }
-    
+
     const estData = estimationDoc.data();
-    
-    // Create secure file path with contractor info for access control
-    const filePath = `estimation-results/${estimationId}/${file.originalname}`;
-    
-    // Add contractor metadata for secure access
+
+    // Upload all result files
     const uploadMetadata = {
       contractorEmail: estData.contractorEmail,
       contractorId: estData.contractorId,
@@ -942,18 +952,19 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
       uploadedBy: req.user.email,
       fileType: 'estimation_result'
     };
-    
-    console.log(`[ADMIN-RESULT-UPLOAD] Uploading with metadata:`, uploadMetadata);
-    
-    // Upload result file with security metadata
-    const uploadedFile = await uploadToFirebaseStorage(file, filePath, uploadMetadata);
-    
-    // Update estimation with result
+
+    console.log(`[ADMIN-RESULT-UPLOAD] Uploading ${files.length} file(s) with metadata:`, uploadMetadata);
+
+    const uploadedFiles = await Promise.all(files.map(async (file) => {
+      const filePath = `estimation-results/${estimationId}/${file.originalname}`;
+      const uploaded = await uploadToFirebaseStorage(file, filePath, uploadMetadata);
+      return { ...uploaded, uploadedBy: req.user.email };
+    }));
+
+    // Update estimation - store both resultFile (first file, backward compat) and resultFiles (all)
     const updateData = {
-      resultFile: {
-        ...uploadedFile,
-        uploadedBy: req.user.email
-      },
+      resultFile: uploadedFiles[0],
+      resultFiles: uploadedFiles,
       status: 'completed',
       notes: notes || '',
       completedAt: new Date().toISOString(),
@@ -964,10 +975,10 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
     if (amount && !isNaN(parseFloat(amount))) {
       updateData.estimatedAmount = parseFloat(amount);
     }
-    
+
     await adminDb.collection('estimations').doc(estimationId).update(updateData);
-    
-    console.log(`[ADMIN-RESULT-UPLOAD] Result uploaded for estimation ${estimationId} with secure access`);
+
+    console.log(`[ADMIN-RESULT-UPLOAD] ${uploadedFiles.length} result file(s) uploaded for estimation ${estimationId}`);
 
     // Send email notification to contractor
     try {
@@ -979,17 +990,25 @@ router.post('/:estimationId/result', authenticateToken, isAdmin, upload.single('
     } catch (emailError) {
       console.error(`[ADMIN-RESULT-UPLOAD] Failed to send email for ${estimationId}:`, emailError.message);
     }
-    
+
     res.json({
       success: true,
-      message: 'Estimation result uploaded successfully with secure access',
+      message: `${uploadedFiles.length} result file(s) uploaded successfully`,
       data: {
+        resultFiles: uploadedFiles.map(f => ({
+          name: f.originalname || f.name,
+          size: f.size,
+          sizeMB: (f.size / (1024 * 1024)).toFixed(2),
+          type: f.mimetype,
+          uploadedAt: f.uploadedAt
+        })),
+        // Backward compat
         resultFile: {
-          name: uploadedFile.originalname || uploadedFile.name,
-          size: uploadedFile.size,
-          sizeMB: (uploadedFile.size / (1024 * 1024)).toFixed(2),
-          type: uploadedFile.mimetype,
-          uploadedAt: uploadedFile.uploadedAt
+          name: uploadedFiles[0].originalname || uploadedFiles[0].name,
+          size: uploadedFiles[0].size,
+          sizeMB: (uploadedFiles[0].size / (1024 * 1024)).toFixed(2),
+          type: uploadedFiles[0].mimetype,
+          uploadedAt: uploadedFiles[0].uploadedAt
         },
         estimatedAmount: updateData.estimatedAmount,
         completedAt: updateData.completedAt

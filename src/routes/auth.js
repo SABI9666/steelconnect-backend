@@ -10,6 +10,65 @@ import { otpLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
 
+// Helper: Process referral code for any login/registration (fire-and-forget)
+async function processReferralCode(referralCode, userId, userName, userEmail) {
+    if (!referralCode) return;
+    try {
+        const code = referralCode.trim().toUpperCase();
+        const referralsSnapshot = await adminDb.collection('referrals')
+            .where('referralCode', '==', code)
+            .limit(1)
+            .get();
+        if (referralsSnapshot.empty) {
+            console.warn(`Referral code ${code} not found`);
+            return;
+        }
+        const referrerDoc = referralsSnapshot.docs[0];
+        // Don't allow self-referral
+        if (referrerDoc.id === userId) {
+            console.warn('Self-referral blocked');
+            return;
+        }
+        const referrerData = referrerDoc.data();
+        const existingInvites = referrerData.invitedUsers || [];
+        const emailLower = (userEmail || '').toLowerCase();
+        // Check if already recorded
+        const alreadyRecorded = existingInvites.some(
+            u => (u.email && u.email === emailLower) || (u.userId && u.userId === userId)
+        );
+        if (alreadyRecorded) {
+            console.log(`Referral already recorded for ${emailLower}`);
+            return;
+        }
+        const invitedUser = {
+            userId: userId,
+            name: userName || 'Unknown',
+            email: emailLower,
+            status: 'registered',
+            registeredAt: new Date().toISOString(),
+            platform: 'referral_link'
+        };
+        // Replace any "sent" entry for same email, or add new
+        const updatedInvites = existingInvites.filter(u => u.email !== emailLower);
+        updatedInvites.push(invitedUser);
+        const registeredCount = updatedInvites.filter(u => u.status === 'registered').length;
+        await referrerDoc.ref.update({
+            successfulReferrals: registeredCount,
+            invitedUsers: updatedInvites,
+            updatedAt: new Date().toISOString()
+        });
+        // Also tag the referred user
+        await adminDb.collection('users').doc(userId).update({
+            referredBy: referrerDoc.id,
+            referralCode: code,
+            referredAt: new Date().toISOString()
+        }).catch(() => {});
+        console.log(`Referral recorded: ${emailLower} referred by code ${code} (referrer: ${referrerDoc.id})`);
+    } catch (err) {
+        console.warn('Failed to process referral code:', err.message);
+    }
+}
+
 // Helper function to get client IP
 function getClientIP(req) {
     return req.headers['x-forwarded-for'] || 
@@ -87,44 +146,10 @@ router.post('/register', async (req, res) => {
 
         console.log(`New ${type} registered: ${email} (ID: ${userRef.id})`);
 
-        // Check if user was referred (referral code in request body)
+        // Process referral code if present (fire-and-forget)
         const { referralCode } = req.body;
         if (referralCode) {
-            try {
-                const referralsSnapshot = await adminDb.collection('referrals')
-                    .where('referralCode', '==', referralCode.trim().toUpperCase())
-                    .limit(1)
-                    .get();
-                if (!referralsSnapshot.empty) {
-                    const referrerDoc = referralsSnapshot.docs[0];
-                    const referrerData = referrerDoc.data();
-                    const existingInvites = referrerData.invitedUsers || [];
-                    const alreadyRecorded = existingInvites.some(u => u.email === email.toLowerCase().trim());
-                    if (!alreadyRecorded) {
-                        const invitedUser = {
-                            userId: userRef.id,
-                            name: name.trim(),
-                            email: email.toLowerCase().trim(),
-                            status: 'registered',
-                            registeredAt: new Date().toISOString(),
-                            platform: 'email_register'
-                        };
-                        await referrerDoc.ref.update({
-                            successfulReferrals: (existingInvites.filter(u => u.status === 'registered').length) + 1,
-                            invitedUsers: [...existingInvites.filter(u => u.email !== email.toLowerCase().trim()), invitedUser],
-                            updatedAt: new Date().toISOString()
-                        });
-                        await adminDb.collection('users').doc(userRef.id).update({
-                            referredBy: referrerDoc.id,
-                            referralCode: referralCode.trim().toUpperCase(),
-                            referredAt: new Date().toISOString()
-                        });
-                        console.log(`Referral recorded: ${email} referred by code ${referralCode}`);
-                    }
-                }
-            } catch (refErr) {
-                console.warn('Failed to process referral code during registration:', refErr.message);
-            }
+            processReferralCode(referralCode, userRef.id, name.trim(), email.toLowerCase().trim()).catch(() => {});
         }
 
         // Log user registration activity (fire-and-forget)
@@ -586,6 +611,12 @@ router.post('/verify-otp', async (req, res) => {
             updateData.lastAdminLogin = new Date().toISOString();
         }
         await adminDb.collection('users').doc(userId).update(updateData);
+
+        // Process referral code if present (fire-and-forget — don't block login)
+        const { referralCode: otpRefCode } = req.body;
+        if (otpRefCode && !isAdmin && !isOperations) {
+            processReferralCode(otpRefCode, userId, userData.name, userData.email).catch(() => {});
+        }
 
         // Prepare response (exclude password and OTP fields)
         const { password: _, loginOtp: _o, loginOtpExpiry: _e, loginOtpAttempts: _a, ...safeUserData } = userData;
@@ -1233,6 +1264,12 @@ router.post('/google', async (req, res) => {
             });
 
             console.log(`Google login successful for existing user: ${googleUser.email}`);
+
+            // Process referral code for existing Google users (fire-and-forget)
+            const { referralCode: googleRefCode } = req.body;
+            if (googleRefCode) {
+                processReferralCode(googleRefCode, userId, userData.name || googleUser.name, googleUser.email).catch(() => {});
+            }
         } else {
             // New user - register them via Google
             if (!type || !['designer', 'contractor'].includes(type)) {
@@ -1279,44 +1316,10 @@ router.post('/google', async (req, res) => {
 
             console.log(`New ${type} registered via Google: ${googleUser.email} (ID: ${userId})`);
 
-            // Check if user was referred (referral code in request body)
-            const { referralCode } = req.body;
-            if (referralCode) {
-                try {
-                    const referralsSnapshot = await adminDb.collection('referrals')
-                        .where('referralCode', '==', referralCode.trim().toUpperCase())
-                        .limit(1)
-                        .get();
-                    if (!referralsSnapshot.empty) {
-                        const referrerDoc = referralsSnapshot.docs[0];
-                        const referrerData = referrerDoc.data();
-                        const existingInvites = referrerData.invitedUsers || [];
-                        const alreadyRecorded = existingInvites.some(u => u.email === googleUser.email);
-                        if (!alreadyRecorded) {
-                            const invitedUser = {
-                                userId: userId,
-                                name: googleUser.name,
-                                email: googleUser.email,
-                                status: 'registered',
-                                registeredAt: new Date().toISOString(),
-                                platform: 'google_register'
-                            };
-                            await referrerDoc.ref.update({
-                                successfulReferrals: (existingInvites.filter(u => u.status === 'registered').length) + 1,
-                                invitedUsers: [...existingInvites.filter(u => u.email !== googleUser.email), invitedUser],
-                                updatedAt: new Date().toISOString()
-                            });
-                            await adminDb.collection('users').doc(userId).update({
-                                referredBy: referrerDoc.id,
-                                referralCode: referralCode.trim().toUpperCase(),
-                                referredAt: new Date().toISOString()
-                            });
-                            console.log(`Referral recorded (Google): ${googleUser.email} referred by code ${referralCode}`);
-                        }
-                    }
-                } catch (refErr) {
-                    console.warn('Failed to process referral code during Google registration:', refErr.message);
-                }
+            // Process referral code if present (fire-and-forget)
+            const { referralCode: googleNewRefCode } = req.body;
+            if (googleNewRefCode) {
+                processReferralCode(googleNewRefCode, userId, googleUser.name, googleUser.email).catch(() => {});
             }
 
             // Send notification email to admin about new Google sign-up (fire-and-forget to avoid blocking response)

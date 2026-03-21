@@ -85,7 +85,7 @@ function generateShareContent(user, platform) {
 // ==========================================
 router.get('/status', async (req, res) => {
     try {
-        const userId = req.user.uid;
+        const userId = req.user.userId;
         const userType = req.user.type;
 
         // Get or create referral profile
@@ -153,7 +153,7 @@ router.get('/status', async (req, res) => {
 // ==========================================
 router.get('/share-content', async (req, res) => {
     try {
-        const userId = req.user.uid;
+        const userId = req.user.userId;
         const { platform } = req.query; // 'whatsapp' or 'gmail'
 
         if (!platform || !['whatsapp', 'gmail'].includes(platform)) {
@@ -211,7 +211,7 @@ router.get('/share-content', async (req, res) => {
 // ==========================================
 router.post('/track-share', async (req, res) => {
     try {
-        const userId = req.user.uid;
+        const userId = req.user.userId;
         const { platform, recipientInfo } = req.body;
 
         if (!platform || !['whatsapp', 'gmail'].includes(platform)) {
@@ -325,13 +325,13 @@ router.post('/record-signup', async (req, res) => {
                 : 'a free quote';
 
             try {
-                await NotificationService.createNotification({
-                    userId: referrerId,
-                    type: 'referral_reward',
-                    title: '🎉 Referral Reward Earned!',
-                    message: `Congratulations! Your referral joined SteelConnect. You've earned ${rewardType}!`,
-                    metadata: { rewardType: rewardEntry.type, referralCount: newSuccessfulCount }
-                });
+                await NotificationService.createNotification(
+                    referrerId,
+                    '🎉 Referral Reward Earned!',
+                    `Congratulations! Your referral joined SteelConnect. You've earned ${rewardType}!`,
+                    'referral_reward',
+                    { rewardType: rewardEntry.type, referralCount: newSuccessfulCount }
+                );
             } catch (notifError) {
                 console.error('Failed to send referral reward notification:', notifError);
             }
@@ -370,7 +370,7 @@ router.post('/record-signup', async (req, res) => {
 // ==========================================
 router.post('/use-reward', async (req, res) => {
     try {
-        const userId = req.user.uid;
+        const userId = req.user.userId;
         const { rewardType } = req.body; // 'free_estimation' or 'free_quote'
 
         const referralRef = adminDb.collection('referrals').doc(userId);
@@ -427,7 +427,7 @@ router.post('/use-reward', async (req, res) => {
 // ==========================================
 router.get('/check-reward', async (req, res) => {
     try {
-        const userId = req.user.uid;
+        const userId = req.user.userId;
 
         const referralRef = adminDb.collection('referrals').doc(userId);
         const referralDoc = await referralRef.get();

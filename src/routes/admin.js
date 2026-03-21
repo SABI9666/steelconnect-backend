@@ -8641,4 +8641,141 @@ router.delete('/website-estimations/:id', async (req, res) => {
     }
 });
 
+// ==========================================
+// REFERRAL REWARDS - Admin Management
+// ==========================================
+
+// GET /admin/referrals/all - Get all referral data with full details
+router.get('/referrals/all', async (req, res) => {
+    try {
+        const referralsSnapshot = await adminDb.collection('referrals')
+            .orderBy('createdAt', 'desc')
+            .get();
+
+        const referrals = [];
+        for (const doc of referralsSnapshot.docs) {
+            const data = doc.data();
+            let userName = data.userName || 'Unknown';
+            let userEmail = data.userEmail || '';
+
+            if (userName === 'Unknown' || !userEmail) {
+                try {
+                    const userDoc = await adminDb.collection('users').doc(doc.id).get();
+                    if (userDoc.exists) {
+                        const ud = userDoc.data();
+                        userName = ud.name || userName;
+                        userEmail = ud.email || userEmail;
+                    }
+                } catch (e) { /* ignore */ }
+            }
+
+            const invitedUsers = (data.invitedUsers || []);
+            const sentCount = invitedUsers.filter(u => u.status === 'sent').length;
+            const registeredCount = invitedUsers.filter(u => u.status === 'registered').length;
+
+            referrals.push({
+                userId: doc.id,
+                userName,
+                userEmail,
+                userType: data.userType,
+                referralCode: data.referralCode,
+                totalShares: data.totalShares || 0,
+                sentCount,
+                registeredCount,
+                rewardsEarned: data.rewardsEarned || 0,
+                rewardsUsed: data.rewardsUsed || 0,
+                rewardsAvailable: data.rewardsAvailable || 0,
+                pendingApproval: data.pendingApproval || false,
+                invitedUsers,
+                rewardHistory: data.rewardHistory || [],
+                createdAt: data.createdAt?.toDate?.() || data.createdAt,
+                updatedAt: data.updatedAt?.toDate?.() || data.updatedAt
+            });
+        }
+
+        const stats = {
+            totalReferrers: referrals.length,
+            totalShares: referrals.reduce((sum, r) => sum + (r.totalShares || 0), 0),
+            totalSent: referrals.reduce((sum, r) => sum + (r.sentCount || 0), 0),
+            totalRegistered: referrals.reduce((sum, r) => sum + (r.registeredCount || 0), 0),
+            totalRewardsEarned: referrals.reduce((sum, r) => sum + (r.rewardsEarned || 0), 0),
+            totalRewardsUsed: referrals.reduce((sum, r) => sum + (r.rewardsUsed || 0), 0),
+            pendingApprovals: referrals.filter(r => r.registeredCount >= 3 && r.registeredCount > (r.rewardsEarned || 0) * 3).length,
+            contractorReferrers: referrals.filter(r => r.userType === 'contractor').length,
+            designerReferrers: referrals.filter(r => r.userType === 'designer').length
+        };
+
+        res.json({ success: true, data: { referrals, stats } });
+    } catch (error) {
+        console.error('[ADMIN] Error getting referral data:', error);
+        res.status(500).json({ success: false, message: 'Failed to get referral data' });
+    }
+});
+
+// POST /admin/referrals/approve-reward - Approve reward for user
+router.post('/referrals/approve-reward', async (req, res) => {
+    try {
+        const { userId } = req.body;
+        if (!userId) {
+            return res.status(400).json({ success: false, message: 'userId is required' });
+        }
+
+        const referralRef = adminDb.collection('referrals').doc(userId);
+        const referralDoc = await referralRef.get();
+
+        if (!referralDoc.exists) {
+            return res.status(404).json({ success: false, message: 'Referral profile not found' });
+        }
+
+        const data = referralDoc.data();
+        const registeredCount = (data.invitedUsers || []).filter(u => u.status === 'registered').length;
+        const rewardsAlreadyEarned = data.rewardsEarned || 0;
+
+        if (registeredCount < (rewardsAlreadyEarned + 1) * 3) {
+            return res.status(400).json({
+                success: false,
+                message: `Not enough registered referrals. Has ${registeredCount} registered, needs ${(rewardsAlreadyEarned + 1) * 3} for next reward.`
+            });
+        }
+
+        const rewardType = data.userType === 'contractor' ? 'free_estimation' : 'free_quote';
+        const rewardEntry = {
+            type: rewardType,
+            earnedAt: new Date().toISOString(),
+            approvedBy: req.user.userId,
+            approvedByName: req.user.name || req.user.email,
+            status: 'available'
+        };
+
+        await referralRef.update({
+            rewardsEarned: admin.firestore.FieldValue.increment(1),
+            rewardsAvailable: admin.firestore.FieldValue.increment(1),
+            pendingApproval: false,
+            rewardHistory: admin.firestore.FieldValue.arrayUnion(rewardEntry),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        try {
+            const rewardLabel = data.userType === 'contractor' ? 'a free estimation/analysis' : 'a free quote';
+            await NotificationService.createNotification(
+                userId,
+                '🎉 Referral Reward Approved!',
+                `Congratulations! Admin has approved your referral reward. You now have ${rewardLabel} available! Go to Referral Rewards to use it.`,
+                'referral_reward',
+                { rewardType, approvedBy: req.user.name || req.user.email }
+            );
+        } catch (e) {
+            console.warn('Failed to send reward approval notification:', e.message);
+        }
+
+        res.json({
+            success: true,
+            message: `Reward approved! User now has ${(data.rewardsAvailable || 0) + 1} reward(s) available.`
+        });
+    } catch (error) {
+        console.error('[ADMIN] Error approving referral reward:', error);
+        res.status(500).json({ success: false, message: 'Failed to approve reward' });
+    }
+});
+
 export default router;

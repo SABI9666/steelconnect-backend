@@ -13,16 +13,19 @@ const router = express.Router();
 // Helper: Process referral code for any login/registration (fire-and-forget)
 async function processReferralCode(referralCode, userId, userName, userEmail) {
     if (!referralCode) return;
+    console.log(`[REFERRAL] Processing referral code: ${referralCode} for user: ${userEmail} (${userId})`);
     try {
         const code = referralCode.trim().toUpperCase();
+        console.log(`[REFERRAL] Searching for referral code: ${code}`);
         const referralsSnapshot = await adminDb.collection('referrals')
             .where('referralCode', '==', code)
             .limit(1)
             .get();
         if (referralsSnapshot.empty) {
-            console.warn(`Referral code ${code} not found`);
+            console.warn(`[REFERRAL] Referral code ${code} NOT FOUND in referrals collection`);
             return;
         }
+        console.log(`[REFERRAL] Found referrer: ${referralsSnapshot.docs[0].id}`);
         const referrerDoc = referralsSnapshot.docs[0];
         // Don't allow self-referral
         if (referrerDoc.id === userId) {
@@ -62,10 +65,10 @@ async function processReferralCode(referralCode, userId, userName, userEmail) {
             referredBy: referrerDoc.id,
             referralCode: code,
             referredAt: new Date().toISOString()
-        }).catch(() => {});
+        }).catch(err => console.error('processReferralCode error:', err.message));
         console.log(`Referral recorded: ${emailLower} referred by code ${code} (referrer: ${referrerDoc.id})`);
     } catch (err) {
-        console.warn('Failed to process referral code:', err.message);
+        console.error(`[REFERRAL] FAILED to process referral code: ${err.message}`, err.stack);
     }
 }
 
@@ -149,7 +152,7 @@ router.post('/register', async (req, res) => {
         // Process referral code if present (fire-and-forget)
         const { referralCode } = req.body;
         if (referralCode) {
-            processReferralCode(referralCode, userRef.id, name.trim(), email.toLowerCase().trim()).catch(() => {});
+            processReferralCode(referralCode, userRef.id, name.trim(), email.toLowerCase().trim()).catch(err => console.error('processReferralCode error:', err.message));
         }
 
         // Log user registration activity (fire-and-forget)
@@ -163,7 +166,7 @@ router.post('/register', async (req, res) => {
             description: `New ${type} registered: ${name.trim()} (${email.toLowerCase().trim()})`,
             metadata: { userId: userRef.id, type },
             ip: getClientIP(req)
-        }).catch(() => {});
+        }).catch(err => console.error('processReferralCode error:', err.message));
 
         res.status(201).json({
             success: true,
@@ -615,7 +618,7 @@ router.post('/verify-otp', async (req, res) => {
         // Process referral code if present (fire-and-forget — don't block login)
         const { referralCode: otpRefCode } = req.body;
         if (otpRefCode && !isAdmin && !isOperations) {
-            processReferralCode(otpRefCode, userId, userData.name, userData.email).catch(() => {});
+            processReferralCode(otpRefCode, userId, userData.name, userData.email).catch(err => console.error('processReferralCode error:', err.message));
         }
 
         // Prepare response (exclude password and OTP fields)
@@ -638,7 +641,7 @@ router.post('/verify-otp', async (req, res) => {
             description: `${loginLabel} login completed: ${userData.name || normalizedEmail} (${userData.type || 'user'})`,
             metadata: { userId, loginType: loginLabel, userAgent },
             ip: clientIP
-        }).catch(() => {});
+        }).catch(err => console.error('processReferralCode error:', err.message));
 
         // Send login notification
         if (process.env.RESEND_API_KEY) {
@@ -1268,7 +1271,7 @@ router.post('/google', async (req, res) => {
             // Process referral code for existing Google users (fire-and-forget)
             const { referralCode: googleRefCode } = req.body;
             if (googleRefCode) {
-                processReferralCode(googleRefCode, userId, userData.name || googleUser.name, googleUser.email).catch(() => {});
+                processReferralCode(googleRefCode, userId, userData.name || googleUser.name, googleUser.email).catch(err => console.error('processReferralCode error:', err.message));
             }
         } else {
             // New user - register them via Google
@@ -1319,7 +1322,7 @@ router.post('/google', async (req, res) => {
             // Process referral code if present (fire-and-forget)
             const { referralCode: googleNewRefCode } = req.body;
             if (googleNewRefCode) {
-                processReferralCode(googleNewRefCode, userId, googleUser.name, googleUser.email).catch(() => {});
+                processReferralCode(googleNewRefCode, userId, googleUser.name, googleUser.email).catch(err => console.error('processReferralCode error:', err.message));
             }
 
             // Send notification email to admin about new Google sign-up (fire-and-forget to avoid blocking response)

@@ -87,6 +87,46 @@ router.post('/register', async (req, res) => {
 
         console.log(`New ${type} registered: ${email} (ID: ${userRef.id})`);
 
+        // Check if user was referred (referral code in request body)
+        const { referralCode } = req.body;
+        if (referralCode) {
+            try {
+                const referralsSnapshot = await adminDb.collection('referrals')
+                    .where('referralCode', '==', referralCode.trim().toUpperCase())
+                    .limit(1)
+                    .get();
+                if (!referralsSnapshot.empty) {
+                    const referrerDoc = referralsSnapshot.docs[0];
+                    const referrerData = referrerDoc.data();
+                    const existingInvites = referrerData.invitedUsers || [];
+                    const alreadyRecorded = existingInvites.some(u => u.email === email.toLowerCase().trim());
+                    if (!alreadyRecorded) {
+                        const invitedUser = {
+                            userId: userRef.id,
+                            name: name.trim(),
+                            email: email.toLowerCase().trim(),
+                            status: 'registered',
+                            registeredAt: new Date().toISOString(),
+                            platform: 'email_register'
+                        };
+                        await referrerDoc.ref.update({
+                            successfulReferrals: (existingInvites.filter(u => u.status === 'registered').length) + 1,
+                            invitedUsers: [...existingInvites.filter(u => u.email !== email.toLowerCase().trim()), invitedUser],
+                            updatedAt: new Date().toISOString()
+                        });
+                        await adminDb.collection('users').doc(userRef.id).update({
+                            referredBy: referrerDoc.id,
+                            referralCode: referralCode.trim().toUpperCase(),
+                            referredAt: new Date().toISOString()
+                        });
+                        console.log(`Referral recorded: ${email} referred by code ${referralCode}`);
+                    }
+                }
+            } catch (refErr) {
+                console.warn('Failed to process referral code during registration:', refErr.message);
+            }
+        }
+
         // Log user registration activity (fire-and-forget)
         logUserActivity({
             userEmail: email.toLowerCase().trim(),
@@ -1238,6 +1278,46 @@ router.post('/google', async (req, res) => {
             userData = newUserData;
 
             console.log(`New ${type} registered via Google: ${googleUser.email} (ID: ${userId})`);
+
+            // Check if user was referred (referral code in request body)
+            const { referralCode } = req.body;
+            if (referralCode) {
+                try {
+                    const referralsSnapshot = await adminDb.collection('referrals')
+                        .where('referralCode', '==', referralCode.trim().toUpperCase())
+                        .limit(1)
+                        .get();
+                    if (!referralsSnapshot.empty) {
+                        const referrerDoc = referralsSnapshot.docs[0];
+                        const referrerData = referrerDoc.data();
+                        const existingInvites = referrerData.invitedUsers || [];
+                        const alreadyRecorded = existingInvites.some(u => u.email === googleUser.email);
+                        if (!alreadyRecorded) {
+                            const invitedUser = {
+                                userId: userId,
+                                name: googleUser.name,
+                                email: googleUser.email,
+                                status: 'registered',
+                                registeredAt: new Date().toISOString(),
+                                platform: 'google_register'
+                            };
+                            await referrerDoc.ref.update({
+                                successfulReferrals: (existingInvites.filter(u => u.status === 'registered').length) + 1,
+                                invitedUsers: [...existingInvites.filter(u => u.email !== googleUser.email), invitedUser],
+                                updatedAt: new Date().toISOString()
+                            });
+                            await adminDb.collection('users').doc(userId).update({
+                                referredBy: referrerDoc.id,
+                                referralCode: referralCode.trim().toUpperCase(),
+                                referredAt: new Date().toISOString()
+                            });
+                            console.log(`Referral recorded (Google): ${googleUser.email} referred by code ${referralCode}`);
+                        }
+                    }
+                } catch (refErr) {
+                    console.warn('Failed to process referral code during Google registration:', refErr.message);
+                }
+            }
 
             // Send notification email to admin about new Google sign-up (fire-and-forget to avoid blocking response)
             const ADMIN_EMAIL = process.env.ADMIN_REPORT_EMAIL || 'admin@steelconnect.com';

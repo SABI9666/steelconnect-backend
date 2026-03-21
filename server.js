@@ -113,6 +113,17 @@ try {
     console.warn('🔧 Community feed will not work');
 }
 
+// NEW: Import referral rewards routes
+let referralRoutes;
+try {
+    const referralModule = await import('./src/routes/referrals.js');
+    referralRoutes = referralModule.default;
+    console.log('✅ Referral routes imported successfully');
+} catch (error) {
+    console.warn('⚠️ Referral routes not available:', error.message);
+    console.warn('🔧 Referral rewards will not work');
+}
+
 // NEW: Import subscription routes
 let subscriptionRoutes;
 try {
@@ -705,6 +716,19 @@ if (subscriptionRoutes) {
     console.log('   • Admin subscription controls');
 } else {
     console.warn('⚠️ Subscription routes unavailable - subscription management disabled');
+}
+
+// Referral rewards routes
+if (referralRoutes) {
+    app.use('/api/referrals', generalLimiter, referralRoutes);
+    console.log('✅ Referral routes registered at /api/referrals');
+    console.log('🎁 Referral Rewards: ENABLED');
+    console.log('   • Contractor: Share 3 → Free estimation/analysis');
+    console.log('   • Designer: Share 3 → Free quote');
+    console.log('   • WhatsApp & Gmail sharing');
+    console.log('   • Auto-generated professional content');
+} else {
+    console.warn('⚠️ Referral routes unavailable - referral rewards disabled');
 }
 
 // Voice call routes

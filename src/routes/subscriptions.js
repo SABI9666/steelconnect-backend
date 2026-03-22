@@ -20,39 +20,50 @@ const PLAN_DEFINITIONS = {
         quotesAllowed: 1,
         description: '1 quote included',
         features: ['1 project quote', 'Basic access'],
+        supportsYearly: false,
     },
     designer_5: {
         id: 'designer_5',
         label: 'Designer Basic',
         type: 'designer',
         price: 5,
+        billingCycle: 'monthly',
         quotesAllowed: 5,
         description: '5 quotes per month',
         features: ['5 project quotes', 'Email support'],
+        supportsYearly: true,
+        yearlyPrice: parseFloat((5 * 12 * 0.9).toFixed(2)), // 10% discount
     },
     designer_10: {
         id: 'designer_10',
         label: 'Designer Standard',
         type: 'designer',
         price: 10,
+        billingCycle: 'monthly',
         quotesAllowed: 10,
         description: '10 quotes per month',
         features: ['10 project quotes', 'Priority support'],
+        supportsYearly: true,
+        yearlyPrice: parseFloat((10 * 12 * 0.9).toFixed(2)),
     },
     designer_15: {
         id: 'designer_15',
         label: 'Designer Plus',
         type: 'designer',
         price: 15,
+        billingCycle: 'monthly',
         quotesAllowed: 20,
         description: '20 quotes per month',
         features: ['20 project quotes', 'Priority support', 'Analytics access'],
+        supportsYearly: true,
+        yearlyPrice: parseFloat((15 * 12 * 0.9).toFixed(2)),
     },
     designer_30: {
         id: 'designer_30',
         label: 'Designer Premium',
         type: 'designer',
         price: 30,
+        billingCycle: 'monthly',
         quotesAllowed: null, // unlimited
         description: 'Unlimited quotes for 1 month',
         features: [
@@ -61,6 +72,8 @@ const PLAN_DEFINITIONS = {
             'Full analytics access',
             'Dedicated account manager',
         ],
+        supportsYearly: true,
+        yearlyPrice: parseFloat((30 * 12 * 0.9).toFixed(2)),
     },
     // ── AI ESTIMATION (DRAWING BASED) PLANS ──
     estimation_free: {
@@ -80,6 +93,7 @@ const PLAN_DEFINITIONS = {
         ],
         badge: null,
         bestFor: null,
+        supportsYearly: false,
     },
     estimation_starter: {
         id: 'estimation_starter',
@@ -99,6 +113,8 @@ const PLAN_DEFINITIONS = {
         ],
         badge: null,
         bestFor: 'Best for freelance estimators',
+        supportsYearly: true,
+        yearlyPrice: parseFloat((29 * 12 * 0.9).toFixed(2)),
     },
     estimation_professional: {
         id: 'estimation_professional',
@@ -118,6 +134,8 @@ const PLAN_DEFINITIONS = {
         ],
         badge: 'popular',
         bestFor: 'Best for detailing companies & estimators',
+        supportsYearly: true,
+        yearlyPrice: parseFloat((79 * 12 * 0.9).toFixed(2)),
     },
     estimation_business: {
         id: 'estimation_business',
@@ -137,6 +155,8 @@ const PLAN_DEFINITIONS = {
         ],
         badge: null,
         bestFor: 'Best for fabrication companies',
+        supportsYearly: true,
+        yearlyPrice: parseFloat((149 * 12 * 0.9).toFixed(2)),
     },
     estimation_payperuse: {
         id: 'estimation_payperuse',
@@ -155,6 +175,7 @@ const PLAN_DEFINITIONS = {
         ],
         badge: null,
         bestFor: 'Best for occasional users',
+        supportsYearly: false,
     },
     // ── AI DATA ANALYSIS (FABRICATION / PRODUCTION DATA) PLANS ──
     analysis_free: {
@@ -173,6 +194,7 @@ const PLAN_DEFINITIONS = {
         ],
         badge: null,
         bestFor: 'Try the analysis system',
+        supportsYearly: false,
     },
     analysis_basic: {
         id: 'analysis_basic',
@@ -192,6 +214,7 @@ const PLAN_DEFINITIONS = {
         ],
         badge: null,
         bestFor: null,
+        supportsYearly: false,
     },
     analysis_advanced: {
         id: 'analysis_advanced',
@@ -211,6 +234,7 @@ const PLAN_DEFINITIONS = {
         ],
         badge: null,
         bestFor: null,
+        supportsYearly: false,
     },
     analysis_pro: {
         id: 'analysis_pro',
@@ -228,6 +252,8 @@ const PLAN_DEFINITIONS = {
         ],
         badge: 'popular',
         bestFor: null,
+        supportsYearly: true,
+        yearlyPrice: parseFloat((49 * 12 * 0.9).toFixed(2)),
     },
     analysis_business: {
         id: 'analysis_business',
@@ -246,6 +272,8 @@ const PLAN_DEFINITIONS = {
         ],
         badge: null,
         bestFor: null,
+        supportsYearly: true,
+        yearlyPrice: parseFloat((99 * 12 * 0.9).toFixed(2)),
     },
 };
 
@@ -341,7 +369,7 @@ router.get('/invoice/:invoiceId/download', authenticateToken, async (req, res) =
 // POST /api/subscriptions/create-checkout - Create Stripe checkout session
 router.post('/create-checkout', authenticateToken, async (req, res) => {
     try {
-        const { planId } = req.body;
+        const { planId, billingCycle: requestedCycle } = req.body;
         const userId = req.user.userId;
         const userEmail = req.user.email;
         const userName = req.user.name || '';
@@ -351,6 +379,9 @@ router.post('/create-checkout', authenticateToken, async (req, res) => {
         }
 
         const plan = PLAN_DEFINITIONS[planId];
+
+        // Validate yearly billing cycle request
+        const isYearly = requestedCycle === 'yearly' && plan.supportsYearly;
 
         if (plan.price === 0) {
             // Free plan - create subscription directly
@@ -401,11 +432,18 @@ router.post('/create-checkout', authenticateToken, async (req, res) => {
             });
         }
 
-        // For paid plans
+        // For paid plans — calculate price and end date based on billing cycle
         const now = new Date();
         const endDate = new Date(now);
-        // AI daily/weekly plan: shorter cycle
-        if (plan.billingCycle === 'weekly') {
+        let finalAmount = plan.price;
+        let finalBillingCycle = plan.billingCycle || null;
+
+        if (isYearly) {
+            // Yearly: 10% discount on total yearly price, end date = +12 months
+            finalAmount = plan.yearlyPrice;
+            finalBillingCycle = 'yearly';
+            endDate.setFullYear(endDate.getFullYear() + 1);
+        } else if (plan.billingCycle === 'weekly') {
             endDate.setDate(endDate.getDate() + 7);
         } else {
             endDate.setMonth(endDate.getMonth() + 1);
@@ -417,8 +455,8 @@ router.post('/create-checkout', authenticateToken, async (req, res) => {
             userName,
             userType: plan.type,
             plan: planId,
-            planLabel: plan.label,
-            amount: plan.price,
+            planLabel: plan.label + (isYearly ? ' (Yearly)' : ''),
+            amount: finalAmount,
             quotesAllowed: plan.quotesAllowed || null,
             quotesUsed: 0,
             aiEstimationsAllowed: plan.aiEstimationsAllowed || null,
@@ -431,7 +469,7 @@ router.post('/create-checkout', authenticateToken, async (req, res) => {
             aiAnalysesUsed: 0,
             storageAllowedMB: plan.storageAllowedMB || null,
             storageUsedMB: 0,
-            billingCycle: plan.billingCycle || null,
+            billingCycle: finalBillingCycle,
             status: 'pending',
             startDate: now,
             endDate,
@@ -450,8 +488,8 @@ router.post('/create-checkout', authenticateToken, async (req, res) => {
         //         price_data: {
         //             currency: 'usd',
         //             product_data: { name: plan.label, description: plan.description },
-        //             unit_amount: plan.price * 100,
-        //             recurring: { interval: 'month' },
+        //             unit_amount: Math.round(finalAmount * 100),
+        //             recurring: isYearly ? { interval: 'year' } : { interval: 'month' },
         //         },
         //         quantity: 1,
         //     }],
@@ -459,7 +497,7 @@ router.post('/create-checkout', authenticateToken, async (req, res) => {
         //     success_url: `${process.env.FRONTEND_URL}/subscription/success?session_id={CHECKOUT_SESSION_ID}`,
         //     cancel_url: `${process.env.FRONTEND_URL}/subscription/cancel`,
         //     customer_email: userEmail,
-        //     metadata: { userId, planId, subscriptionId: subscription._id.toString() },
+        //     metadata: { userId, planId, subscriptionId: subscription._id.toString(), billingCycle: isYearly ? 'yearly' : 'monthly' },
         // });
 
         res.json({
@@ -880,7 +918,7 @@ router.post('/admin/cancel', authenticateToken, isAdmin, async (req, res) => {
 // POST /api/subscriptions/admin/create-manual - Admin manually creates subscription for a user
 router.post('/admin/create-manual', authenticateToken, isAdmin, async (req, res) => {
     try {
-        const { userEmail, planId, isFree } = req.body;
+        const { userEmail, planId, isFree, billingCycle: requestedCycle } = req.body;
 
         if (!userEmail || !planId) {
             return res.status(400).json({ success: false, message: 'User email and plan are required' });
@@ -891,6 +929,7 @@ router.post('/admin/create-manual', authenticateToken, isAdmin, async (req, res)
         }
 
         const plan = PLAN_DEFINITIONS[planId];
+        const isYearly = requestedCycle === 'yearly' && plan.supportsYearly;
 
         // Look up user in Firestore
         const usersRef = adminDb.collection('users');
@@ -911,7 +950,14 @@ router.post('/admin/create-manual', authenticateToken, isAdmin, async (req, res)
 
         const now = new Date();
         const endDate = new Date(now);
-        if (plan.billingCycle === 'weekly') {
+        let finalAmount = isFree ? 0 : plan.price;
+        let finalBillingCycle = plan.billingCycle || null;
+
+        if (isYearly && !isFree) {
+            finalAmount = plan.yearlyPrice;
+            finalBillingCycle = 'yearly';
+            endDate.setFullYear(endDate.getFullYear() + 1);
+        } else if (plan.billingCycle === 'weekly') {
             endDate.setDate(endDate.getDate() + 7);
         } else {
             endDate.setMonth(endDate.getMonth() + 1);
@@ -923,8 +969,8 @@ router.post('/admin/create-manual', authenticateToken, isAdmin, async (req, res)
             userName: userData.name || userData.profileData?.fullName || '',
             userType: plan.type,
             plan: planId,
-            planLabel: plan.label,
-            amount: isFree ? 0 : plan.price,
+            planLabel: plan.label + (isYearly ? ' (Yearly)' : ''),
+            amount: finalAmount,
             quotesAllowed: plan.quotesAllowed || null,
             quotesUsed: 0,
             aiEstimationsAllowed: plan.aiEstimationsAllowed || null,
@@ -937,7 +983,7 @@ router.post('/admin/create-manual', authenticateToken, isAdmin, async (req, res)
             aiAnalysesUsed: 0,
             storageAllowedMB: plan.storageAllowedMB || null,
             storageUsedMB: 0,
-            billingCycle: plan.billingCycle || null,
+            billingCycle: finalBillingCycle,
             status: isFree ? 'free_override' : 'active',
             startDate: now,
             endDate,

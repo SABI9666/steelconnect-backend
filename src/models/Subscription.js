@@ -118,7 +118,7 @@ const subscriptionSchema = new mongoose.Schema({
     },
     billingCycle: {
         type: String,
-        enum: ['daily', 'weekly', 'monthly', null],
+        enum: ['daily', 'weekly', 'monthly', 'yearly', null],
         default: null,
     },
     status: {

@@ -1,10 +1,23 @@
-// src/routes/subscriptions.js - Subscription Management, Stripe Integration & Invoice Generation
+// src/routes/subscriptions.js - Subscription Management, Stripe + Razorpay Integration & Invoice Generation
 import express from 'express';
 import { authenticateToken, isAdmin } from '../middleware/authMiddleware.js';
 import { adminDb, storage } from '../config/firebase.js';
 import Subscription from '../models/Subscription.js';
 import Invoice from '../models/Invoice.js';
 import { createInvoiceForSubscription, regenerateInvoicePDF } from '../services/invoiceService.js';
+import {
+    isStripeConfigured,
+    isRazorpayConfigured,
+    getPaymentConfig,
+    getStripeInstance,
+    createStripeCheckout,
+    verifyStripeWebhook,
+    getRazorpayInstance,
+    createRazorpayOrder,
+    verifyRazorpayPayment,
+    verifyRazorpayWebhook,
+    usdToInr,
+} from '../services/paymentGateway.js';
 
 const router = express.Router();
 
@@ -278,6 +291,21 @@ const PLAN_DEFINITIONS = {
 };
 
 // ============================================================
+// PAYMENT CONFIGURATION (Public)
+// ============================================================
+
+// GET /api/subscriptions/payment-config - Get available payment gateways
+router.get('/payment-config', (req, res) => {
+    try {
+        const config = getPaymentConfig();
+        res.json({ success: true, ...config });
+    } catch (error) {
+        console.error('Error fetching payment config:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch payment config' });
+    }
+});
+
+// ============================================================
 // PUBLIC ROUTES (Authenticated users)
 // ============================================================
 
@@ -366,10 +394,10 @@ router.get('/invoice/:invoiceId/download', authenticateToken, async (req, res) =
     }
 });
 
-// POST /api/subscriptions/create-checkout - Create Stripe checkout session
+// POST /api/subscriptions/create-checkout - Create payment checkout (Stripe or Razorpay)
 router.post('/create-checkout', authenticateToken, async (req, res) => {
     try {
-        const { planId, billingCycle: requestedCycle } = req.body;
+        const { planId, billingCycle: requestedCycle, gateway: requestedGateway } = req.body;
         const userId = req.user.userId;
         const userEmail = req.user.email;
         const userName = req.user.name || '';
@@ -379,12 +407,10 @@ router.post('/create-checkout', authenticateToken, async (req, res) => {
         }
 
         const plan = PLAN_DEFINITIONS[planId];
-
-        // Validate yearly billing cycle request
         const isYearly = requestedCycle === 'yearly' && plan.supportsYearly;
 
+        // ── FREE PLAN: activate immediately ──
         if (plan.price === 0) {
-            // Free plan - create subscription directly
             const now = new Date();
             const endDate = new Date(now);
             endDate.setMonth(endDate.getMonth() + 1);
@@ -399,6 +425,12 @@ router.post('/create-checkout', authenticateToken, async (req, res) => {
                 amount: 0,
                 quotesAllowed: plan.quotesAllowed,
                 quotesUsed: 0,
+                aiEstimationsAllowed: plan.aiEstimationsAllowed || null,
+                aiEstimationsUsed: 0,
+                aiAnalysisQuota: plan.aiAnalysisQuota || null,
+                aiAnalysesUsed: 0,
+                maxUploadMB: plan.maxUploadMB || 25,
+                billingCycle: plan.billingCycle || null,
                 status: 'active',
                 startDate: now,
                 endDate,
@@ -407,39 +439,33 @@ router.post('/create-checkout', authenticateToken, async (req, res) => {
 
             await subscription.save();
 
-            // Update Firestore user record
-            const usersRef = adminDb.collection('users');
-            const userSnapshot = await usersRef.where('email', '==', userEmail).get();
-            if (!userSnapshot.empty) {
-                await userSnapshot.docs[0].ref.update({
-                    'subscription.status': 'active',
-                    'subscription.plan': planId,
-                    'subscription.endDate': endDate,
-                });
-            }
-
-            // Generate invoice for free plan
+            // Update Firestore
             try {
-                await createInvoiceForSubscription(subscription);
-            } catch (invoiceErr) {
-                console.error('Invoice generation error (free plan):', invoiceErr);
-            }
+                const usersRef = adminDb.collection('users');
+                const userSnapshot = await usersRef.where('email', '==', userEmail).get();
+                if (!userSnapshot.empty) {
+                    await userSnapshot.docs[0].ref.update({
+                        'subscription.status': 'active',
+                        'subscription.plan': planId,
+                        'subscription.endDate': endDate,
+                    });
+                }
+            } catch (e) { console.error('Firestore update error:', e); }
 
-            return res.json({
-                success: true,
-                message: 'Free plan activated',
-                subscription,
-            });
+            // Generate invoice
+            try { await createInvoiceForSubscription(subscription); }
+            catch (invoiceErr) { console.error('Invoice generation error (free plan):', invoiceErr); }
+
+            return res.json({ success: true, message: 'Free plan activated', subscription });
         }
 
-        // For paid plans — calculate price and end date based on billing cycle
+        // ── PAID PLAN: calculate final amount and dates ──
         const now = new Date();
         const endDate = new Date(now);
         let finalAmount = plan.price;
         let finalBillingCycle = plan.billingCycle || null;
 
         if (isYearly) {
-            // Yearly: 10% discount on total yearly price, end date = +12 months
             finalAmount = plan.yearlyPrice;
             finalBillingCycle = 'yearly';
             endDate.setFullYear(endDate.getFullYear() + 1);
@@ -448,6 +474,9 @@ router.post('/create-checkout', authenticateToken, async (req, res) => {
         } else {
             endDate.setMonth(endDate.getMonth() + 1);
         }
+
+        // Determine which payment gateway to use
+        const gateway = requestedGateway || (isRazorpayConfigured() && !isStripeConfigured() ? 'razorpay' : 'stripe');
 
         const subscription = new Subscription({
             userId,
@@ -473,39 +502,82 @@ router.post('/create-checkout', authenticateToken, async (req, res) => {
             status: 'pending',
             startDate: now,
             endDate,
-            paymentMethod: 'stripe',
+            paymentMethod: gateway,
+            paymentGateway: gateway,
         });
 
         await subscription.save();
 
-        // NOTE: Replace with actual Stripe checkout session creation
-        // when Stripe keys are configured:
-        //
-        // const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-        // const session = await stripe.checkout.sessions.create({
-        //     payment_method_types: ['card'],
-        //     line_items: [{
-        //         price_data: {
-        //             currency: 'usd',
-        //             product_data: { name: plan.label, description: plan.description },
-        //             unit_amount: Math.round(finalAmount * 100),
-        //             recurring: isYearly ? { interval: 'year' } : { interval: 'month' },
-        //         },
-        //         quantity: 1,
-        //     }],
-        //     mode: 'subscription',
-        //     success_url: `${process.env.FRONTEND_URL}/subscription/success?session_id={CHECKOUT_SESSION_ID}`,
-        //     cancel_url: `${process.env.FRONTEND_URL}/subscription/cancel`,
-        //     customer_email: userEmail,
-        //     metadata: { userId, planId, subscriptionId: subscription._id.toString(), billingCycle: isYearly ? 'yearly' : 'monthly' },
-        // });
+        // ── STRIPE CHECKOUT ──
+        if (gateway === 'stripe' && isStripeConfigured()) {
+            try {
+                const result = await createStripeCheckout({
+                    plan,
+                    finalAmount,
+                    isYearly,
+                    isPayPerUse: plan.isPayPerUse || false,
+                    subscriptionId: subscription._id,
+                    userId,
+                    planId,
+                    userEmail,
+                    billingCycle: finalBillingCycle,
+                });
 
+                return res.json({
+                    success: true,
+                    gateway: 'stripe',
+                    checkoutUrl: result.checkoutUrl,
+                    sessionId: result.sessionId,
+                    subscription,
+                });
+            } catch (stripeErr) {
+                console.error('Stripe checkout error:', stripeErr);
+                // Clean up pending subscription
+                await Subscription.findByIdAndDelete(subscription._id);
+                return res.status(500).json({ success: false, message: 'Failed to create Stripe checkout: ' + stripeErr.message });
+            }
+        }
+
+        // ── RAZORPAY CHECKOUT ──
+        if (gateway === 'razorpay' && isRazorpayConfigured()) {
+            try {
+                const result = await createRazorpayOrder({
+                    plan,
+                    finalAmount,
+                    isYearly,
+                    subscriptionId: subscription._id,
+                    userId,
+                    planId,
+                    userEmail,
+                    userName,
+                    billingCycle: finalBillingCycle,
+                });
+
+                // Save Razorpay order ID to subscription
+                subscription.razorpayOrderId = result.orderId;
+                await subscription.save();
+
+                return res.json({
+                    success: true,
+                    gateway: 'razorpay',
+                    razorpay: result,
+                    subscription,
+                });
+            } catch (rzpErr) {
+                console.error('Razorpay order error:', rzpErr);
+                await Subscription.findByIdAndDelete(subscription._id);
+                return res.status(500).json({ success: false, message: 'Failed to create Razorpay order: ' + rzpErr.message });
+            }
+        }
+
+        // ── NO GATEWAY CONFIGURED ──
+        // Return subscription in pending state — will be activated when keys are added
         res.json({
             success: true,
-            message: 'Subscription created. Stripe checkout will be available once payment keys are configured.',
+            gateway: null,
+            message: 'Subscription created in pending state. Payment gateways will be available once API keys are configured in environment variables.',
             subscription,
-            // checkoutUrl: session.url, // Uncomment when Stripe is configured
-            stripeConfigured: false,
+            paymentConfigured: false,
         });
     } catch (error) {
         console.error('Error creating checkout:', error);
@@ -513,80 +585,311 @@ router.post('/create-checkout', authenticateToken, async (req, res) => {
     }
 });
 
+// POST /api/subscriptions/razorpay-verify - Verify Razorpay payment after frontend completion
+router.post('/razorpay-verify', authenticateToken, async (req, res) => {
+    try {
+        const { razorpay_order_id, razorpay_payment_id, razorpay_signature, subscriptionId } = req.body;
+
+        if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+            return res.status(400).json({ success: false, message: 'Missing Razorpay payment details' });
+        }
+
+        // Verify the payment signature
+        const isValid = verifyRazorpayPayment({ razorpay_order_id, razorpay_payment_id, razorpay_signature });
+        if (!isValid) {
+            return res.status(400).json({ success: false, message: 'Payment verification failed. Invalid signature.' });
+        }
+
+        // Find and activate the subscription
+        const subscription = await Subscription.findOne({
+            razorpayOrderId: razorpay_order_id,
+            status: 'pending',
+        });
+
+        if (!subscription) {
+            return res.status(404).json({ success: false, message: 'Subscription not found for this payment' });
+        }
+
+        subscription.status = 'active';
+        subscription.razorpayPaymentId = razorpay_payment_id;
+        subscription.razorpaySignature = razorpay_signature;
+        await subscription.save();
+
+        // Update Firestore user
+        try {
+            const usersRef = adminDb.collection('users');
+            const snapshot = await usersRef.where('email', '==', subscription.userEmail).get();
+            if (!snapshot.empty) {
+                await snapshot.docs[0].ref.update({
+                    'subscription.status': 'active',
+                    'subscription.plan': subscription.plan,
+                    'subscription.endDate': subscription.endDate,
+                });
+            }
+        } catch (e) { console.error('Firestore update error:', e); }
+
+        // Generate invoice
+        try {
+            await createInvoiceForSubscription(subscription, {
+                razorpayPaymentId: razorpay_payment_id,
+                razorpayOrderId: razorpay_order_id,
+            });
+        } catch (invoiceErr) {
+            console.error('Invoice generation error (Razorpay):', invoiceErr);
+        }
+
+        res.json({
+            success: true,
+            message: 'Payment verified and subscription activated!',
+            subscription,
+        });
+    } catch (error) {
+        console.error('Error verifying Razorpay payment:', error);
+        res.status(500).json({ success: false, message: 'Payment verification failed' });
+    }
+});
+
 // POST /api/subscriptions/stripe-webhook - Stripe webhook handler
 router.post('/stripe-webhook', express.raw({ type: 'application/json' }), async (req, res) => {
-    // NOTE: Enable this when Stripe is configured
-    // const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-    // const sig = req.headers['stripe-signature'];
-    // const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
-    //
-    // let event;
-    // try {
-    //     event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
-    // } catch (err) {
-    //     return res.status(400).send(`Webhook Error: ${err.message}`);
-    // }
-    //
-    // switch (event.type) {
-    //     case 'checkout.session.completed': {
-    //         const session = event.data.object;
-    //         const { subscriptionId, userId, planId } = session.metadata;
-    //         const updatedSub = await Subscription.findByIdAndUpdate(subscriptionId, {
-    //             status: 'active',
-    //             stripeSubscriptionId: session.subscription,
-    //             stripeCustomerId: session.customer,
-    //         }, { new: true });
-    //
-    //         // Update Firestore user
-    //         const usersRef = adminDb.collection('users');
-    //         const snap = await usersRef.where('uid', '==', userId).get();
-    //         if (!snap.empty) {
-    //             await snap.docs[0].ref.update({
-    //                 'subscription.status': 'active',
-    //                 'subscription.plan': planId,
-    //             });
-    //         }
-    //
-    //         // >>> GENERATE INVOICE on successful payment <<<
-    //         if (updatedSub) {
-    //             try {
-    //                 await createInvoiceForSubscription(updatedSub, {
-    //                     stripePaymentIntentId: session.payment_intent,
-    //                     stripeInvoiceId: session.invoice,
-    //                 });
-    //             } catch (invoiceErr) {
-    //                 console.error('Invoice generation error after Stripe payment:', invoiceErr);
-    //             }
-    //         }
-    //         break;
-    //     }
-    //     case 'invoice.payment_succeeded': {
-    //         // Recurring subscription payment — generate new invoice
-    //         const stripeInvoice = event.data.object;
-    //         const sub = await Subscription.findOne({
-    //             stripeSubscriptionId: stripeInvoice.subscription
-    //         });
-    //         if (sub) {
-    //             try {
-    //                 await createInvoiceForSubscription(sub, {
-    //                     stripePaymentIntentId: stripeInvoice.payment_intent,
-    //                     stripeInvoiceId: stripeInvoice.id,
-    //                 });
-    //             } catch (invoiceErr) {
-    //                 console.error('Invoice generation error on renewal:', invoiceErr);
-    //             }
-    //         }
-    //         break;
-    //     }
-    //     case 'customer.subscription.deleted': {
-    //         const sub = event.data.object;
-    //         await Subscription.findOneAndUpdate(
-    //             { stripeSubscriptionId: sub.id },
-    //             { status: 'cancelled', cancelledAt: new Date() }
-    //         );
-    //         break;
-    //     }
-    // }
+    if (!isStripeConfigured()) {
+        return res.json({ received: true, message: 'Stripe not configured' });
+    }
+
+    let event;
+    try {
+        const sig = req.headers['stripe-signature'];
+        event = await verifyStripeWebhook(req.body, sig);
+    } catch (err) {
+        console.error('Stripe webhook signature verification failed:', err.message);
+        return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+
+    try {
+        switch (event.type) {
+            case 'checkout.session.completed': {
+                const session = event.data.object;
+                const { subscriptionId, userId, planId } = session.metadata || {};
+
+                if (!subscriptionId) break;
+
+                const updatedSub = await Subscription.findByIdAndUpdate(subscriptionId, {
+                    status: 'active',
+                    stripeSubscriptionId: session.subscription || null,
+                    stripeCustomerId: session.customer || null,
+                    stripePaymentIntentId: session.payment_intent || null,
+                }, { new: true });
+
+                // Update Firestore user
+                if (updatedSub) {
+                    try {
+                        const usersRef = adminDb.collection('users');
+                        const snap = await usersRef.where('email', '==', updatedSub.userEmail).get();
+                        if (!snap.empty) {
+                            await snap.docs[0].ref.update({
+                                'subscription.status': 'active',
+                                'subscription.plan': planId || updatedSub.plan,
+                                'subscription.endDate': updatedSub.endDate,
+                                'subscription.stripeCustomerId': session.customer || null,
+                            });
+                        }
+                    } catch (e) { console.error('Firestore update error:', e); }
+
+                    // Generate invoice
+                    try {
+                        await createInvoiceForSubscription(updatedSub, {
+                            stripePaymentIntentId: session.payment_intent,
+                            stripeInvoiceId: session.invoice,
+                        });
+                    } catch (invoiceErr) {
+                        console.error('Invoice generation error after Stripe payment:', invoiceErr);
+                    }
+                }
+                break;
+            }
+
+            case 'invoice.payment_succeeded': {
+                // Recurring subscription payment — generate new invoice
+                const stripeInvoice = event.data.object;
+                if (!stripeInvoice.subscription) break;
+
+                const sub = await Subscription.findOne({
+                    stripeSubscriptionId: stripeInvoice.subscription,
+                });
+
+                if (sub) {
+                    // Extend subscription end date
+                    const newEndDate = new Date(sub.endDate);
+                    if (sub.billingCycle === 'yearly') {
+                        newEndDate.setFullYear(newEndDate.getFullYear() + 1);
+                    } else {
+                        newEndDate.setMonth(newEndDate.getMonth() + 1);
+                    }
+                    sub.endDate = newEndDate;
+                    sub.aiEstimationsUsed = 0; // Reset usage for new period
+                    sub.aiAnalysesUsed = 0;
+                    sub.quotesUsed = 0;
+                    sub.storageUsedMB = 0;
+                    await sub.save();
+
+                    try {
+                        await createInvoiceForSubscription(sub, {
+                            stripePaymentIntentId: stripeInvoice.payment_intent,
+                            stripeInvoiceId: stripeInvoice.id,
+                        });
+                    } catch (invoiceErr) {
+                        console.error('Invoice generation error on renewal:', invoiceErr);
+                    }
+                }
+                break;
+            }
+
+            case 'customer.subscription.deleted': {
+                const stripeSubObj = event.data.object;
+                const cancelledSub = await Subscription.findOneAndUpdate(
+                    { stripeSubscriptionId: stripeSubObj.id },
+                    { status: 'cancelled', cancelledAt: new Date(), cancelReason: 'Cancelled via Stripe' },
+                    { new: true }
+                );
+
+                if (cancelledSub) {
+                    try {
+                        const usersRef = adminDb.collection('users');
+                        const snap = await usersRef.where('email', '==', cancelledSub.userEmail).get();
+                        if (!snap.empty) {
+                            await snap.docs[0].ref.update({
+                                'subscription.status': 'inactive',
+                                'subscription.plan': null,
+                            });
+                        }
+                    } catch (e) { console.error('Firestore update error:', e); }
+                }
+                break;
+            }
+
+            case 'charge.failed':
+            case 'invoice.payment_failed': {
+                const failedInvoice = event.data.object;
+                if (failedInvoice.subscription) {
+                    await Subscription.findOneAndUpdate(
+                        { stripeSubscriptionId: failedInvoice.subscription },
+                        { status: 'pending' }
+                    );
+                }
+                break;
+            }
+        }
+    } catch (processErr) {
+        console.error('Error processing Stripe webhook event:', processErr);
+    }
+
+    res.json({ received: true });
+});
+
+// POST /api/subscriptions/razorpay-webhook - Razorpay webhook handler
+router.post('/razorpay-webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+    if (!isRazorpayConfigured()) {
+        return res.json({ received: true, message: 'Razorpay not configured' });
+    }
+
+    try {
+        const signature = req.headers['x-razorpay-signature'];
+        const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+
+        // Verify webhook signature if secret is configured
+        if (process.env.RAZORPAY_WEBHOOK_SECRET && signature) {
+            const isValid = verifyRazorpayWebhook(rawBody, signature);
+            if (!isValid) {
+                console.error('Razorpay webhook signature verification failed');
+                return res.status(400).json({ error: 'Invalid signature' });
+            }
+        }
+
+        const event = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+        const eventType = event.event;
+
+        switch (eventType) {
+            case 'payment.captured': {
+                const payment = event.payload?.payment?.entity;
+                if (!payment) break;
+
+                const orderId = payment.order_id;
+                if (!orderId) break;
+
+                // Activate subscription
+                const sub = await Subscription.findOne({ razorpayOrderId: orderId });
+                if (sub && sub.status === 'pending') {
+                    sub.status = 'active';
+                    sub.razorpayPaymentId = payment.id;
+                    await sub.save();
+
+                    // Update Firestore
+                    try {
+                        const usersRef = adminDb.collection('users');
+                        const snap = await usersRef.where('email', '==', sub.userEmail).get();
+                        if (!snap.empty) {
+                            await snap.docs[0].ref.update({
+                                'subscription.status': 'active',
+                                'subscription.plan': sub.plan,
+                                'subscription.endDate': sub.endDate,
+                            });
+                        }
+                    } catch (e) { console.error('Firestore update error:', e); }
+
+                    // Generate invoice if not already created by verify endpoint
+                    const existingInvoice = await Invoice.findOne({ subscriptionId: sub._id });
+                    if (!existingInvoice) {
+                        try {
+                            await createInvoiceForSubscription(sub, {
+                                razorpayPaymentId: payment.id,
+                                razorpayOrderId: orderId,
+                            });
+                        } catch (invoiceErr) {
+                            console.error('Invoice generation error (Razorpay webhook):', invoiceErr);
+                        }
+                    }
+                }
+                break;
+            }
+
+            case 'payment.failed': {
+                const payment = event.payload?.payment?.entity;
+                if (payment?.order_id) {
+                    await Subscription.findOneAndUpdate(
+                        { razorpayOrderId: payment.order_id, status: 'pending' },
+                        { status: 'pending' } // Keep pending — user can retry
+                    );
+                }
+                break;
+            }
+
+            case 'subscription.cancelled': {
+                const rzpSub = event.payload?.subscription?.entity;
+                if (rzpSub?.id) {
+                    const cancelledSub = await Subscription.findOneAndUpdate(
+                        { razorpaySubscriptionId: rzpSub.id },
+                        { status: 'cancelled', cancelledAt: new Date(), cancelReason: 'Cancelled via Razorpay' },
+                        { new: true }
+                    );
+
+                    if (cancelledSub) {
+                        try {
+                            const usersRef = adminDb.collection('users');
+                            const snap = await usersRef.where('email', '==', cancelledSub.userEmail).get();
+                            if (!snap.empty) {
+                                await snap.docs[0].ref.update({
+                                    'subscription.status': 'inactive',
+                                    'subscription.plan': null,
+                                });
+                            }
+                        } catch (e) { console.error('Firestore update error:', e); }
+                    }
+                }
+                break;
+            }
+        }
+    } catch (processErr) {
+        console.error('Error processing Razorpay webhook:', processErr);
+    }
 
     res.json({ received: true });
 });

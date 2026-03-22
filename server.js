@@ -16,7 +16,7 @@ import webpush from 'web-push';
 import { adminDb, admin } from './src/config/firebase.js';
 
 // Import scalability middleware
-import { generalLimiter, authLimiter, otpLimiter, uploadLimiter, estimationLimiter, adminLimiter, publicLimiter } from './src/middleware/rateLimiter.js';
+import { generalLimiter, authLimiter, otpLimiter, uploadLimiter, estimationLimiter, adminLimiter, publicLimiter, paymentLimiter } from './src/middleware/rateLimiter.js';
 import { cacheResponse, getCacheStats, clearResponseCache, autoCacheInvalidation } from './src/middleware/responseCache.js';
 import { getUserCacheStats, clearUserCache } from './src/middleware/userCache.js';
 
@@ -714,8 +714,11 @@ if (communityRoutes) {
     console.warn('⚠️ Community routes unavailable - community feed disabled');
 }
 
-// Subscription routes
+// Subscription routes (payment endpoints rate limited separately)
 if (subscriptionRoutes) {
+    // Rate limit payment-critical endpoints: 10 per minute per IP
+    app.use('/api/subscriptions/create-checkout', paymentLimiter);
+    app.use('/api/subscriptions/razorpay-verify', paymentLimiter);
     app.use('/api/subscriptions', subscriptionRoutes);
     console.log('✅ Subscription routes registered at /api/subscriptions');
     console.log('💳 Subscriptions: ENABLED');

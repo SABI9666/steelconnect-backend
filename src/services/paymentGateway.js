@@ -239,7 +239,15 @@ export function verifyRazorpayPayment({ razorpay_order_id, razorpay_payment_id, 
         .update(body)
         .digest('hex');
 
-    return expectedSignature === razorpay_signature;
+    // Use timing-safe comparison to prevent timing attacks
+    try {
+        return crypto.timingSafeEqual(
+            Buffer.from(expectedSignature, 'hex'),
+            Buffer.from(razorpay_signature, 'hex')
+        );
+    } catch {
+        return false; // Buffer length mismatch = invalid signature
+    }
 }
 
 /**
@@ -254,5 +262,13 @@ export function verifyRazorpayWebhook(rawBody, signature) {
         .update(rawBody)
         .digest('hex');
 
-    return expectedSignature === signature;
+    // Use timing-safe comparison to prevent timing attacks
+    try {
+        return crypto.timingSafeEqual(
+            Buffer.from(expectedSignature, 'hex'),
+            Buffer.from(signature, 'hex')
+        );
+    } catch {
+        return false;
+    }
 }

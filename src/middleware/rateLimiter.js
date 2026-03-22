@@ -157,6 +157,14 @@ export const wsConnectionLimiter = createRateLimiter({
     message: 'Too many connection attempts.'
 });
 
+// Payment endpoints: 10 per minute per IP (prevent checkout spam / brute force)
+export const paymentLimiter = createRateLimiter({
+    windowMs: 60_000,
+    max: 10,
+    message: 'Too many payment requests. Please wait before trying again.',
+    skipFailedRequests: false
+});
+
 export default {
     createRateLimiter,
     generalLimiter,

@@ -17,6 +17,7 @@ import {
     verifyRazorpayPayment,
     verifyRazorpayWebhook,
     usdToInr,
+    usdToInrPaise,
 } from '../services/paymentGateway.js';
 
 const router = express.Router();
@@ -534,7 +535,7 @@ router.post('/create-checkout', authenticateToken, async (req, res) => {
                 console.error('Stripe checkout error:', stripeErr);
                 // Clean up pending subscription
                 await Subscription.findByIdAndDelete(subscription._id);
-                return res.status(500).json({ success: false, message: 'Failed to create Stripe checkout: ' + stripeErr.message });
+                return res.status(500).json({ success: false, message: 'Failed to create payment session. Please try again.' });
             }
         }
 
@@ -566,7 +567,7 @@ router.post('/create-checkout', authenticateToken, async (req, res) => {
             } catch (rzpErr) {
                 console.error('Razorpay order error:', rzpErr);
                 await Subscription.findByIdAndDelete(subscription._id);
-                return res.status(500).json({ success: false, message: 'Failed to create Razorpay order: ' + rzpErr.message });
+                return res.status(500).json({ success: false, message: 'Failed to create payment session. Please try again.' });
             }
         }
 
@@ -588,32 +589,63 @@ router.post('/create-checkout', authenticateToken, async (req, res) => {
 // POST /api/subscriptions/razorpay-verify - Verify Razorpay payment after frontend completion
 router.post('/razorpay-verify', authenticateToken, async (req, res) => {
     try {
-        const { razorpay_order_id, razorpay_payment_id, razorpay_signature, subscriptionId } = req.body;
+        const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+        const userId = req.user.userId;
 
         if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
-            return res.status(400).json({ success: false, message: 'Missing Razorpay payment details' });
+            return res.status(400).json({ success: false, message: 'Missing payment details' });
         }
 
-        // Verify the payment signature
+        // Verify the payment signature (timing-safe)
         const isValid = verifyRazorpayPayment({ razorpay_order_id, razorpay_payment_id, razorpay_signature });
         if (!isValid) {
-            return res.status(400).json({ success: false, message: 'Payment verification failed. Invalid signature.' });
+            console.error(`Razorpay signature verification failed for order ${razorpay_order_id}`);
+            return res.status(400).json({ success: false, message: 'Payment verification failed' });
         }
 
-        // Find and activate the subscription
-        const subscription = await Subscription.findOne({
-            razorpayOrderId: razorpay_order_id,
-            status: 'pending',
-        });
+        // SECURITY: Atomic update — find subscription by orderId AND userId AND status=pending
+        // This prevents: cross-user takeover, race conditions, replay attacks
+        const subscription = await Subscription.findOneAndUpdate(
+            {
+                razorpayOrderId: razorpay_order_id,
+                userId: userId, // CRITICAL: Ensure the authenticated user owns this subscription
+                status: 'pending',
+            },
+            {
+                status: 'active',
+                razorpayPaymentId: razorpay_payment_id,
+                razorpaySignature: razorpay_signature,
+            },
+            { new: true }
+        );
 
         if (!subscription) {
-            return res.status(404).json({ success: false, message: 'Subscription not found for this payment' });
+            return res.status(404).json({ success: false, message: 'No pending subscription found for this payment' });
         }
 
-        subscription.status = 'active';
-        subscription.razorpayPaymentId = razorpay_payment_id;
-        subscription.razorpaySignature = razorpay_signature;
-        await subscription.save();
+        // Verify payment amount with Razorpay API (server-to-server — cannot be spoofed)
+        try {
+            const razorpay = await getRazorpayInstance();
+            if (razorpay) {
+                const payment = await razorpay.payments.fetch(razorpay_payment_id);
+                const expectedAmountPaise = usdToInrPaise(subscription.amount);
+                // Allow 2% tolerance for currency conversion rounding
+                const tolerance = Math.max(expectedAmountPaise * 0.02, 100);
+                if (Math.abs(payment.amount - expectedAmountPaise) > tolerance || payment.status !== 'captured') {
+                    // Amount mismatch or payment not captured — revert activation
+                    await Subscription.findByIdAndUpdate(subscription._id, {
+                        status: 'pending',
+                        razorpayPaymentId: null,
+                        razorpaySignature: null,
+                    });
+                    console.error(`Payment amount mismatch: expected ~${expectedAmountPaise} paise, got ${payment.amount} paise, status: ${payment.status}`);
+                    return res.status(400).json({ success: false, message: 'Payment amount verification failed' });
+                }
+            }
+        } catch (fetchErr) {
+            console.error('Razorpay payment fetch error (non-blocking):', fetchErr.message);
+            // Non-blocking — signature was already verified
+        }
 
         // Update Firestore user
         try {
@@ -672,12 +704,23 @@ router.post('/stripe-webhook', express.raw({ type: 'application/json' }), async 
 
                 if (!subscriptionId) break;
 
-                const updatedSub = await Subscription.findByIdAndUpdate(subscriptionId, {
-                    status: 'active',
-                    stripeSubscriptionId: session.subscription || null,
-                    stripeCustomerId: session.customer || null,
-                    stripePaymentIntentId: session.payment_intent || null,
-                }, { new: true });
+                // SECURITY: Only activate if subscription is still pending AND belongs to the right user
+                // Atomic update prevents race conditions and cross-user activation
+                const updatedSub = await Subscription.findOneAndUpdate(
+                    {
+                        _id: subscriptionId,
+                        userId: userId,          // Must match the original user
+                        status: 'pending',       // Must still be pending (prevents replay)
+                        paymentGateway: 'stripe', // Must be a Stripe payment
+                    },
+                    {
+                        status: 'active',
+                        stripeSubscriptionId: session.subscription || null,
+                        stripeCustomerId: session.customer || null,
+                        stripePaymentIntentId: session.payment_intent || null,
+                    },
+                    { new: true }
+                );
 
                 // Update Firestore user
                 if (updatedSub) {
@@ -795,13 +838,19 @@ router.post('/razorpay-webhook', express.raw({ type: 'application/json' }), asyn
         const signature = req.headers['x-razorpay-signature'];
         const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
 
-        // Verify webhook signature if secret is configured
-        if (process.env.RAZORPAY_WEBHOOK_SECRET && signature) {
-            const isValid = verifyRazorpayWebhook(rawBody, signature);
-            if (!isValid) {
-                console.error('Razorpay webhook signature verification failed');
-                return res.status(400).json({ error: 'Invalid signature' });
-            }
+        // SECURITY: Webhook signature verification is MANDATORY
+        // Without it, anyone can send fake webhooks and activate subscriptions for free
+        if (!process.env.RAZORPAY_WEBHOOK_SECRET) {
+            console.error('RAZORPAY_WEBHOOK_SECRET not configured — rejecting webhook for security');
+            return res.status(500).json({ error: 'Webhook secret not configured' });
+        }
+        if (!signature) {
+            return res.status(400).json({ error: 'Missing webhook signature' });
+        }
+        const isValidSig = verifyRazorpayWebhook(rawBody, signature);
+        if (!isValidSig) {
+            console.error('Razorpay webhook signature verification failed');
+            return res.status(400).json({ error: 'Invalid signature' });
         }
 
         const event = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
@@ -815,31 +864,44 @@ router.post('/razorpay-webhook', express.raw({ type: 'application/json' }), asyn
                 const orderId = payment.order_id;
                 if (!orderId) break;
 
-                // Activate subscription
+                // Find subscription for this order
                 const sub = await Subscription.findOne({ razorpayOrderId: orderId });
-                if (sub && sub.status === 'pending') {
-                    sub.status = 'active';
-                    sub.razorpayPaymentId = payment.id;
-                    await sub.save();
+                if (!sub) break;
 
+                // SECURITY: Validate payment amount matches subscription
+                const expectedAmountPaise = usdToInrPaise(sub.amount);
+                const tolerance = Math.max(expectedAmountPaise * 0.02, 100); // 2% or 1 INR
+                if (Math.abs(payment.amount - expectedAmountPaise) > tolerance) {
+                    console.error(`Razorpay webhook amount mismatch for order ${orderId}: expected ~${expectedAmountPaise}, got ${payment.amount}`);
+                    break; // Do NOT activate — amount doesn't match
+                }
+
+                // SECURITY: Atomic update — only activate if still pending (prevents replay + race condition)
+                const activatedSub = await Subscription.findOneAndUpdate(
+                    { razorpayOrderId: orderId, status: 'pending' },
+                    { status: 'active', razorpayPaymentId: payment.id },
+                    { new: true }
+                );
+
+                if (activatedSub) {
                     // Update Firestore
                     try {
                         const usersRef = adminDb.collection('users');
-                        const snap = await usersRef.where('email', '==', sub.userEmail).get();
+                        const snap = await usersRef.where('email', '==', activatedSub.userEmail).get();
                         if (!snap.empty) {
                             await snap.docs[0].ref.update({
                                 'subscription.status': 'active',
-                                'subscription.plan': sub.plan,
-                                'subscription.endDate': sub.endDate,
+                                'subscription.plan': activatedSub.plan,
+                                'subscription.endDate': activatedSub.endDate,
                             });
                         }
                     } catch (e) { console.error('Firestore update error:', e); }
 
                     // Generate invoice if not already created by verify endpoint
-                    const existingInvoice = await Invoice.findOne({ subscriptionId: sub._id });
+                    const existingInvoice = await Invoice.findOne({ subscriptionId: activatedSub._id });
                     if (!existingInvoice) {
                         try {
-                            await createInvoiceForSubscription(sub, {
+                            await createInvoiceForSubscription(activatedSub, {
                                 razorpayPaymentId: payment.id,
                                 razorpayOrderId: orderId,
                             });

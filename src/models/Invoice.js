@@ -80,14 +80,27 @@ const invoiceSchema = new mongoose.Schema({
     // Payment details
     paymentMethod: {
         type: String,
-        enum: ['stripe', 'manual', 'free'],
+        enum: ['stripe', 'razorpay', 'manual', 'free'],
         default: 'stripe',
+    },
+    paymentGateway: {
+        type: String,
+        enum: ['stripe', 'razorpay', null],
+        default: null,
     },
     stripePaymentIntentId: {
         type: String,
         default: null,
     },
     stripeInvoiceId: {
+        type: String,
+        default: null,
+    },
+    razorpayOrderId: {
+        type: String,
+        default: null,
+    },
+    razorpayPaymentId: {
         type: String,
         default: null,
     },

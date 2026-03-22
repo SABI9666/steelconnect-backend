@@ -147,9 +147,32 @@ const subscriptionSchema = new mongoose.Schema({
         type: String,
         default: null,
     },
+    // Razorpay integration fields
+    razorpayOrderId: {
+        type: String,
+        default: null,
+    },
+    razorpayPaymentId: {
+        type: String,
+        default: null,
+    },
+    razorpaySubscriptionId: {
+        type: String,
+        default: null,
+    },
+    razorpaySignature: {
+        type: String,
+        default: null,
+    },
+    // Payment gateway used
+    paymentGateway: {
+        type: String,
+        enum: ['stripe', 'razorpay', null],
+        default: null,
+    },
     paymentMethod: {
         type: String,
-        enum: ['stripe', 'manual', 'free'],
+        enum: ['stripe', 'razorpay', 'manual', 'free'],
         default: 'manual',
     },
     // Admin override: when true, subscription is free (admin granted)
@@ -180,6 +203,8 @@ const subscriptionSchema = new mongoose.Schema({
 // Index for fast lookups
 subscriptionSchema.index({ userId: 1, status: 1 });
 subscriptionSchema.index({ stripeSubscriptionId: 1 });
+subscriptionSchema.index({ razorpayOrderId: 1 });
+subscriptionSchema.index({ razorpaySubscriptionId: 1 });
 subscriptionSchema.index({ userEmail: 1 });
 
 const Subscription = mongoose.model('Subscription', subscriptionSchema);

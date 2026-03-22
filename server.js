@@ -261,6 +261,14 @@ app.use(helmet({
     crossOriginEmbedderPolicy: false
 }));
 app.use(compression({ level: 6, threshold: 1024 })); // Optimal compression level for speed vs size
+// ── Payment webhook routes MUST be registered BEFORE express.json() ──
+// Stripe and Razorpay webhooks require the raw body for signature verification.
+// If express.json() parses the body first, signature verification will fail.
+if (subscriptionRoutes) {
+    app.use('/api/subscriptions/stripe-webhook', express.raw({ type: 'application/json' }), (req, res, next) => next());
+    app.use('/api/subscriptions/razorpay-webhook', express.raw({ type: 'application/json' }), (req, res, next) => next());
+}
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // Parse text/plain as JSON — needed for navigator.sendBeacon which sends text/plain to avoid CORS preflight
@@ -711,8 +719,9 @@ if (subscriptionRoutes) {
     app.use('/api/subscriptions', subscriptionRoutes);
     console.log('✅ Subscription routes registered at /api/subscriptions');
     console.log('💳 Subscriptions: ENABLED');
-    console.log('   • Plan management');
-    console.log('   • Stripe checkout (pending configuration)');
+    console.log('   • Plan management (monthly + yearly)');
+    console.log(`   • Stripe: ${process.env.STRIPE_SECRET_KEY ? '✅ CONFIGURED' : '⏳ Add STRIPE_SECRET_KEY to enable'}`);
+    console.log(`   • Razorpay: ${process.env.RAZORPAY_KEY_ID ? '✅ CONFIGURED' : '⏳ Add RAZORPAY_KEY_ID to enable'}`);
     console.log('   • Admin subscription controls');
 } else {
     console.warn('⚠️ Subscription routes unavailable - subscription management disabled');
